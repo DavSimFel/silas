@@ -1,0 +1,105 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b1020;
+  --panel: #11192e;
+  --line: #273455;
+  --text: #e7ecff;
+  --subtle: #9ea9cb;
+  --accent: #7ecbff;
+  --you: #224c76;
+  --silas: #1e2b47;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+  background: radial-gradient(circle at top, #141f3e, var(--bg));
+  color: var(--text);
+}
+
+.chat-shell {
+  width: min(900px, 100vw);
+  margin: 0 auto;
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 12px;
+  padding: 20px;
+}
+
+.chat-header h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.chat-header p {
+  margin: 4px 0 0;
+  color: var(--subtle);
+}
+
+.messages {
+  border: 1px solid var(--line);
+  background: color-mix(in oklab, var(--panel) 92%, black);
+  border-radius: 12px;
+  padding: 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.msg {
+  max-width: 85%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  line-height: 1.35;
+}
+
+.msg-you {
+  align-self: flex-end;
+  background: var(--you);
+}
+
+.msg-silas {
+  align-self: flex-start;
+  background: var(--silas);
+}
+
+.msg-system {
+  align-self: center;
+  font-size: 0.85rem;
+  color: var(--subtle);
+  background: transparent;
+  padding: 0;
+}
+
+.composer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.composer input,
+.composer button {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.composer input {
+  color: var(--text);
+  background: #0e1629;
+}
+
+.composer button {
+  background: var(--accent);
+  color: #081121;
+  font-weight: 600;
+  cursor: pointer;
+}
