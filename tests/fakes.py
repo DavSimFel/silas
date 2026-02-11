@@ -9,6 +9,8 @@ from silas.models.agents import AgentResponse, InteractionMode, InteractionRegis
 from silas.models.context import ContextItem, ContextProfile, ContextSubscription, ContextZone
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import ChannelMessage, TaintLevel
+from silas.models.proactivity import SuggestionProposal
+from silas.models.work import WorkItemResult
 from silas.stubs import InMemoryAuditLog as InMemoryAuditLog  # noqa: PLC0414
 
 
@@ -187,6 +189,7 @@ class InMemoryChannel:
     channel_name: str = "test"
     outgoing: list[dict[str, object]] = field(default_factory=list)
     stream_events: list[dict[str, object]] = field(default_factory=list)
+    suggestion_cards: list[dict[str, object]] = field(default_factory=list)
     incoming: asyncio.Queue[tuple[ChannelMessage, str]] = field(default_factory=asyncio.Queue)
 
     async def listen(self) -> AsyncIterator[tuple[ChannelMessage, str]]:
@@ -207,6 +210,10 @@ class InMemoryChannel:
     async def send_stream_end(self, connection_id: str) -> None:
         self.stream_events.append({"type": "stream_end", "connection_id": connection_id})
 
+    async def send_suggestion(self, recipient_id: str, suggestion: object) -> dict[str, object]:
+        self.suggestion_cards.append({"recipient_id": recipient_id, "suggestion": suggestion})
+        return {"selected_value": None, "freetext": None, "approved": False}
+
     async def push_message(self, text: str, sender_id: str = "owner", scope_id: str = "owner") -> None:
         message = ChannelMessage(
             channel=self.channel_name,
@@ -215,6 +222,44 @@ class InMemoryChannel:
             timestamp=_utc_now(),
         )
         await self.incoming.put((message, scope_id))
+
+
+@dataclass(slots=True)
+class FakeSuggestionEngine:
+    idle_by_scope: dict[str, list[SuggestionProposal]] = field(default_factory=dict)
+    post_execution_by_scope: dict[str, list[SuggestionProposal]] = field(default_factory=dict)
+    idle_calls: list[tuple[str, datetime]] = field(default_factory=list)
+    post_execution_calls: list[tuple[str, WorkItemResult]] = field(default_factory=list)
+    handled_calls: list[tuple[str, str, str]] = field(default_factory=list)
+
+    async def generate_idle(self, scope_id: str, now: datetime) -> list[SuggestionProposal]:
+        self.idle_calls.append((scope_id, now))
+        return list(self.idle_by_scope.get(scope_id, []))
+
+    async def generate_post_execution(
+        self,
+        scope_id: str,
+        result: WorkItemResult,
+    ) -> list[SuggestionProposal]:
+        self.post_execution_calls.append((scope_id, result))
+        return list(self.post_execution_by_scope.get(scope_id, []))
+
+    async def mark_handled(self, scope_id: str, suggestion_id: str, outcome: str) -> None:
+        self.handled_calls.append((scope_id, suggestion_id, outcome))
+
+
+@dataclass(slots=True)
+class FakeAutonomyCalibrator:
+    proposals_by_scope: dict[str, list[dict[str, object]]] = field(default_factory=dict)
+    evaluate_calls: list[tuple[str, datetime]] = field(default_factory=list)
+    record_calls: list[tuple[str, str, str]] = field(default_factory=list)
+
+    async def record_outcome(self, scope_id: str, action_family: str, outcome: str) -> None:
+        self.record_calls.append((scope_id, action_family, outcome))
+
+    async def evaluate(self, scope_id: str, now: datetime) -> list[dict[str, object]]:
+        self.evaluate_calls.append((scope_id, now))
+        return list(self.proposals_by_scope.get(scope_id, []))
 
 
 def sample_memory_item(memory_id: str, content: str) -> MemoryItem:
@@ -232,6 +277,8 @@ def sample_context_profile(name: str = "conversation") -> ContextProfile:
 
 
 __all__ = [
+    "FakeAutonomyCalibrator",
+    "FakeSuggestionEngine",
     "FakeTokenCounter",
     "InMemoryAuditLog",
     "InMemoryChannel",

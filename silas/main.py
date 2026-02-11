@@ -22,6 +22,7 @@ from silas.persistence.chronicle_store import SQLiteChronicleStore
 from silas.persistence.migrations import run_migrations
 from silas.persistence.nonce_store import SQLiteNonceStore
 from silas.persistence.work_item_store import SQLiteWorkItemStore
+from silas.proactivity import SimpleAutonomyCalibrator, SimpleSuggestionEngine
 from silas.skills.executor import SkillExecutor, register_builtin_skills
 from silas.skills.registry import SkillRegistry
 
@@ -64,6 +65,8 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
     register_builtin_skills(skill_registry)
     skill_executor = SkillExecutor(skill_registry=skill_registry, memory_store=memory_store)
     approval_manager = LiveApprovalManager()
+    suggestion_engine = SimpleSuggestionEngine()
+    autonomy_calibrator = SimpleAutonomyCalibrator()
     output_gate_runner = (
         OutputGateRunner(settings.output_gates, token_counter=token_counter)
         if settings.output_gates
@@ -80,6 +83,8 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
         skill_registry=skill_registry,
         skill_executor=skill_executor,
         approval_manager=approval_manager,
+        suggestion_engine=suggestion_engine,
+        autonomy_calibrator=autonomy_calibrator,
         audit=audit,
         config=settings,
     )
@@ -91,6 +96,8 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
         owner_id=settings.owner_id,
         default_context_profile=settings.context.default_profile,
         output_gate_runner=output_gate_runner,
+        suggestion_engine=suggestion_engine,
+        autonomy_calibrator=autonomy_calibrator,
     )
     return stream, channel
 

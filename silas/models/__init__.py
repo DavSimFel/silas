@@ -37,6 +37,7 @@ from silas.models.gates import (
 )
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import ChannelMessage, SignedMessage, TaintLevel
+from silas.models.proactivity import Suggestion, SuggestionProposal
 from silas.models.sessions import Session, SessionType
 from silas.models.work import (
     Budget,
@@ -104,4 +105,6 @@ __all__ = [
     "PendingApproval",
     "Session",
     "SessionType",
+    "Suggestion",
+    "SuggestionProposal",
 ]

@@ -18,8 +18,10 @@ from silas.models.approval import ApprovalDecision, ApprovalScope, ApprovalToken
 from silas.models.context import ContextItem, ContextZone
 from silas.models.memory import MemoryItem, MemoryType, ReingestionTier
 from silas.models.messages import ChannelMessage, SignedMessage, TaintLevel
+from silas.models.proactivity import SuggestionProposal
 from silas.models.work import WorkItem, WorkItemType
 from silas.protocols.channels import ChannelAdapterCore
+from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
 
 _counter = HeuristicTokenCounter()
 _MENTION_PATTERN = re.compile(r"@([A-Za-z0-9_:-]+)")
@@ -31,6 +33,8 @@ class Stream:
     channel: ChannelAdapterCore
     turn_context: TurnContext
     context_manager: LiveContextManager | None = None
+    suggestion_engine: SuggestionEngine | None = None
+    autonomy_calibrator: AutonomyCalibrator | None = None
     owner_id: str = "owner"
     default_context_profile: str = "conversation"
     output_gate_runner: OutputGateRunner | None = None
@@ -42,6 +46,14 @@ class Stream:
             self.turn_context.live_context_manager = self.context_manager
         elif self.turn_context.live_context_manager is not None:
             self.context_manager = self.turn_context.live_context_manager
+        if self.suggestion_engine is not None:
+            self.turn_context.suggestion_engine = self.suggestion_engine
+        elif self.turn_context.suggestion_engine is not None:
+            self.suggestion_engine = self.turn_context.suggestion_engine
+        if self.autonomy_calibrator is not None:
+            self.turn_context.autonomy_calibrator = self.autonomy_calibrator
+        elif self.turn_context.autonomy_calibrator is not None:
+            self.autonomy_calibrator = self.turn_context.autonomy_calibrator
         self._register_approval_channel_handler()
 
     async def start(self) -> None:
@@ -111,7 +123,34 @@ class Stream:
         session_id = self._ensure_session_id()
 
         await self._audit("phase1a_noop", step=0, note="active gates precompile skipped")
-        await self._audit("phase1a_noop", step=0.5, note="review/proactive queue skipped")
+        high_confidence_suggestions: list[SuggestionProposal] = []
+        suggestion_engine = self._suggestion_engine()
+        if suggestion_engine is None:
+            await self._audit("phase1a_noop", step=0.5, note="review/proactive queue skipped")
+        else:
+            idle_suggestions = await suggestion_engine.generate_idle(
+                self.turn_context.scope_id,
+                datetime.now(timezone.utc),
+            )
+            high_confidence_suggestions = [
+                suggestion
+                for suggestion in idle_suggestions
+                if suggestion.confidence > 0.80
+            ]
+            low_confidence_suggestions = [
+                suggestion
+                for suggestion in idle_suggestions
+                if suggestion.confidence <= 0.80
+            ]
+            for suggestion in low_confidence_suggestions:
+                await self._push_suggestion_to_side_panel(connection_id, suggestion)
+            await self._audit(
+                "proactive_queue_reviewed",
+                step=0.5,
+                surfaced=len(idle_suggestions),
+                high_confidence=len(high_confidence_suggestions),
+                side_panel=len(low_confidence_suggestions),
+            )
         await self._audit("phase1a_noop", step=1, note="input gates skipped")
 
         # Step 2: sign/taint classification
@@ -254,6 +293,10 @@ class Stream:
             turn_number=turn_number,
             **plan_flow_payload,
         )
+        response_text = self._prepend_high_confidence_suggestions(
+            response_text,
+            high_confidence_suggestions,
+        )
 
         gate_results_payload: list[dict[str, object]] = []
         warning_payload: list[dict[str, object]] = []
@@ -339,7 +382,11 @@ class Stream:
         await self.channel.send(connection_id, response_text, reply_to=message.reply_to)
 
         await self._audit("phase1a_noop", step=14, note="access state updates skipped")
-        await self._audit("phase1a_noop", step=15, note="personality/autonomy post-turn updates skipped")
+        await self._record_autonomy_outcome(
+            turn_number=turn_number,
+            route=routed.route,
+            blocked=bool(blocked_gate_names),
+        )
         await self._audit("turn_processed", turn_number=turn_number, route=routed.route)
 
         return response_text
@@ -353,6 +400,77 @@ class Stream:
         if self.context_manager is not None:
             return self.context_manager
         return self.turn_context.context_manager
+
+    def _suggestion_engine(self) -> SuggestionEngine | None:
+        if self.suggestion_engine is not None:
+            return self.suggestion_engine
+        return self.turn_context.suggestion_engine
+
+    def _autonomy_calibrator(self) -> AutonomyCalibrator | None:
+        if self.autonomy_calibrator is not None:
+            return self.autonomy_calibrator
+        return self.turn_context.autonomy_calibrator
+
+    def _prepend_high_confidence_suggestions(
+        self,
+        response_text: str,
+        suggestions: list[SuggestionProposal],
+    ) -> str:
+        if not suggestions:
+            return response_text
+        preface = "\n".join(f"Suggestion: {suggestion.text}" for suggestion in suggestions)
+        if not response_text:
+            return preface
+        return f"{preface}\n\n{response_text}"
+
+    async def _push_suggestion_to_side_panel(
+        self,
+        connection_id: str,
+        suggestion: SuggestionProposal,
+    ) -> None:
+        send_suggestion = getattr(self.channel, "send_suggestion", None)
+        if callable(send_suggestion):
+            await send_suggestion(connection_id, suggestion)
+            await self._audit(
+                "suggestion_side_panel_enqueued",
+                suggestion_id=suggestion.id,
+                confidence=suggestion.confidence,
+                source=suggestion.source,
+                category=suggestion.category,
+            )
+            return
+        await self._audit(
+            "suggestion_side_panel_unavailable",
+            suggestion_id=suggestion.id,
+            confidence=suggestion.confidence,
+            source=suggestion.source,
+            category=suggestion.category,
+        )
+
+    async def _record_autonomy_outcome(
+        self,
+        *,
+        turn_number: int,
+        route: str,
+        blocked: bool,
+    ) -> None:
+        calibrator = self._autonomy_calibrator()
+        if calibrator is None:
+            await self._audit("phase1a_noop", step=15, note="personality/autonomy post-turn updates skipped")
+            return
+        outcome = "declined" if blocked else "approved"
+        await calibrator.record_outcome(
+            self.turn_context.scope_id,
+            action_family=route,
+            outcome=outcome,
+        )
+        await self._audit(
+            "autonomy_calibration_recorded",
+            step=15,
+            turn_number=turn_number,
+            action_family=route,
+            outcome=outcome,
+        )
 
     def _build_proxy_prompt(self, message_text: str, rendered_context: str) -> str:
         if not rendered_context.strip():
