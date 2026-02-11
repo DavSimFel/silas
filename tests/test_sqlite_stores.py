@@ -6,7 +6,6 @@ work item store, audit log, and nonce store.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -43,8 +42,8 @@ class TestMigrationRunner:
         await run_migrations(str(db_path))  # second run = idempotent
 
     async def test_migrations_create_tables(self, tmp_path: Path) -> None:
-        from silas.persistence.migrations import run_migrations
         import aiosqlite
+        from silas.persistence.migrations import run_migrations
         db_path = tmp_path / "test.db"
         await run_migrations(str(db_path))
         async with aiosqlite.connect(str(db_path)) as db:
@@ -68,8 +67,8 @@ class TestMigrationRunner:
 class TestSQLiteMemoryStore:
     @pytest.fixture
     async def store(self, tmp_path: Path):
-        from silas.persistence.migrations import run_migrations
         from silas.memory.sqlite_store import SQLiteMemoryStore
+        from silas.persistence.migrations import run_migrations
         db_path = tmp_path / "test.db"
         await run_migrations(str(db_path))
         return SQLiteMemoryStore(str(db_path))
@@ -182,8 +181,8 @@ class TestSQLiteMemoryStore:
 class TestSQLiteChronicleStore:
     @pytest.fixture
     async def store(self, tmp_path: Path):
-        from silas.persistence.migrations import run_migrations
         from silas.persistence.chronicle_store import SQLiteChronicleStore
+        from silas.persistence.migrations import run_migrations
         db_path = tmp_path / "test.db"
         await run_migrations(str(db_path))
         return SQLiteChronicleStore(str(db_path))
@@ -314,8 +313,8 @@ class TestSQLiteWorkItemStore:
 class TestSQLiteAuditLog:
     @pytest.fixture
     async def audit(self, tmp_path: Path):
-        from silas.persistence.migrations import run_migrations
         from silas.audit.sqlite_audit import SQLiteAuditLog
+        from silas.persistence.migrations import run_migrations
         db_path = tmp_path / "test.db"
         await run_migrations(str(db_path))
         return SQLiteAuditLog(str(db_path))
