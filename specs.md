@@ -401,20 +401,24 @@ The first-run flow is phone-first, PWA-compatible, and requires no desktop-only 
 
 ### 1.6 Web Frontend (PWA)
 
-The web frontend is a Progressive Web App:
+The web frontend is a Progressive Web App following the **Quiet** design language (see `specs-design.md` for full specification).
 
 - `web/manifest.json` enables install-to-home-screen
 - `web/sw.js` provides install/runtime caching hooks
+- Design language: Quiet — agent interface, not chat app. Glass surfaces, progressive disclosure, physics-based motion.
 - Responsive layouts:
-  - Phone: single-column card stream
-  - Desktop: chat stream + preview/side panel
+  - Phone (<640px): single-column stream, bottom sheets
+  - Tablet (640-1024px): wider stream, overlay panels
+  - Desktop (>1024px): centered stream (760px max) + side panel
 
 Required interactive views/components:
 
-- Chat stream (primary surface)
-- Batch Review card (configurable-size approve/decline/edit-selection)
-- Draft Review card (context + draft + approve/edit/rephrase/reject)
-- Decision card (question + option chips + optional free text)
+- **Stream** — conversation feed (user inputs right-aligned minimal, agent responses full-width no containers)
+- **Cards** — glass surfaces for approvals, drafts, decisions (per §0.5.3 card contract)
+- **Status strip** — ambient work awareness (top, invisible when idle)
+- **Work panel** — bottom sheet with active/pending work items
+- **Composer** — minimal input, auto-growing, slash commands
+- **Side panel** — desktop-only, reference material and memory (hidden by default)
 - Activity Log view (human-readable audit timeline)
 
 ## 2. Dependencies
