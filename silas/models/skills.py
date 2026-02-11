@@ -3,6 +3,32 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, field_validator
 
 
+class SkillMetadata(BaseModel):
+    name: str
+    description: str
+    activation: str | None = None
+    ui: dict[str, object] = Field(default_factory=dict)
+    composes_with: list[str] = Field(default_factory=list)
+    script_args: dict[str, dict[str, object]] = Field(default_factory=dict)
+    metadata: dict[str, object] = Field(default_factory=dict)
+    requires_approval: bool = False
+    tool_name: str | None = None
+    tool_description: str | None = None
+    tool_schema: dict[str, object] = Field(default_factory=dict)
+
+    @property
+    def exposed_tool_name(self) -> str:
+        return self.tool_name or self.name
+
+    @property
+    def exposed_tool_description(self) -> str:
+        return self.tool_description or self.description
+
+
+class SkillRef(BaseModel):
+    name: str
+
+
 class SkillDefinition(BaseModel):
     name: str
     description: str
@@ -44,4 +70,4 @@ class SkillResult(BaseModel):
         return value
 
 
-__all__ = ["SkillDefinition", "SkillResult"]
+__all__ = ["SkillMetadata", "SkillRef", "SkillDefinition", "SkillResult"]
