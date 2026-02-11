@@ -102,6 +102,7 @@ class InMemoryContextManager:
 @dataclass(slots=True)
 class InMemoryMemoryStore:
     items: dict[str, MemoryItem] = field(default_factory=dict)
+    incremented_ids: list[str] = field(default_factory=list)
 
     async def store(self, item: MemoryItem) -> str:
         self.items[item.memory_id] = item
@@ -126,8 +127,53 @@ class InMemoryMemoryStore:
         results = [item for item in self.items.values() if lower in item.content.lower()]
         return results[:limit]
 
+    async def search_by_type(self, memory_type: MemoryType, limit: int) -> list[MemoryItem]:
+        results = [item for item in self.items.values() if item.memory_type == memory_type]
+        results.sort(
+            key=lambda item: (
+                item.updated_at,
+                item.created_at,
+                item.memory_id,
+            ),
+            reverse=True,
+        )
+        return results[:limit]
+
+    async def list_recent(self, limit: int) -> list[MemoryItem]:
+        results = list(self.items.values())
+        results.sort(
+            key=lambda item: (
+                item.updated_at,
+                item.created_at,
+                item.memory_id,
+            ),
+            reverse=True,
+        )
+        return results[:limit]
+
+    async def increment_access(self, memory_id: str) -> None:
+        item = self.items.get(memory_id)
+        if item is None:
+            return
+        now = datetime.now(timezone.utc)
+        payload = item.model_dump(mode="python")
+        payload["access_count"] = item.access_count + 1
+        payload["last_accessed"] = now
+        payload["updated_at"] = now
+        self.items[memory_id] = MemoryItem.model_validate(payload)
+        self.incremented_ids.append(memory_id)
+
     async def search_session(self, session_id: str) -> list[MemoryItem]:
-        return [item for item in self.items.values() if item.session_id == session_id]
+        results = [item for item in self.items.values() if item.session_id == session_id]
+        results.sort(
+            key=lambda item: (
+                item.updated_at,
+                item.created_at,
+                item.memory_id,
+            ),
+            reverse=True,
+        )
+        return results
 
     async def store_raw(self, item: MemoryItem) -> str:
         return await self.store(item)

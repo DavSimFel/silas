@@ -127,6 +127,58 @@ async def test_memory_store_session_search_isolated_by_session_id(db_path: str) 
     assert all(item.session_id == "session-alpha" for item in alpha_results)
 
 
+async def test_memory_store_search_by_type_and_recent(db_path: str) -> None:
+    store = SQLiteMemoryStore(db_path)
+
+    now = _now()
+    await store.store(
+        MemoryItem(
+            memory_id="mem-type-entity",
+            content="entity memory row",
+            memory_type=MemoryType.entity,
+            taint=TaintLevel.owner,
+            source_kind="integration_test",
+            created_at=now - timedelta(minutes=3),
+            updated_at=now - timedelta(minutes=3),
+        )
+    )
+    await store.store(
+        MemoryItem(
+            memory_id="mem-type-fact",
+            content="fact memory row",
+            memory_type=MemoryType.fact,
+            taint=TaintLevel.owner,
+            source_kind="integration_test",
+            created_at=now - timedelta(minutes=1),
+            updated_at=now - timedelta(minutes=1),
+        )
+    )
+
+    entities = await store.search_by_type(MemoryType.entity, limit=10)
+    assert [item.memory_id for item in entities] == ["mem-type-entity"]
+
+    recent = await store.list_recent(limit=2)
+    assert [item.memory_id for item in recent] == ["mem-type-fact", "mem-type-entity"]
+
+
+async def test_memory_store_increment_access_updates_fields(db_path: str) -> None:
+    store = SQLiteMemoryStore(db_path)
+
+    await store.store(_memory("mem-access", "track access updates"))
+    before = await store.get("mem-access")
+    assert before is not None
+    assert before.access_count == 0
+    assert before.last_accessed is None
+
+    await store.increment_access("mem-access")
+
+    after = await store.get("mem-access")
+    assert after is not None
+    assert after.access_count == 1
+    assert after.last_accessed is not None
+    assert after.updated_at >= before.updated_at
+
+
 async def test_chronicle_store_round_trip_with_scope_isolation(db_path: str) -> None:
     store = SQLiteChronicleStore(db_path)
 

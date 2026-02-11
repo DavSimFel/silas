@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from silas.models.agents import MemoryQuery
-from silas.models.memory import MemoryItem
+from silas.models.memory import MemoryItem, MemoryType
 
 
 @runtime_checkable
@@ -18,6 +18,12 @@ class MemoryStore(Protocol):
     async def delete(self, memory_id: str) -> None: ...
 
     async def search_keyword(self, query: str, limit: int) -> list[MemoryItem]: ...
+
+    async def search_by_type(self, memory_type: MemoryType, limit: int) -> list[MemoryItem]: ...
+
+    async def list_recent(self, limit: int) -> list[MemoryItem]: ...
+
+    async def increment_access(self, memory_id: str) -> None: ...
 
     async def search_session(self, session_id: str) -> list[MemoryItem]: ...
 
