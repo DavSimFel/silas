@@ -82,6 +82,7 @@ function connect() {
   ws.addEventListener("open", () => {
     reconnectAttempt = 0;
     setConnectionStatus("connected");
+    // No "Connected." message — Quiet design: status dot is sufficient
   });
 
   ws.addEventListener("message", (event) => {

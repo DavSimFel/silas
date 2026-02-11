@@ -30,10 +30,10 @@
 
     <!-- Stream -->
     <main id="stream" class="flex-1 overflow-y-auto px-4 pb-2">
-      <div id="messages" class="mx-auto max-w-[760px] flex flex-col gap-4 py-6">
+      <div id="messages" class="mx-auto max-w-[760px] flex flex-col gap-4 min-h-full py-6">
 
         <!-- Empty State -->
-        <div id="empty-state" class="flex flex-col items-center justify-center h-full min-h-[60vh] select-none">
+        <div id="empty-state" class="flex-1 flex flex-col items-center justify-center select-none">
           <span class="text-5xl breathe mb-6">🪶</span>
           <p class="text-xl font-light text-text-tertiary">What should I work on?</p>
         </div>
@@ -50,7 +50,7 @@
           placeholder="Message Silas…"
           class="w-full resize-none bg-transparent text-[15px] text-text-primary placeholder:text-text-tertiary
                  py-3 pl-4 pr-12
-                 border border-transparent rounded-[14px]
+                 border border-surface-border/0 rounded-[14px]
                  focus:border-surface-border focus:outline-none
                  transition-[border-color] duration-200
                  leading-[22px] max-h-[132px] overflow-y-auto"
