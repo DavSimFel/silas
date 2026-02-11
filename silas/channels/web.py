@@ -84,9 +84,14 @@ class WebChannel(ChannelAdapterCore):
             raise HTTPException(status_code=404)
 
         media_type, _ = mimetypes.guess_type(str(target))
+        headers = {}
+        # Prevent caching of service worker and HTML
+        if asset in ("sw.js", "index.html", ""):
+            headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         return Response(
             content=target.read_bytes(),
             media_type=media_type or "application/octet-stream",
+            headers=headers,
         )
 
     async def _handle_client_payload(self, payload: str) -> None:

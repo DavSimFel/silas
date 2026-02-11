@@ -10,7 +10,7 @@ from silas.models.context import ContextItem, ContextProfile, ContextSubscriptio
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import ChannelMessage, TaintLevel
 from silas.models.proactivity import SuggestionProposal
-from silas.models.work import WorkItemResult
+from silas.models.work import BudgetUsed, WorkItem, WorkItemResult, WorkItemStatus
 from silas.stubs import InMemoryAuditLog as InMemoryAuditLog  # noqa: PLC0414
 
 
@@ -185,6 +185,31 @@ class InMemoryMemoryStore:
 
 
 @dataclass(slots=True)
+class InMemoryWorkItemStore:
+    items: dict[str, WorkItem] = field(default_factory=dict)
+    status_updates: list[tuple[str, WorkItemStatus, BudgetUsed]] = field(default_factory=list)
+
+    async def save(self, item: WorkItem) -> None:
+        self.items[item.id] = item.model_copy(deep=True)
+
+    async def get(self, work_item_id: str) -> WorkItem | None:
+        item = self.items.get(work_item_id)
+        return item.model_copy(deep=True) if item is not None else None
+
+    async def list_by_status(self, status: WorkItemStatus) -> list[WorkItem]:
+        return [i.model_copy(deep=True) for i in self.items.values() if i.status == status]
+
+    async def list_by_parent(self, parent_id: str) -> list[WorkItem]:
+        return [i.model_copy(deep=True) for i in self.items.values() if i.parent == parent_id]
+
+    async def update_status(self, work_item_id: str, status: WorkItemStatus, budget_used: BudgetUsed) -> None:
+        self.status_updates.append((work_item_id, status, budget_used.model_copy(deep=True)))
+        item = self.items.get(work_item_id)
+        if item is not None:
+            self.items[work_item_id] = item.model_copy(update={"status": status, "budget_used": budget_used.model_copy(deep=True)})
+
+
+@dataclass(slots=True)
 class InMemoryChannel:
     channel_name: str = "test"
     outgoing: list[dict[str, object]] = field(default_factory=list)
@@ -284,6 +309,7 @@ __all__ = [
     "InMemoryChannel",
     "InMemoryContextManager",
     "InMemoryMemoryStore",
+    "InMemoryWorkItemStore",
     "RunResult",
     "TestModel",
     "sample_context_profile",

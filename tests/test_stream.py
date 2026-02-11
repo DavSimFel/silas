@@ -17,14 +17,18 @@ from silas.models.context import ContextZone
 from silas.models.gates import GateLane, GateResult
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import ChannelMessage, TaintLevel
+from silas.models.skills import SkillDefinition
+from silas.models.work import WorkItemStatus
 from silas.skills.executor import SkillExecutor, register_builtin_skills
 from silas.skills.registry import SkillRegistry
+from silas.work.executor import LiveWorkItemExecutor
 
 from tests.fakes import (
     InMemoryAuditLog,
     InMemoryChannel,
     InMemoryContextManager,
     InMemoryMemoryStore,
+    InMemoryWorkItemStore,
     RunResult,
     sample_memory_item,
 )
@@ -390,6 +394,65 @@ async def test_planner_route_response_runs_through_output_gates(
     assert gate_runner.calls[0][0] == stream._planner_stub_response()
     assert result == "I cannot share that"
     assert channel.outgoing[0]["text"] == "I cannot share that"
+
+
+class PlannerRouteWithPlanActionsModel:
+    async def run(self, prompt: str) -> RunResult:
+        del prompt
+        routed = RouteDecision(
+            route="planner",
+            reason="execute plan actions",
+            response=None,
+            interaction_register=InteractionRegister.execution,
+            interaction_mode=InteractionMode.act_and_report,
+            context_profile="planning",
+        )
+        object.__setattr__(
+            routed,
+            "plan_actions",
+            [
+                {"id": "plan-a", "type": "task", "title": "Run first action", "body": "Execute first planner action.", "skills": ["skill_a"]},
+                {"id": "plan-b", "type": "task", "title": "Run second action", "body": "Execute second planner action.", "skills": ["skill_b"], "depends_on": ["plan-a"]},
+            ],
+        )
+        return RunResult(output=routed)
+
+
+@pytest.mark.asyncio
+async def test_planner_route_executes_plan_actions_and_returns_summary(
+    channel: InMemoryChannel,
+    turn_context,
+) -> None:
+    turn_context.proxy = PlannerRouteWithPlanActionsModel()
+    skill_registry = SkillRegistry()
+    for name in ("skill_a", "skill_b"):
+        skill_registry.register(SkillDefinition(name=name, description=f"test {name}", version="1.0.0", input_schema={"type": "object"}, output_schema={"type": "object"}, requires_approval=False, timeout_seconds=5))
+    skill_executor = SkillExecutor(skill_registry=skill_registry)
+    execution_order: list[str] = []
+
+    async def _skill_a(inputs: dict[str, object]) -> dict[str, object]:
+        execution_order.append(str(inputs["work_item_id"]))
+        return {"ok": True}
+
+    async def _skill_b(inputs: dict[str, object]) -> dict[str, object]:
+        execution_order.append(str(inputs["work_item_id"]))
+        return {"ok": True}
+
+    skill_executor.register_handler("skill_a", _skill_a)
+    skill_executor.register_handler("skill_b", _skill_b)
+    work_store = InMemoryWorkItemStore()
+    turn_context.skill_registry = skill_registry
+    turn_context.skill_executor = skill_executor
+    turn_context.work_executor = LiveWorkItemExecutor(skill_executor=skill_executor, work_item_store=work_store)
+
+    stream = _stream(channel, turn_context)
+    result = await stream._process_turn(_msg("build and run a plan"))
+    assert result == "Plan execution summary: 2 done, 0 failed."
+    assert execution_order == ["plan-a", "plan-b"]
+    plan_a = await work_store.get("plan-a")
+    plan_b = await work_store.get("plan-b")
+    assert plan_a is not None and plan_a.status == WorkItemStatus.done
+    assert plan_b is not None and plan_b.status == WorkItemStatus.done
 
 
 @pytest.mark.asyncio
