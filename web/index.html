@@ -4,13 +4,19 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Silas</title>
+    <meta name="theme-color" content="#141f3e" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
     <main class="chat-shell">
       <header class="chat-header">
-        <h1>Silas</h1>
-        <p>Phase 1a Web Chat</p>
+        <h1>Silas 🪶</h1>
+        <button id="install-btn" class="install-btn" hidden>Install</button>
       </header>
 
       <section id="messages" class="messages" aria-live="polite"></section>

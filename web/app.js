@@ -1,3 +1,32 @@
+// --- Service Worker & Install Prompt ---
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+
+let deferredInstallPrompt = null;
+const installBtn = document.getElementById("install-btn");
+
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  if (installBtn) installBtn.hidden = false;
+});
+
+if (installBtn) {
+  installBtn.addEventListener("click", async () => {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+    installBtn.hidden = true;
+  });
+}
+
+window.addEventListener("appinstalled", () => {
+  if (installBtn) installBtn.hidden = true;
+});
+
+// --- Chat ---
 const messagesEl = document.getElementById("messages");
 const formEl = document.getElementById("composer");
 const inputEl = document.getElementById("message-input");
