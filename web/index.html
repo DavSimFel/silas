@@ -13,31 +13,34 @@
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body class="h-full flex flex-col overflow-hidden">
-
     <!-- Status Strip -->
-    <header id="status-strip"
-      class="flex items-center justify-between px-4 pt-[env(safe-area-inset-top)] h-11 shrink-0 transition-opacity duration-200"
-    >
-      <div class="flex items-center gap-2">
-        <span class="text-[15px] font-semibold text-text-primary tracking-tight">Silas</span>
-        <span id="status-dot" class="w-2 h-2 rounded-full bg-status-green transition-colors duration-200"></span>
-      </div>
-      <div class="flex items-center gap-3">
-        <span id="work-status" class="text-xs text-text-tertiary transition-opacity duration-200 hidden"></span>
-        <button id="install-btn" class="text-xs text-tint hover:text-tint-hover transition-colors duration-100 hidden">Install</button>
+    <header class="shrink-0 px-4 pt-[env(safe-area-inset-top)]">
+      <div class="mx-auto max-w-[760px] h-11 flex items-center justify-between gap-3">
+        <button
+          id="status-strip"
+          type="button"
+          class="status-strip hidden"
+          aria-controls="work-panel"
+          aria-expanded="false"
+        >
+          <span id="work-status" class="status-strip-label"></span>
+        </button>
+
+        <div class="flex items-center gap-3 shrink-0">
+          <span id="status-dot" class="w-2 h-2 rounded-full bg-status-green transition-colors duration-200"></span>
+          <button id="install-btn" class="text-xs text-tint hover:text-tint-hover transition-colors duration-100 hidden">Install</button>
+        </div>
       </div>
     </header>
 
     <!-- Stream -->
     <main id="stream" class="flex-1 overflow-y-auto px-4 pb-2">
       <div id="messages" class="mx-auto max-w-[760px] flex flex-col gap-4 min-h-full py-6">
-
         <!-- Empty State -->
         <div id="empty-state" class="flex-1 flex flex-col items-center justify-center select-none">
           <span class="text-5xl breathe mb-6">🪶</span>
           <p class="text-xl font-light text-text-tertiary">What should I work on?</p>
         </div>
-
       </div>
     </main>
 
@@ -72,6 +75,20 @@
         </button>
       </form>
     </footer>
+
+    <!-- Work Panel -->
+    <div id="work-panel-backdrop" class="work-panel-backdrop" hidden></div>
+    <section id="work-panel" class="work-panel" aria-hidden="true">
+      <div id="work-panel-sheet" class="work-panel-sheet glass-overlay" role="dialog" aria-label="Active Work">
+        <button id="work-panel-handle" class="work-panel-handle" type="button" aria-label="Drag work panel">
+          <span class="work-panel-grabber"></span>
+        </button>
+        <div class="work-panel-body">
+          <h2 class="work-panel-title">Active Work</h2>
+          <div id="work-items" class="work-items"></div>
+        </div>
+      </div>
+    </section>
 
     <script src="/app.js" defer></script>
   </body>
