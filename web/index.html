@@ -67,6 +67,39 @@
               </button>
             </div>
           </div>
+          <div class="mx-auto max-w-[760px]">
+            <div
+              id="session-tab-bar"
+              class="glass flex items-center justify-between gap-3 px-4 py-1"
+              role="navigation"
+              aria-label="Session tabs"
+            >
+              <div id="session-tabs" class="flex items-center gap-3 min-w-0" role="tablist" aria-label="Sessions"></div>
+              <button
+                id="new-side-session-btn"
+                type="button"
+                class="card-cta-primary shrink-0"
+                aria-label="Create side session"
+              >
+                New Side
+              </button>
+            </div>
+            <div
+              id="notification-prompt"
+              class="glass px-4 py-3 hidden"
+              role="status"
+              aria-live="polite"
+              style="margin-top: 8px;"
+            >
+              <p id="notification-prompt-text" class="text-xs text-text-secondary">
+                Enable notifications for approval requests while the app is backgrounded.
+              </p>
+              <div class="glass-card-actions">
+                <button id="notification-enable-btn" type="button" class="card-cta-primary">Enable</button>
+                <button id="notification-dismiss-btn" type="button" class="card-cta-secondary">Not now</button>
+              </div>
+            </div>
+          </div>
         </header>
 
         <!-- Stream -->
@@ -77,6 +110,55 @@
               <span class="text-5xl breathe mb-6">🪶</span>
               <p class="text-xl font-light text-text-tertiary">What should I work on?</p>
             </div>
+            <div id="message-rail" class="flex flex-col gap-4"></div>
+            <div id="card-container" class="flex flex-col gap-4"></div>
+
+            <template id="approval-card-template">
+              <article class="glass-card" data-card-kind="approval">
+                <div class="glass-card-header">
+                  <h3 class="glass-card-title" data-approval-title></h3>
+                  <span class="glass-card-risk" data-approval-risk aria-hidden="true"></span>
+                </div>
+                <p class="glass-card-rationale" data-approval-desc></p>
+                <p class="glass-card-rationale" data-approval-requester></p>
+                <div class="glass-card-actions">
+                  <button type="button" class="card-cta-primary" data-approval-action="approve">Approve</button>
+                  <button type="button" class="card-cta-secondary" data-approval-action="deny">Deny</button>
+                  <button type="button" class="card-cta-secondary" data-approval-action="defer">Defer</button>
+                </div>
+              </article>
+            </template>
+
+            <template id="batch-review-card-template">
+              <article class="glass-card" data-card-kind="batch">
+                <div class="glass-card-header">
+                  <h3 class="glass-card-title" data-batch-title>Batch review</h3>
+                  <p class="glass-card-rationale" data-batch-count></p>
+                </div>
+                <div data-batch-items class="glass-card-rationale"></div>
+                <div class="glass-card-actions">
+                  <button type="button" class="card-cta-secondary" data-batch-action="select_all">Select all</button>
+                  <button type="button" class="card-cta-secondary" data-batch-action="deselect_all">Deselect all</button>
+                  <button type="button" class="card-cta-primary" data-batch-action="approve">Batch approve</button>
+                  <button type="button" class="card-cta-secondary" data-batch-action="deny">Batch deny</button>
+                </div>
+              </article>
+            </template>
+
+            <template id="suggestion-card-template">
+              <article class="glass-card" data-card-kind="suggestion">
+                <div class="glass-card-header">
+                  <h3 class="glass-card-title">Suggestion</h3>
+                  <p class="glass-card-rationale" data-suggestion-confidence></p>
+                </div>
+                <p class="glass-card-rationale" data-suggestion-text></p>
+                <div class="glass-card-actions">
+                  <button type="button" class="card-cta-primary" data-suggestion-action="accept">Accept</button>
+                  <button type="button" class="card-cta-secondary" data-suggestion-action="dismiss">Dismiss</button>
+                  <button type="button" class="card-cta-secondary" data-suggestion-action="modify">Modify</button>
+                </div>
+              </article>
+            </template>
           </div>
         </main>
 

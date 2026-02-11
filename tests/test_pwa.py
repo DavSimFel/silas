@@ -130,7 +130,7 @@ class TestServiceWorker:
         assert "javascript" in resp.headers["content-type"]
 
     async def test_sw_cache_name(self, client: AsyncClient) -> None:
-        assert "CACHE_NAME" in (await client.get("/sw.js")).text
+        assert "CACHE_VERSION" in (await client.get("/sw.js")).text
 
     async def test_sw_caches_shell(self, client: AsyncClient) -> None:
         text = (await client.get("/sw.js")).text
