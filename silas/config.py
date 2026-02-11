@@ -81,12 +81,18 @@ class SkillsConfig(BaseModel):
     custom_dir: Path = Path("./silas/skills/custom")
 
 
+class StreamConfig(BaseModel):
+    streaming_enabled: bool = True
+    chunk_size: int = Field(default=50, ge=1)
+
+
 class SilasSettings(BaseSettings):
     owner_id: str = "owner"
     data_dir: Path = Path("./data")
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
+    stream: StreamConfig = Field(default_factory=StreamConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     output_gates: list[Gate] = Field(default_factory=list)
 
@@ -149,5 +155,6 @@ __all__ = [
     "ChannelsConfig",
     "WebChannelConfig",
     "ContextConfig",
+    "StreamConfig",
     "load_config",
 ]

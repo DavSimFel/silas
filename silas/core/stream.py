@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from silas.agents.structured import run_structured_agent
@@ -20,6 +21,7 @@ from silas.protocols.channels import ChannelAdapterCore
 
 _counter = HeuristicTokenCounter()
 _MENTION_PATTERN = re.compile(r"@([A-Za-z0-9_:-]+)")
+_DEFAULT_STREAM_CHUNK_DELAY_SECONDS = 0.03
 
 
 @dataclass(slots=True)
@@ -31,6 +33,12 @@ class Stream:
     default_context_profile: str = "conversation"
     output_gate_runner: OutputGateRunner | None = None
     session_id: str | None = None
+    streaming_enabled: bool = True
+    chunk_size: int = 50
+    stream_chunk_delay_seconds: float = _DEFAULT_STREAM_CHUNK_DELAY_SECONDS
+    _connection_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
+    _inflight_turn_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
+    _active_streams_by_connection: set[str] = field(default_factory=set, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.context_manager is not None:
@@ -39,11 +47,30 @@ class Stream:
         elif self.turn_context.live_context_manager is not None:
             self.context_manager = self.turn_context.live_context_manager
 
+        if self.chunk_size < 1:
+            self.chunk_size = 1
+        if self.stream_chunk_delay_seconds < 0:
+            self.stream_chunk_delay_seconds = 0
+
     async def start(self) -> None:
         self._ensure_session_id()
         await self._rehydrate()
         async for message, connection_id in self.channel.listen():
-            await self._process_turn(message, connection_id)
+            task = asyncio.create_task(self._process_turn_serialized(message, connection_id))
+            self._inflight_turn_tasks.add(task)
+            task.add_done_callback(self._inflight_turn_tasks.discard)
+
+    async def _process_turn_serialized(self, message: ChannelMessage, connection_id: str) -> None:
+        lock = self._connection_locks.setdefault(connection_id, asyncio.Lock())
+        async with lock:
+            try:
+                await self._process_turn(message, connection_id)
+            except Exception as exc:  # pragma: no cover - defensive audit fallback
+                await self._audit(
+                    "turn_processing_failed",
+                    connection_id=connection_id,
+                    error=str(exc),
+                )
 
     async def _rehydrate(self) -> None:
         """Restore state from previous run (spec §5.1.3)."""
@@ -323,7 +350,7 @@ class Stream:
         await self._audit("phase1a_noop", step=12, note="plan/approval flow skipped")
 
         # Step 13: send response
-        await self.channel.send(connection_id, response_text, reply_to=message.reply_to)
+        await self._send_response(connection_id, response_text, reply_to=message.reply_to)
 
         await self._audit("phase1a_noop", step=14, note="access state updates skipped")
         await self._audit("phase1a_noop", step=15, note="personality/autonomy post-turn updates skipped")
@@ -419,6 +446,32 @@ class Stream:
             ):
                 return True
         return False
+
+    async def _send_response(self, connection_id: str, text: str, reply_to: str | None = None) -> None:
+        if not self.streaming_enabled:
+            await self.channel.send(connection_id, text, reply_to=reply_to)
+            return
+
+        self._active_streams_by_connection.add(connection_id)
+        try:
+            await self.channel.send_stream_start(connection_id)
+            chunks = self._chunk_text(text)
+            for index, chunk in enumerate(chunks):
+                await self.channel.send_stream_chunk(connection_id, chunk)
+                if (
+                    self.stream_chunk_delay_seconds > 0
+                    and index < len(chunks) - 1
+                ):
+                    await asyncio.sleep(self.stream_chunk_delay_seconds)
+            await self.channel.send_stream_end(connection_id)
+        finally:
+            self._active_streams_by_connection.discard(connection_id)
+
+    def _chunk_text(self, text: str) -> list[str]:
+        if not text:
+            return []
+        size = max(1, self.chunk_size)
+        return [text[i : i + size] for i in range(0, len(text), size)]
 
 
 __all__ = ["Stream"]

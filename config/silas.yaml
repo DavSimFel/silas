@@ -29,6 +29,10 @@ silas:
     shipped_dir: "./silas/skills/shipped"
     custom_dir: "./silas/skills/custom"
 
+  stream:
+    streaming_enabled: true
+    chunk_size: 50
+
   channels:
     web:
       enabled: true
