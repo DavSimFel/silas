@@ -1,104 +1,96 @@
 # AGENTS.md — Codex Instructions
 
-## Project: Silas Runtime — Phase 1a (Bare Skeleton)
+## Current Task: Phase 1b — Persistence
 
-You are building Phase 1a of the Silas AI agent runtime. Read `specs.md` and `PLAN.md` for the full specification.
+Read `specs.md` and `PLAN.md` for the full specification. You are building on top of Phase 1a (already complete).
 
-## What to Build (Phase 1a ONLY)
+## What to Build
 
-### 1. Project Bootstrap
-- `pyproject.toml` with uv, all Phase 1 deps (pydantic, pydantic-ai-slim[openrouter,logfire], pydantic-settings, pyyaml, click, httpx, fastapi, uvicorn[standard], pynacl, keyring, pytest, pytest-asyncio, ruff)
-- Package layout: `silas/` with `__init__.py`
-- CI: `.github/workflows/ci.yml` (ruff lint + pytest)
+### 1. SQLite Schema (`silas/memory/migrations/001_initial.sql`)
+Per spec, create tables for:
+- `memories` — with FTS5 virtual table for keyword search
+- `chronicle` — keyed by `(scope_id, timestamp)`, configurable retention
+- `work_items` — JSON-serialized complex fields, indexed on `id`, `status`, `parent`, `follow_up_of`
+- `audit_log` — hash-chained entries
+- `nonces` — domain-scoped replay protection with `recorded_at`
 
-### 2. Pydantic Models (skeleton path — `silas/models/`)
-Implement these models exactly per spec Section 3:
-- `messages.py`: TaintLevel, ChannelMessage, SignedMessage
-- `agents.py`: MemoryOpType, MemoryOp, MemoryQueryStrategy, MemoryQuery, InteractionRegister, InteractionMode, PlanActionType, PlanAction, AgentResponse (with model_validator for memory_queries <= 3), RouteDecision (with validators)
-- `memory.py`: MemoryType (enum: episode, fact, preference, skill, entity, profile), MemoryItem
-- `context.py`: ContextZone, ContextProfile (with validators for pct ranges and sum <= 0.80), ContextItem, ContextSubscription, TokenBudget
-- `work.py`: WorkItemType, WorkItemStatus, Budget, BudgetUsed (with exceeds() using >= and merge()), Expectation (with mutual exclusivity validator), VerificationCheck, EscalationAction, WorkItem, WorkItemResult
-- `gates.py`: GateType, GateLane, GateProvider, GateTrigger, Gate, AccessLevel, GateResult
-- `approval.py`: ApprovalScope, ApprovalVerdict, ApprovalDecision, Base64Bytes (annotated type), ApprovalToken
-- `sessions.py`: Session, SessionType
+### 2. Migration Runner (`silas/persistence/migrations.py`)
+- Sequential, idempotent migrations
+- Checksums enforced on startup (SHA-256 of each .sql file)
+- Stores applied migrations in a `_migrations` table
+- Fails fast if a previously applied migration's checksum changed
 
-### 3. Protocol Definitions (`silas/protocols/`)
-Define all Protocol classes per spec Section 4. For Phase 1a, these are just interface definitions:
-- `channels.py`: ChannelAdapterCore, RichCardChannel
-- `agents.py`: (no protocol needed — PydanticAI agents are concrete)
-- `memory.py`: MemoryStore, MemoryRetriever, MemoryConsolidator, MemoryPortability
-- `context.py`: ContextManager
-- `approval.py`: ApprovalVerifier, NonceStore
-- `execution.py`: EphemeralExecutor, SandboxManager
-- `gates.py`: GateCheckProvider, GateRunner
-- `work.py`: WorkItemExecutor, VerificationRunner, WorkItemStore
-- `scheduler.py`: TaskScheduler
-- `audit.py`: AuditLog
-- `personality.py`: PersonalityEngine, PersonaStore
-- `proactivity.py`: SuggestionEngine, AutonomyCalibrator
-- `skills.py`: SkillLoader, SkillResolver
+### 3. SQLiteMemoryStore (`silas/memory/sqlite_store.py`)
+Implements the `MemoryStore` protocol from `silas/protocols/memory.py`:
+- CRUD operations (store, get, update, delete)
+- FTS5 keyword search via `search_keyword`
+- Session search via `search_session`
+- Raw memory ingest via `store_raw` and `search_raw` (low_reingestion lane)
+- Use `aiosqlite` for async access
 
-### 4. Basic WebChannel (`silas/channels/web.py`)
-- FastAPI app with a single WebSocket endpoint at `/ws`
-- Implements `ChannelAdapterCore` protocol
-- Serves static files from `web/` directory
-- Single-scope (no multi-connection yet)
+### 4. SQLiteChronicleStore (`silas/persistence/chronicle_store.py`)
+Implements the `ChronicleStore` protocol (define if not in protocols yet):
+- `append(scope_id, item: ContextItem)` — persist chronicle entry
+- `get_recent(scope_id, limit)` — load most recent N entries
+- `prune_before(cutoff)` — delete entries older than retention cutoff
+- Use `aiosqlite`
 
-### 5. Minimal Chat UI (`web/`)
-- `index.html` — simple chat interface
-- `app.js` — WebSocket connection, send/receive messages
-- `style.css` — clean, dark theme
+### 5. SQLiteWorkItemStore (`silas/persistence/work_item_store.py`)
+Implements the `WorkItemStore` protocol from `silas/protocols/work.py`:
+- `save(item)` — persist work item (JSON serialize complex fields)
+- `get(work_item_id)` — load by ID
+- `list_by_status(status)` — find by status
+- `list_by_parent(parent_id)` — find children
+- `update_status(work_item_id, status, budget_used)` — atomic update
+- `approval_token` stored as full JSON (including Base64Bytes signature)
+- Use `aiosqlite`
 
-### 6. HeuristicTokenCounter (`silas/core/token_counter.py`)
-- `count(text: str) -> int` = `ceil(len(text) / 3.5)`
+### 6. SQLiteAuditLog (`silas/audit/sqlite_audit.py`)
+Implements the `AuditLog` protocol:
+- Hash-chained entries (each entry includes SHA-256 of previous entry)
+- `log(event, **data)` — append entry
+- `verify_chain()` — verify full chain integrity
+- `write_checkpoint()` — persist checkpoint hash
+- `verify_from_checkpoint(checkpoint_id)` — verify from checkpoint to head
+- Use `aiosqlite`
 
-### 7. TurnContext (`silas/core/turn_context.py`)
-- Dependency container dataclass holding all per-turn dependencies
-- For Phase 1a, most fields are Optional/None
+### 7. SQLiteNonceStore (`silas/persistence/nonce_store.py`)
+Implements the `NonceStore` protocol:
+- `is_used(domain, nonce)` — check if consumed
+- `record(domain, nonce)` — mark as consumed
+- `prune_expired(older_than)` — remove old entries
+- Key format: `"{domain}:{nonce}"`
+- Use `aiosqlite`
 
-### 8. Stream stub (`silas/core/stream.py`)
-- `_process_turn()` that takes a message, calls the Proxy agent, returns response
-- Steps 2-4 and 7 (routing only) and 13 from spec. Everything else = no-op stub with audit log comment.
-- No persistence, no gates, no approval — just route through Proxy and respond
+### 8. Stream Rehydration (`silas/core/stream.py` update)
+Update the Stream to:
+- On startup, call `_rehydrate()` per spec §5.1.3
+- Load recent chronicle entries from ChronicleStore
+- Apply observation masking to old tool results
+- Load user profile from memory search
+- Load in-progress work items from WorkItemStore
+- Add system message "[SYSTEM] Session rehydrated after restart."
 
-### 9. PydanticAI Proxy Agent (`silas/agents/proxy.py`)
-- Agent with `RouteDecision` output type
-- System prompt from `silas/agents/prompts/proxy_system.md`
-- For Phase 1a: always routes "direct" (no planner yet)
+### 9. Wire persistence into main.py
+- Update `build_stream()` to create SQLite stores
+- Run migrations on `silas init`
+- Pass stores to TurnContext
 
-### 10. AgentResponse parsing from structured output
-- `run_structured_agent` wrapper per spec Section 5.1.0
-
-### 11. YAML Config (`silas/config.py` + `config/silas.yaml`)
-- Pydantic Settings model matching spec Section 11
-- Load from YAML with env var overrides
-- For Phase 1a: only load what's needed (models, channels.web, context basics, owner_id, data_dir)
-
-### 12. CLI (`silas/main.py`)
-- `silas init` — create data dir, create DB placeholder
-- `silas start` — load config, wire deps, start Stream + web server
-
-### 13. Test Infrastructure
-- `tests/conftest.py` with shared fixtures
-- `tests/fakes.py` with `TestModel`, `FakeTokenCounter`, in-memory store stubs
-- At least one test per: models validation, token counter, stream turn processing
+## Dependencies to Add
+- `aiosqlite` (>=0.20,<1) — async SQLite access
 
 ## Rules
-- Follow the spec precisely — field names, types, enums, validators must match
-- Use `datetime.now(timezone.utc)` everywhere, NEVER `datetime.utcnow()`
-- All datetime fields must be timezone-aware
-- Type everything properly — no `Any` unless truly needed
-- Keep imports clean, use `__all__` exports
-- Run `ruff check` and `pytest` before considering yourself done
-- Commit with conventional commits (`feat:`, `fix:`, `chore:`)
+- All datetime fields use `datetime.now(timezone.utc)`, NEVER `datetime.utcnow()`
+- Use parameterized queries, never string formatting for SQL
+- JSON serialization via Pydantic's `.model_dump(mode="json")` / `.model_validate()`
+- Migration checksums are SHA-256 hex digests
+- Run `ruff check` and `pytest` before finishing
+- Commit with conventional commits
 
 ## What NOT to Build
-- No SQLite persistence (that's Phase 1b)
-- No memory store implementation (Phase 1b)
-- No gates/approval/verification (Phase 3+)
-- No personality engine (Phase 5)
-- No Telegram/CLI channels (Phase 8)
-- No Docker sandbox (Phase 8)
+- No vector search / embeddings (Phase 8)
+- No consolidator implementation (Phase 2)
+- No retriever beyond FTS5 keyword (Phase 2)
 
-When completely finished, run this command to notify me:
-openclaw gateway wake --text "Done: Phase 1a bare skeleton built — models, protocols, WebChannel, Proxy agent, Stream stub, CLI, tests" --mode now
+When completely finished, run:
+openclaw gateway wake --text "Done: Phase 1b persistence — SQLite stores, migrations, rehydration" --mode now
