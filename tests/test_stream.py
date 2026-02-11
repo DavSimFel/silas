@@ -74,9 +74,10 @@ async def test_chronicle_zone_populated(
     stream = _stream(channel, turn_context)
     await stream._process_turn(_msg("hello"))
     chronicle = context_manager.get_zone("owner", ContextZone.chronicle)
-    assert len(chronicle) == 1
+    assert len(chronicle) == 2  # user message + agent response
     assert "[owner]" in chronicle[0].content
     assert "hello" in chronicle[0].content
+    assert "Silas:" in chronicle[1].content
 
 
 @pytest.mark.asyncio

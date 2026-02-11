@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from silas.protocols.audit import AuditLog
+from silas.protocols.chronicle import ChronicleStore
 from silas.protocols.context import ContextManager
 from silas.protocols.gates import GateRunner
 from silas.protocols.memory import MemoryStore
@@ -22,7 +23,7 @@ class TurnContext:
     scope_id: str = "owner"
     context_manager: ContextManager | None = None
     memory_store: MemoryStore | None = None
-    chronicle_store: object | None = None
+    chronicle_store: ChronicleStore | None = None
     proxy: StructuredAgentRunner | None = None
     planner: StructuredAgentRunner | None = None
     work_executor: WorkItemExecutor | None = None

@@ -1,3 +1,5 @@
+"""Silas CLI entry point and dependency wiring."""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,15 +8,30 @@ from pathlib import Path
 import click
 
 from silas.agents.proxy import build_proxy_agent
+from silas.audit.sqlite_audit import SQLiteAuditLog
 from silas.channels.web import WebChannel
 from silas.config import SilasSettings, load_config
 from silas.core.stream import Stream
 from silas.core.turn_context import TurnContext
-from silas.stubs import InMemoryAuditLog
+from silas.memory.sqlite_store import SQLiteMemoryStore
+from silas.persistence.chronicle_store import SQLiteChronicleStore
+from silas.persistence.migrations import run_migrations
+from silas.persistence.nonce_store import SQLiteNonceStore
+from silas.persistence.work_item_store import SQLiteWorkItemStore
+
+
+def _db_path(settings: SilasSettings) -> str:
+    data_dir = settings.data_dir
+    if not data_dir.is_absolute():
+        data_dir = Path.cwd() / data_dir
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return str(data_dir / "silas.db")
 
 
 def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
     web_cfg = settings.channels.web
+    db = _db_path(settings)
+
     channel = WebChannel(
         host=web_cfg.host,
         port=web_cfg.port,
@@ -27,10 +44,19 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
         default_context_profile=settings.context.default_profile,
     )
 
+    memory_store = SQLiteMemoryStore(db)
+    chronicle_store = SQLiteChronicleStore(db)
+    work_item_store = SQLiteWorkItemStore(db)  # noqa: F841 — wired in Phase 3
+    audit = SQLiteAuditLog(db)
+    nonce_store = SQLiteNonceStore(db)  # noqa: F841 — wired in Phase 3
+
     turn_context = TurnContext(
         scope_id=settings.owner_id,
+        context_manager=None,  # Phase 1c: LiveContextManager
+        memory_store=memory_store,
+        chronicle_store=chronicle_store,
         proxy=proxy,
-        audit=InMemoryAuditLog(),
+        audit=audit,
         config=settings,
     )
 
@@ -51,20 +77,20 @@ def cli() -> None:
 @cli.command("init")
 @click.option("--config", "config_path", default="config/silas.yaml", show_default=True)
 def init_command(config_path: str) -> None:
+    """Initialize Silas data directory and run migrations."""
     settings = load_config(config_path)
-    data_dir = settings.data_dir
-    if not data_dir.is_absolute():
-        data_dir = Path.cwd() / data_dir
+    db = _db_path(settings)
 
-    data_dir.mkdir(parents=True, exist_ok=True)
-    db_path = data_dir / "silas.db"
-    db_path.touch(exist_ok=True)
-
-    click.echo(f"Initialized data dir: {data_dir}")
-    click.echo(f"DB placeholder: {db_path}")
+    # Run migrations synchronously
+    asyncio.run(run_migrations(db))
+    click.echo(f"Database initialized: {db}")
 
 
 async def _start_runtime(settings: SilasSettings) -> None:
+    # Run migrations before starting
+    db = _db_path(settings)
+    await run_migrations(db)
+
     stream, web_channel = build_stream(settings)
     await asyncio.gather(web_channel.serve(), stream.start())
 
@@ -72,6 +98,7 @@ async def _start_runtime(settings: SilasSettings) -> None:
 @cli.command("start")
 @click.option("--config", "config_path", default="config/silas.yaml", show_default=True)
 def start_command(config_path: str) -> None:
+    """Start the Silas runtime."""
     settings = load_config(config_path)
     if not settings.channels.web.enabled:
         raise click.ClickException("Phase 1a requires channels.web.enabled=true")
