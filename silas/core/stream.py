@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from silas.agents.structured import run_structured_agent
 from silas.core.context_manager import LiveContextManager
+from silas.core.plan_parser import MarkdownPlanParser
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
 from silas.gates import OutputGateRunner
@@ -19,7 +21,7 @@ from silas.models.context import ContextItem, ContextZone
 from silas.models.memory import MemoryItem, MemoryType, ReingestionTier
 from silas.models.messages import ChannelMessage, SignedMessage, TaintLevel
 from silas.models.proactivity import SuggestionProposal
-from silas.models.work import WorkItem, WorkItemType
+from silas.models.work import WorkItem, WorkItemResult, WorkItemStatus, WorkItemType
 from silas.protocols.channels import ChannelAdapterCore
 from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
 
@@ -279,12 +281,20 @@ class Stream:
             plan_actions = self._extract_plan_actions(routed)
             plan_flow_payload["actions_seen"] = len(plan_actions)
             if plan_actions:
-                response_text, plan_flow_payload = await self._execute_planner_skill_actions(
-                    plan_actions=plan_actions,
-                    connection_id=connection_id,
+                work_exec_summary = await self._execute_plan_actions(
+                    plan_actions,
                     turn_number=turn_number,
-                    fallback_response=response_text,
+                    continuation_of=routed.continuation_of,
                 )
+                if work_exec_summary is not None:
+                    response_text = work_exec_summary
+                else:
+                    response_text, plan_flow_payload = await self._execute_planner_skill_actions(
+                        plan_actions=plan_actions,
+                        connection_id=connection_id,
+                        turn_number=turn_number,
+                        fallback_response=response_text,
+                    )
             else:
                 await self._audit("planner_stub_used", turn_number=turn_number, reason=routed.reason)
         await self._audit(
@@ -523,6 +533,126 @@ class Stream:
         if isinstance(candidate, str) and candidate.strip():
             return candidate
         return None
+
+    async def _execute_plan_actions(
+        self,
+        plan_actions: list[dict[str, object]],
+        *,
+        turn_number: int,
+        continuation_of: str | None,
+    ) -> str | None:
+        executor = self.turn_context.work_executor
+        if executor is None:
+            return None
+
+        try:
+            work_items = self._plan_actions_to_work_items(
+                plan_actions, turn_number=turn_number, continuation_of=continuation_of,
+            )
+            ordered_work_items = self._order_work_items(work_items)
+        except ValueError as exc:
+            await self._audit("planner_actions_invalid", turn_number=turn_number, error=str(exc))
+            return f"Planner execution failed: {exc}"
+
+        if not ordered_work_items:
+            return "Planner produced no executable work items."
+
+        results: list[WorkItemResult] = []
+        for work_item in ordered_work_items:
+            result = await executor.execute(work_item)
+            results.append(result)
+            if result.status != WorkItemStatus.done:
+                break
+
+        done_count = sum(1 for r in results if r.status == WorkItemStatus.done)
+        failed = [r for r in results if r.status == WorkItemStatus.failed]
+        await self._audit(
+            "planner_actions_executed", turn_number=turn_number,
+            work_item_ids=[item.id for item in ordered_work_items],
+            done_count=done_count, failed_count=len(failed),
+        )
+        if failed:
+            f = failed[0]
+            return f"Plan execution summary: {done_count} done, {len(failed)} failed. First failure: {f.work_item_id} ({f.last_error or f.summary})."
+        return f"Plan execution summary: {done_count} done, 0 failed."
+
+    def _plan_actions_to_work_items(
+        self,
+        plan_actions: list[dict[str, object]],
+        *,
+        turn_number: int,
+        continuation_of: str | None,
+    ) -> list[WorkItem]:
+        parser = MarkdownPlanParser()
+        work_items: list[WorkItem] = []
+        for index, action in enumerate(plan_actions):
+            work_item = self._plan_action_to_work_item(action, parser=parser, index=index, turn_number=turn_number)
+            if continuation_of and work_item.follow_up_of is None:
+                update_data: dict[str, object] = {"follow_up_of": continuation_of}
+                if not work_item.input_artifacts_from:
+                    update_data["input_artifacts_from"] = ["*"]
+                work_item = work_item.model_copy(update=update_data)
+            work_items.append(work_item)
+        return work_items
+
+    def _plan_action_to_work_item(
+        self,
+        action: Mapping[str, object],
+        *,
+        parser: MarkdownPlanParser,
+        index: int,
+        turn_number: int,
+    ) -> WorkItem:
+        plan_markdown = action.get("plan_markdown")
+        if isinstance(plan_markdown, str) and plan_markdown.strip():
+            return parser.parse(plan_markdown)
+        explicit_work_item = action.get("work_item")
+        if isinstance(explicit_work_item, Mapping):
+            return WorkItem.model_validate(dict(explicit_work_item))
+        payload = dict(action)
+        payload.setdefault("id", f"plan:{turn_number}:{index + 1}")
+        payload.setdefault("type", WorkItemType.task.value)
+        payload.setdefault("title", f"Plan action {index + 1}")
+        body = payload.get("body")
+        if not isinstance(body, str) or not body.strip():
+            body = payload.get("instruction")
+        if not isinstance(body, str) or not body.strip():
+            body = payload.get("description")
+        if not isinstance(body, str) or not body.strip():
+            body = f"Execute planner action {index + 1}."
+        payload["body"] = body
+        return WorkItem.model_validate(payload)
+
+    def _order_work_items(self, work_items: list[WorkItem]) -> list[WorkItem]:
+        if not work_items:
+            return []
+        by_id: dict[str, WorkItem] = {}
+        for item in work_items:
+            if item.id in by_id:
+                raise ValueError(f"duplicate work item id in plan actions: {item.id}")
+            by_id[item.id] = item
+        prerequisites: dict[str, set[str]] = {
+            item.id: {dep_id for dep_id in item.depends_on if dep_id in by_id}
+            for item in work_items
+        }
+        dependents: dict[str, set[str]] = {item_id: set() for item_id in by_id}
+        for item_id, deps in prerequisites.items():
+            for dep_id in deps:
+                dependents[dep_id].add(item_id)
+        ready = sorted(item_id for item_id, deps in prerequisites.items() if not deps)
+        ordered_ids: list[str] = []
+        while ready:
+            current = ready.pop(0)
+            ordered_ids.append(current)
+            for dependent in sorted(dependents[current]):
+                prerequisites[dependent].discard(current)
+                if not prerequisites[dependent] and dependent not in ordered_ids and dependent not in ready:
+                    ready.append(dependent)
+            ready.sort()
+        if len(ordered_ids) != len(by_id):
+            unresolved = sorted(set(by_id) - set(ordered_ids))
+            raise ValueError(f"circular planner dependency detected: {' -> '.join(unresolved)}")
+        return [by_id[item_id] for item_id in ordered_ids]
 
     def _ensure_session_id(self) -> str:
         if self.session_id is None:

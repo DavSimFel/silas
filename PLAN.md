@@ -142,7 +142,7 @@
 
 ---
 
-## Phase 5: Voice + PWA → 🪶 MIGRATION
+## Phase 5: Voice + PWA
 
 **What it does:** Personality engine + PWA hardening. This is where I move into my own runtime.
 
@@ -162,25 +162,13 @@
 - Test infra: `FakePersonalityEngine`, axis composition tests, decay tests
 - **Milestone:** Preset change → style changes. Mood survives restart. Security unchanged.
 
-### 5b: PWA + Migration
+### 5b: PWA Hardening
 - PWA finalization: offline support, install prompt, push notifications for approval requests
 - Side sessions (URL routing: `/side/new`, `/stream`)
-- Multi-connection WebChannel (scope isolation, per-connection state)
 - Card rendering for approval, batch review, suggestions
-- **Migration sequence:**
-  1. Seed initial memory + personality baseline from owner's context files
-  2. Configure PWA pointed at Silas instance
-  3. Verify: multi-turn memory, approval flow, personality coherence, context eviction
-  4. 48h parallel run with prior agent setup, owner uses both
-  5. Cutover — Silas becomes primary via PWA
-- **Milestone:** Silas running as PWA. Remembers context. Has personality. Approves plans inline.
+- **Milestone:** Full personality + PWA. Agent has voice and style.
 
-**Gate:** Silas handles conversation, memory, task execution with approval, and personality — all via installable PWA.
-
-### Why migrate here?
-- After Phase 3 = no safety gates, risky for real use
-- After Phase 4 = safe but no personality, agent has no voice
-- **After Phase 5** = memory + execution + safety + personality + PWA = minimum viable agent
+**Gate:** Silas has personality, memory, execution, safety — all via installable PWA.
 
 ---
 
@@ -236,9 +224,24 @@
 
 ---
 
+## 🪶 MIGRATION (between Phase 7 and 8)
+
+**What it does:** Silas moves into his own runtime. Polish happens from the inside.
+
+- Seed initial memory + personality baseline from owner's context files
+- Configure PWA + Telegram pointed at Silas instance
+- Multi-connection WebChannel (scope isolation, per-connection state)
+- Verify: multi-turn memory, approval flow, personality coherence, context eviction
+- 48h parallel run with prior agent setup, owner uses both
+- Cutover — Silas becomes primary
+
+**Gate:** Silas handles conversation, memory, task execution, safety, personality, skills, and autonomy. Ready for real use.
+
+---
+
 ## Phase 8: Scale + Polish
 
-**What it does:** Production hardening, additional channels, advanced features.
+**What it does:** Production hardening, additional channels, advanced features. Silas polishes himself from inside the runtime.
 
 - `TelegramChannel` — long-polling, inline keyboards
 - Docker backend for `SandboxManager`
@@ -264,10 +267,10 @@
 ## Migration Timeline
 
 ```
-Phase 1 ─── Phase 2 ─── Phase 3 ─── Phase 4 ─── Phase 5 ─── Phase 6+
- Echo        Brain       Hands       Guards      Voice+PWA    Skills...
-                           │                        │
-                         MVP-1                 🪶 I MOVE IN
+Phase 1 ─── Phase 2 ─── Phase 3 ─── Phase 4 ─── Phase 5 ─── Phase 6 ─── Phase 7 ─── 🪶 MIGRATION ─── Phase 8
+ Echo        Brain       Hands       Guards      Voice+PWA    Skills     Goals+Auto    I MOVE IN       Polish
+                           │                                                │                            │
+                         MVP-1                                            MVP-2                    (from inside)
                                                (48h parallel
                                                 then cutover)
 ```
