@@ -105,6 +105,7 @@ class RouteDecision(BaseModel):
     interaction_mode: InteractionMode
     continuation_of: str | None = None
     context_profile: str
+    plan_actions: list[dict[str, object]] = Field(default_factory=list)
 
     _profile_registry: ClassVar[set[str]] = {
         "conversation",
@@ -129,6 +130,8 @@ class RouteDecision(BaseModel):
             raise ValueError("response is required when route='direct'")
         if self.route == "planner" and self.response is not None:
             raise ValueError("response must be None when route='planner'")
+        if self.route == "direct" and self.plan_actions:
+            raise ValueError("plan_actions are only valid when route='planner'")
         return self
 
 

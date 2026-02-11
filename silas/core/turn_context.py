@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from silas.protocols.approval import ApprovalManager
 from silas.protocols.audit import AuditLog
 from silas.protocols.chronicle import ChronicleStore
 from silas.protocols.context import ContextManager
@@ -40,6 +41,7 @@ class TurnContext:
     skill_resolver: SkillResolver | None = None
     skill_registry: SkillRegistry | None = None
     skill_executor: SkillExecutor | None = None
+    approval_manager: ApprovalManager | None = None
     suggestion_engine: SuggestionEngine | None = None
     autonomy_calibrator: AutonomyCalibrator | None = None
     audit: AuditLog | None = None

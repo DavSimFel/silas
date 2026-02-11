@@ -16,6 +16,7 @@ from silas.models.approval import (
     ApprovalToken,
     ApprovalVerdict,
     Base64Bytes,
+    PendingApproval,
 )
 from silas.models.context import (
     ContextItem,
@@ -100,6 +101,7 @@ __all__ = [
     "ApprovalDecision",
     "Base64Bytes",
     "ApprovalToken",
+    "PendingApproval",
     "Session",
     "SessionType",
 ]
