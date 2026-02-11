@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="h-full">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Silas</title>
-    <meta name="theme-color" content="#141f3e" />
+    <meta name="theme-color" content="#0a0f1e" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="manifest" href="/manifest.json" />
@@ -12,21 +12,66 @@
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
     <link rel="stylesheet" href="/style.css" />
   </head>
-  <body>
-    <main class="chat-shell">
-      <header class="chat-header">
-        <h1>Silas 🪶</h1>
-        <span id="connection-status" class="connection-status" data-state="connecting" hidden>Connecting…</span>
-        <button id="install-btn" class="install-btn" hidden>Install</button>
-      </header>
+  <body class="h-full flex flex-col overflow-hidden">
 
-      <section id="messages" class="messages" aria-live="polite"></section>
+    <!-- Status Strip -->
+    <header id="status-strip"
+      class="flex items-center justify-between px-4 pt-[env(safe-area-inset-top)] h-11 shrink-0 transition-opacity duration-200"
+    >
+      <div class="flex items-center gap-2">
+        <span class="text-[15px] font-semibold text-text-primary tracking-tight">Silas</span>
+        <span id="status-dot" class="w-2 h-2 rounded-full bg-status-green transition-colors duration-200"></span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span id="work-status" class="text-xs text-text-tertiary transition-opacity duration-200 hidden"></span>
+        <button id="install-btn" class="text-xs text-tint hover:text-tint-hover transition-colors duration-100 hidden">Install</button>
+      </div>
+    </header>
 
-      <form id="composer" class="composer">
-        <input id="message-input" type="text" placeholder="Type a message..." autocomplete="off" required />
-        <button type="submit">Send</button>
-      </form>
+    <!-- Stream -->
+    <main id="stream" class="flex-1 overflow-y-auto px-4 pb-2">
+      <div id="messages" class="mx-auto max-w-[760px] flex flex-col gap-4 py-6">
+
+        <!-- Empty State -->
+        <div id="empty-state" class="flex flex-col items-center justify-center h-full min-h-[60vh] select-none">
+          <span class="text-5xl breathe mb-6">🪶</span>
+          <p class="text-xl font-light text-text-tertiary">What should I work on?</p>
+        </div>
+
+      </div>
     </main>
+
+    <!-- Composer -->
+    <footer class="shrink-0 px-4 pb-[env(safe-area-inset-bottom)] pb-3">
+      <form id="composer" class="mx-auto max-w-[760px] relative">
+        <textarea
+          id="message-input"
+          rows="1"
+          placeholder="Message Silas…"
+          class="w-full resize-none bg-transparent text-[15px] text-text-primary placeholder:text-text-tertiary
+                 py-3 pl-4 pr-12
+                 border border-transparent rounded-[14px]
+                 focus:border-surface-border focus:outline-none
+                 transition-[border-color] duration-200
+                 leading-[22px] max-h-[132px] overflow-y-auto"
+          autocomplete="off"
+        ></textarea>
+        <button
+          type="submit"
+          id="send-btn"
+          class="absolute right-3 bottom-3 w-8 h-8 flex items-center justify-center
+                 rounded-full bg-tint-subtle text-tint
+                 hover:bg-tint hover:text-bg
+                 transition-all duration-100
+                 opacity-0 pointer-events-none"
+          aria-label="Send"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 8h10M9 4l4 4-4 4"/>
+          </svg>
+        </button>
+      </form>
+    </footer>
 
     <script src="/app.js" defer></script>
   </body>
