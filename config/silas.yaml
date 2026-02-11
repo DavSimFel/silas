@@ -24,6 +24,10 @@ silas:
       research: { chronicle_pct: 0.20, memory_pct: 0.40, workspace_pct: 0.20 }
       support: { chronicle_pct: 0.40, memory_pct: 0.25, workspace_pct: 0.15 }
 
+  skills:
+    shipped_dir: "./silas/skills/shipped"
+    custom_dir: "./silas/skills/custom"
+
   channels:
     web:
       enabled: true

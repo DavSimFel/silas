@@ -75,12 +75,18 @@ class ContextConfig(BaseModel):
         )
 
 
+class SkillsConfig(BaseModel):
+    shipped_dir: Path = Path("./silas/skills/shipped")
+    custom_dir: Path = Path("./silas/skills/custom")
+
+
 class SilasSettings(BaseSettings):
     owner_id: str = "owner"
     data_dir: Path = Path("./data")
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
 
     model_config = SettingsConfigDict(
         env_prefix="SILAS_",
