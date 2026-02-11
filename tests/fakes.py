@@ -9,6 +9,7 @@ from silas.models.agents import AgentResponse, InteractionMode, InteractionRegis
 from silas.models.context import ContextItem, ContextProfile, ContextSubscription, ContextZone
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import ChannelMessage, TaintLevel
+from silas.models.personality import AxisProfile, MoodState, PersonaState, VoiceConfig
 from silas.models.proactivity import SuggestionProposal
 from silas.models.work import BudgetUsed, WorkItem, WorkItemResult, WorkItemStatus
 from silas.stubs import InMemoryAuditLog as InMemoryAuditLog  # noqa: PLC0414
@@ -287,6 +288,121 @@ class FakeAutonomyCalibrator:
         return list(self.proposals_by_scope.get(scope_id, []))
 
 
+def _neutral_axes() -> AxisProfile:
+    return AxisProfile(
+        warmth=0.5,
+        assertiveness=0.5,
+        verbosity=0.5,
+        formality=0.5,
+        humor=0.5,
+        initiative=0.5,
+        certainty=0.5,
+    )
+
+
+def _default_voice() -> VoiceConfig:
+    return VoiceConfig(tone="neutral", quirks=[], speech_patterns=[], anti_patterns=[])
+
+
+def _default_persona_state(scope_id: str) -> PersonaState:
+    return PersonaState(
+        scope_id=scope_id,
+        baseline_axes=_neutral_axes(),
+        mood=MoodState(energy=0.5, patience=0.5, curiosity=0.5, frustration=0.5),
+        active_preset="default",
+        voice=_default_voice(),
+        last_context="",
+        updated_at=_utc_now(),
+    )
+
+
+@dataclass(slots=True)
+class FakePersonalityEngine:
+    default_context: str = "default"
+    axes_default: AxisProfile = field(default_factory=_neutral_axes)
+    directives_default: str = "Use a balanced, neutral style."
+    states_by_scope: dict[str, PersonaState] = field(default_factory=dict)
+    context_matches: dict[str, str] = field(default_factory=dict)
+    axes_by_scope_context: dict[tuple[str, str], AxisProfile] = field(default_factory=dict)
+    directives_by_scope_context: dict[tuple[str, str], str] = field(default_factory=dict)
+    detect_calls: list[tuple[ChannelMessage, str | None]] = field(default_factory=list)
+    effective_calls: list[tuple[str, str]] = field(default_factory=list)
+    render_calls: list[tuple[str, str]] = field(default_factory=list)
+    apply_calls: list[tuple[str, str, bool, str, dict[str, object] | None]] = field(
+        default_factory=list
+    )
+    decay_calls: list[tuple[str, datetime]] = field(default_factory=list)
+    preset_calls: list[tuple[str, str]] = field(default_factory=list)
+    adjust_calls: list[tuple[str, dict[str, float], bool, bool]] = field(default_factory=list)
+
+    async def detect_context(
+        self, message: ChannelMessage, route_hint: str | None = None
+    ) -> str:
+        self.detect_calls.append((message, route_hint))
+        if route_hint:
+            return route_hint
+        lower_text = message.text.lower()
+        for fragment, context in self.context_matches.items():
+            if fragment.lower() in lower_text:
+                return context
+        return self.default_context
+
+    async def get_effective_axes(self, scope_id: str, context_key: str) -> AxisProfile:
+        self.effective_calls.append((scope_id, context_key))
+        axes = self.axes_by_scope_context.get((scope_id, context_key), self.axes_default)
+        return axes.model_copy(deep=True)
+
+    async def render_directives(self, scope_id: str, context_key: str) -> str:
+        self.render_calls.append((scope_id, context_key))
+        return self.directives_by_scope_context.get((scope_id, context_key), self.directives_default)
+
+    async def apply_event(
+        self,
+        scope_id: str,
+        event_type: str,
+        trusted: bool,
+        source: str,
+        metadata: dict[str, object] | None = None,
+    ) -> PersonaState:
+        self.apply_calls.append((scope_id, event_type, trusted, source, metadata))
+        state = self.states_by_scope.get(scope_id, _default_persona_state(scope_id))
+        self.states_by_scope[scope_id] = state.model_copy(
+            update={"updated_at": _utc_now()},
+            deep=True,
+        )
+        return self.states_by_scope[scope_id].model_copy(deep=True)
+
+    async def decay(self, scope_id: str, now: datetime) -> PersonaState:
+        self.decay_calls.append((scope_id, now))
+        state = self.states_by_scope.get(scope_id, _default_persona_state(scope_id))
+        self.states_by_scope[scope_id] = state.model_copy(update={"updated_at": now}, deep=True)
+        return self.states_by_scope[scope_id].model_copy(deep=True)
+
+    async def set_preset(self, scope_id: str, preset_name: str) -> PersonaState:
+        self.preset_calls.append((scope_id, preset_name))
+        state = self.states_by_scope.get(scope_id, _default_persona_state(scope_id))
+        self.states_by_scope[scope_id] = state.model_copy(
+            update={"active_preset": preset_name, "updated_at": _utc_now()},
+            deep=True,
+        )
+        return self.states_by_scope[scope_id].model_copy(deep=True)
+
+    async def adjust_axes(
+        self,
+        scope_id: str,
+        delta: dict[str, float],
+        trusted: bool,
+        persist_to_baseline: bool = False,
+    ) -> PersonaState:
+        self.adjust_calls.append((scope_id, dict(delta), trusted, persist_to_baseline))
+        state = self.states_by_scope.get(scope_id, _default_persona_state(scope_id))
+        self.states_by_scope[scope_id] = state.model_copy(
+            update={"updated_at": _utc_now()},
+            deep=True,
+        )
+        return self.states_by_scope[scope_id].model_copy(deep=True)
+
+
 def sample_memory_item(memory_id: str, content: str) -> MemoryItem:
     return MemoryItem(
         memory_id=memory_id,
@@ -305,6 +421,7 @@ __all__ = [
     "FakeAutonomyCalibrator",
     "FakeSuggestionEngine",
     "FakeTokenCounter",
+    "FakePersonalityEngine",
     "InMemoryAuditLog",
     "InMemoryChannel",
     "InMemoryContextManager",

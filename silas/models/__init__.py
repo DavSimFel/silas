@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from silas.models.agents import (
     AgentResponse,
     InteractionMode,
@@ -37,6 +39,14 @@ from silas.models.gates import (
 )
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import ChannelMessage, SignedMessage, TaintLevel
+from silas.models.personality import (
+    AxisProfile,
+    MoodState,
+    PersonaEvent,
+    PersonaPreset,
+    PersonaState,
+    VoiceConfig,
+)
 from silas.models.proactivity import Suggestion, SuggestionProposal
 from silas.models.sessions import Session, SessionType
 from silas.models.skills import SkillDefinition, SkillMetadata, SkillRef, SkillResult
@@ -106,6 +116,12 @@ __all__ = [
     "PendingApproval",
     "Session",
     "SessionType",
+    "AxisProfile",
+    "MoodState",
+    "VoiceConfig",
+    "PersonaPreset",
+    "PersonaState",
+    "PersonaEvent",
     "Suggestion",
     "SuggestionProposal",
     "SkillDefinition",
