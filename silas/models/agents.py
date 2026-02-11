@@ -106,7 +106,12 @@ class RouteDecision(BaseModel):
     continuation_of: str | None = None
     context_profile: str
 
-    _profile_registry: ClassVar[set[str]] = {"conversation"}
+    _profile_registry: ClassVar[set[str]] = {
+        "conversation",
+        "coding",
+        "research",
+        "support",
+    }
 
     @classmethod
     def configure_profiles(cls, profile_names: set[str] | list[str]) -> None:
