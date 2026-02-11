@@ -43,6 +43,23 @@ body {
   font-size: 1.4rem;
 }
 
+.connection-status {
+  font-size: 0.75rem;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-weight: 500;
+}
+
+.connection-status[data-state="offline"] {
+  background: #6b2020;
+  color: #ff9e9e;
+}
+
+.connection-status[data-state="connecting"] {
+  background: #5a4a10;
+  color: #ffd866;
+}
+
 .install-btn {
   border: 1px solid var(--accent);
   border-radius: 8px;
