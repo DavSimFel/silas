@@ -5,6 +5,7 @@ from silas.protocols.connections import ConnectionManager
 from silas.protocols.context import ContextManager
 from silas.protocols.execution import EphemeralExecutor, SandboxManager
 from silas.protocols.gates import GateCheckProvider, GateRunner
+from silas.protocols.goals import GoalManager
 from silas.protocols.memory import (
     MemoryConsolidator,
     MemoryPortability,
@@ -45,4 +46,5 @@ __all__ = [
     "AutonomyCalibrator",
     "SkillLoader",
     "SkillResolver",
+    "GoalManager",
 ]
