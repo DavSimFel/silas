@@ -237,6 +237,17 @@ class TestAppJsFeatures:
         text = (await client.get("/app.js")).text
         assert "msg-agent" in text or "createAgentMessageElement" in text
 
+    async def test_streaming_protocol_handlers(self, client: AsyncClient) -> None:
+        text = (await client.get("/app.js")).text
+        assert "stream_start" in text
+        assert "stream_chunk" in text
+        assert "stream_end" in text
+
+    async def test_stream_chunk_animation(self, client: AsyncClient) -> None:
+        text = (await client.get("/app.js")).text
+        assert "animateStreamingChunk" in text
+        assert "prose.animate" in text
+
 
 # ── CSS Design Tokens ──
 

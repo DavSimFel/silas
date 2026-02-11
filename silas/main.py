@@ -88,6 +88,8 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
         owner_id=settings.owner_id,
         default_context_profile=settings.context.default_profile,
         output_gate_runner=output_gate_runner,
+        streaming_enabled=settings.stream.streaming_enabled,
+        chunk_size=settings.stream.chunk_size,
     )
     return stream, channel
 

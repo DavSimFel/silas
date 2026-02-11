@@ -80,6 +80,7 @@ let shortcutOpen = false;
 let activeStreamMessageEl = null;
 
 const LONG_MESSAGE_THRESHOLD = 300;
+const STREAM_CHUNK_TYPES = new Set(["stream_chunk", "message_chunk"]);
 const STREAM_DONE_TYPES = new Set(["message_done", "stream_done", "completion_done"]);
 const copyResetTimers = new WeakMap();
 
@@ -353,8 +354,19 @@ function connect(isReconnect = reconnectAttempt > 0) {
   ws.addEventListener("message", (event) => {
     try {
       const data = JSON.parse(event.data);
-      if (data.type === "message_chunk") {
+      if (data.type === "stream_start") {
+        startStreamingMessage();
+        return;
+      }
+
+      if (STREAM_CHUNK_TYPES.has(data.type)) {
         addStreamChunk(data.text ?? "");
+        return;
+      }
+
+      if (data.type === "stream_end") {
+        finalizeStreamingMessage();
+        completeOldestActiveWork();
         return;
       }
 
@@ -561,6 +573,22 @@ function renderAgentMessageContent(el, text, options = {}) {
   wireMarkdownInteractions(container);
 }
 
+function startStreamingMessage() {
+  hideEmptyState();
+  removeThinking();
+
+  if (activeStreamMessageEl && activeStreamMessageEl.isConnected) {
+    finalizeStreamingMessage();
+  }
+
+  const target = createAgentMessageElement("", { streaming: true });
+  messages.appendChild(target);
+  messageCount += 1;
+  applyHistoryFade();
+  scrollToBottom();
+  renderSessionInfo();
+}
+
 function addStreamChunk(text) {
   const chunk = String(text ?? "");
   if (!chunk) return;
@@ -577,9 +605,24 @@ function addStreamChunk(text) {
 
   const nextText = `${target.dataset.fullText || ""}${chunk}`;
   renderAgentMessageContent(target, nextText, { streaming: true });
+  animateStreamingChunk(target);
   applyHistoryFade();
   scrollToBottom();
   renderSessionInfo();
+}
+
+function animateStreamingChunk(target) {
+  if (!target || prefersReducedMotion.matches) return;
+  const prose = target.querySelector("[data-md-prose]");
+  if (!prose) return;
+
+  prose.animate(
+    [{ opacity: 0.56 }, { opacity: 1 }],
+    {
+      duration: MOTION.fast,
+      easing: "ease-out",
+    },
+  );
 }
 
 function finalizeStreamingMessage(text = null) {

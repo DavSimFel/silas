@@ -6,6 +6,8 @@ memory retrieval, context profile setting, and edge cases.
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
 from datetime import datetime, timezone
 
 import pytest
@@ -38,13 +40,42 @@ def _msg(text: str, sender_id: str = "owner") -> ChannelMessage:
 def _stream(
     channel: InMemoryChannel,
     turn_context,
+    *,
+    streaming_enabled: bool = False,
+    chunk_size: int = 50,
+    stream_chunk_delay_seconds: float = 0,
 ) -> Stream:
     return Stream(
         channel=channel,
         turn_context=turn_context,
         owner_id="owner",
         default_context_profile="conversation",
+        streaming_enabled=streaming_enabled,
+        chunk_size=chunk_size,
+        stream_chunk_delay_seconds=stream_chunk_delay_seconds,
     )
+
+
+async def _wait_until(predicate, timeout: float = 2.0) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        if predicate():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("timed out waiting for condition")
+
+
+async def _stop_stream(stream: Stream, start_task: asyncio.Task[None]) -> None:
+    start_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await start_task
+
+    inflight = list(stream._inflight_turn_tasks)
+    for task in inflight:
+        task.cancel()
+    if inflight:
+        await asyncio.gather(*inflight, return_exceptions=True)
 
 
 class BlockingOutputGateRunner:
@@ -103,6 +134,108 @@ async def test_response_sent_to_channel(
     assert len(channel.outgoing) == 1
     assert channel.outgoing[0]["text"] == "echo: test"
     assert channel.outgoing[0]["recipient_id"] == "owner"
+
+
+@pytest.mark.asyncio
+async def test_response_streamed_when_enabled(
+    channel: InMemoryChannel,
+    turn_context,
+) -> None:
+    stream = _stream(
+        channel,
+        turn_context,
+        streaming_enabled=True,
+        chunk_size=5,
+        stream_chunk_delay_seconds=0,
+    )
+
+    await stream._process_turn(_msg("stream me"))
+
+    assert channel.outgoing == []
+    assert channel.stream_events[0]["type"] == "stream_start"
+    assert channel.stream_events[-1]["type"] == "stream_end"
+    chunks = [event["text"] for event in channel.stream_events if event["type"] == "stream_chunk"]
+    assert "".join(chunks) == "echo: stream me"
+    assert all(0 < len(chunk) <= 5 for chunk in chunks)
+
+
+def test_chunk_text_respects_chunk_size(
+    channel: InMemoryChannel,
+    turn_context,
+) -> None:
+    stream = _stream(channel, turn_context, chunk_size=4)
+    assert stream._chunk_text("abcdefghij") == ["abcd", "efgh", "ij"]
+
+
+@pytest.mark.asyncio
+async def test_same_connection_messages_queue_while_streaming(
+    channel: InMemoryChannel,
+    turn_context,
+) -> None:
+    stream = _stream(
+        channel,
+        turn_context,
+        streaming_enabled=True,
+        chunk_size=4,
+        stream_chunk_delay_seconds=0.01,
+    )
+    start_task = asyncio.create_task(stream.start())
+
+    await channel.push_message("first", scope_id="conn-1")
+    await channel.push_message("second", scope_id="conn-1")
+
+    await _wait_until(
+        lambda: sum(1 for event in channel.stream_events if event["type"] == "stream_end") >= 2
+    )
+    await _stop_stream(stream, start_task)
+
+    types = [event["type"] for event in channel.stream_events]
+    first_end = types.index("stream_end")
+    second_start = types.index("stream_start", first_end + 1)
+    assert first_end < second_start
+
+
+@pytest.mark.asyncio
+async def test_streaming_does_not_block_other_connections(
+    channel: InMemoryChannel,
+    turn_context,
+) -> None:
+    stream = _stream(
+        channel,
+        turn_context,
+        streaming_enabled=True,
+        chunk_size=2,
+        stream_chunk_delay_seconds=0.02,
+    )
+    start_task = asyncio.create_task(stream.start())
+
+    await channel.push_message("abcdefghijklmnopqrstuvwxyz", scope_id="conn-1")
+    await channel.push_message("ok", scope_id="conn-2")
+
+    await _wait_until(
+        lambda: len(
+            [
+                event
+                for event in channel.stream_events
+                if event["type"] == "stream_end"
+                and event["connection_id"] in {"conn-1", "conn-2"}
+            ]
+        )
+        >= 2
+    )
+    await _stop_stream(stream, start_task)
+
+    conn1_end = next(
+        index
+        for index, event in enumerate(channel.stream_events)
+        if event["type"] == "stream_end" and event["connection_id"] == "conn-1"
+    )
+    conn2_end = next(
+        index
+        for index, event in enumerate(channel.stream_events)
+        if event["type"] == "stream_end" and event["connection_id"] == "conn-2"
+    )
+    assert conn2_end < conn1_end
 
 
 @pytest.mark.asyncio
@@ -319,6 +452,7 @@ async def test_output_gate_block_sanitizes_response(
         owner_id="owner",
         default_context_profile="conversation",
         output_gate_runner=gate_runner,
+        streaming_enabled=False,
     )
 
     result = await stream._process_turn(_msg("hello", sender_id="stranger"))
@@ -341,6 +475,7 @@ async def test_planner_route_response_runs_through_output_gates(
         owner_id="owner",
         default_context_profile="conversation",
         output_gate_runner=gate_runner,
+        streaming_enabled=False,
     )
 
     result = await stream._process_turn(_msg("build a 5-step plan"))

@@ -186,6 +186,7 @@ class InMemoryMemoryStore:
 class InMemoryChannel:
     channel_name: str = "test"
     outgoing: list[dict[str, object]] = field(default_factory=list)
+    stream_events: list[dict[str, object]] = field(default_factory=list)
     incoming: asyncio.Queue[tuple[ChannelMessage, str]] = field(default_factory=asyncio.Queue)
 
     async def listen(self) -> AsyncIterator[tuple[ChannelMessage, str]]:
@@ -194,6 +195,17 @@ class InMemoryChannel:
 
     async def send(self, recipient_id: str, text: str, reply_to: str | None = None) -> None:
         self.outgoing.append({"recipient_id": recipient_id, "text": text, "reply_to": reply_to})
+
+    async def send_stream_start(self, connection_id: str) -> None:
+        self.stream_events.append({"type": "stream_start", "connection_id": connection_id})
+
+    async def send_stream_chunk(self, connection_id: str, text: str) -> None:
+        self.stream_events.append(
+            {"type": "stream_chunk", "connection_id": connection_id, "text": text}
+        )
+
+    async def send_stream_end(self, connection_id: str) -> None:
+        self.stream_events.append({"type": "stream_end", "connection_id": connection_id})
 
     async def push_message(self, text: str, sender_id: str = "owner", scope_id: str = "owner") -> None:
         message = ChannelMessage(
