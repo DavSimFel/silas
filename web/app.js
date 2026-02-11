@@ -1,8 +1,20 @@
 // Silas PWA — Quiet Design Phase C
 
 // --- Service Worker ---
+let serviceWorkerRegistration = null;
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("/sw.js").catch(() => {});
+  navigator.serviceWorker.register("/sw.js")
+    .then((registration) => {
+      serviceWorkerRegistration = registration;
+      if ("Notification" in window && Notification.permission === "granted") {
+        subscribePush().catch(() => {});
+      }
+    })
+    .catch(() => {});
+
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    handleServiceWorkerMessage(event.data);
+  });
 }
 
 // --- Install Prompt ---
@@ -34,6 +46,11 @@ const root = document.documentElement;
 const stream = document.getElementById("stream");
 const messages = document.getElementById("messages");
 const emptyState = document.getElementById("empty-state");
+const messageRail = document.getElementById("message-rail");
+const cardContainer = document.getElementById("card-container");
+const approvalCardTemplateEl = document.getElementById("approval-card-template");
+const batchReviewCardTemplateEl = document.getElementById("batch-review-card-template");
+const suggestionCardTemplateEl = document.getElementById("suggestion-card-template");
 const composer = document.getElementById("composer");
 const input = document.getElementById("message-input");
 const sendBtn = document.getElementById("send-btn");
@@ -62,6 +79,11 @@ const shortcutOverlay = document.getElementById("shortcut-overlay");
 const shortcutSheet = document.getElementById("shortcut-sheet");
 const shortcutClose = document.getElementById("shortcut-close");
 const liveRegion = document.getElementById("live-region");
+const sessionTabsEl = document.getElementById("session-tabs");
+const newSideSessionBtn = document.getElementById("new-side-session-btn");
+const notificationPromptEl = document.getElementById("notification-prompt");
+const notificationEnableBtn = document.getElementById("notification-enable-btn");
+const notificationDismissBtn = document.getElementById("notification-dismiss-btn");
 
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -78,11 +100,18 @@ let workPanelFocusReturn = null;
 let shortcutFocusReturn = null;
 let shortcutOpen = false;
 let activeStreamMessageEl = null;
+let hasRequestedNotificationPermission = false;
+let notificationPromptDismissed = false;
 
 const LONG_MESSAGE_THRESHOLD = 300;
 const STREAM_CHUNK_TYPES = new Set(["stream_chunk", "message_chunk"]);
 const STREAM_DONE_TYPES = new Set(["message_done", "stream_done", "completion_done"]);
 const copyResetTimers = new WeakMap();
+const NOTIFICATION_PROMPT_DISMISS_KEY = "silas.push.prompt.dismissed";
+const SESSION_MAIN_KEY = "main";
+const sessionsByKey = new Map();
+let activeSessionKey = SESSION_MAIN_KEY;
+let sideSessionOrdinal = 0;
 
 const SHEET_SNAP_VISIBLE = {
   dismissed: 0,
@@ -198,9 +227,14 @@ function isEditableTarget(target) {
 function clearConversation() {
   activeStreamMessageEl = null;
   removeThinking();
-  messages.replaceChildren(emptyState);
+  messageRail?.replaceChildren();
+  cardContainer?.replaceChildren();
+  cardState.cards.clear();
+  cardState.workItemByCardId.clear();
   emptyState.classList.remove("hidden");
   messageCount = 0;
+  workState.items = [];
+  renderWorkItems();
   applyHistoryFade();
   renderSessionInfo();
   scrollToBottom();
@@ -457,7 +491,7 @@ function addMessage(role, text) {
 
   if (!el) return;
   messageCount += 1;
-  messages.appendChild(el);
+  messageRail?.appendChild(el);
   applyHistoryFade();
   scrollToBottom();
   announceMessage(role, value);
@@ -477,7 +511,7 @@ function addThinking() {
       <span class="thinking-dot w-2 h-2 rounded-full"></span>
     </div>
   `;
-  messages.appendChild(el);
+  messageRail?.appendChild(el);
   applyHistoryFade();
   scrollToBottom();
   return el;
@@ -582,7 +616,7 @@ function startStreamingMessage() {
   }
 
   const target = createAgentMessageElement("", { streaming: true });
-  messages.appendChild(target);
+  messageRail?.appendChild(target);
   messageCount += 1;
   applyHistoryFade();
   scrollToBottom();
@@ -599,7 +633,7 @@ function addStreamChunk(text) {
   let target = activeStreamMessageEl;
   if (!target || !target.isConnected) {
     target = createAgentMessageElement("", { streaming: true });
-    messages.appendChild(target);
+    messageRail?.appendChild(target);
     messageCount += 1;
   }
 
@@ -955,7 +989,7 @@ function announceMessage(role, text) {
 }
 
 function applyHistoryFade() {
-  const items = messages.querySelectorAll(":scope > div:not(#empty-state):not(#thinking)");
+  const items = messageRail?.querySelectorAll(":scope > div:not(#thinking)") || [];
   const count = items.length;
   items.forEach((item, i) => {
     item.classList.remove("history-far", "history-mid", "history-recent");
@@ -1032,7 +1066,7 @@ function renderActionCards(cards) {
       </article>
     `;
 
-    messages.appendChild(wrapper);
+    cardContainer?.appendChild(wrapper);
 
     const article = wrapper.querySelector(".glass-card");
     wireExpandables(wrapper);

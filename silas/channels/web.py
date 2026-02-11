@@ -4,8 +4,9 @@ import asyncio
 import inspect
 import json
 import mimetypes
+import os
 from pathlib import Path
-from typing import AsyncIterator, Awaitable, Callable
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -14,6 +15,13 @@ from fastapi.responses import JSONResponse, Response
 from silas.models.approval import ApprovalVerdict
 from silas.models.messages import ChannelMessage, utc_now
 from silas.protocols.channels import ChannelAdapterCore
+
+try:  # pragma: no cover - optional dependency
+    from pywebpush import WebPushException, webpush
+except Exception:  # pragma: no cover - optional dependency
+    WebPushException = Exception
+    webpush = None
+
 
 type ApprovalResponseHandler = Callable[[str, ApprovalVerdict, str], Awaitable[None] | None]
 
@@ -34,33 +42,86 @@ class WebChannel(ChannelAdapterCore):
         self.web_dir = Path(web_dir)
         self._incoming: asyncio.Queue[tuple[ChannelMessage, str]] = asyncio.Queue()
         self._websocket: WebSocket | None = None
+        self._websockets_by_session: dict[str, WebSocket] = {}
+        self._active_sessions_by_connection: dict[str, set[str]] = {}
         self._approval_response_handler: ApprovalResponseHandler | None = None
         self._ws_lock = asyncio.Lock()
+
+        self._push_subscriptions: dict[str, dict[str, object]] = {}
+        self._vapid_private_key = os.getenv("SILAS_VAPID_PRIVATE_KEY", "")
+        self._vapid_subject = os.getenv("SILAS_VAPID_SUBJECT", "mailto:silas@localhost")
+
         self.app = FastAPI(title="Silas WebChannel")
         self._setup_routes()
 
     def _setup_routes(self) -> None:
         @self.app.get("/health")
         async def health() -> JSONResponse:
-            connected = 1 if self._websocket is not None else 0
-            return JSONResponse({"status": "ok", "connections": connected})
+            connected = len(self._websockets_by_session)
+            return JSONResponse(
+                {
+                    "status": "ok",
+                    "connections": connected,
+                    "sessions": sorted(self._websockets_by_session.keys()),
+                },
+            )
+
+        @self.app.post("/api/push/subscribe")
+        async def push_subscribe(payload: dict[str, object]) -> JSONResponse:
+            endpoint = self._extract_subscription_endpoint(payload)
+            if endpoint is None:
+                raise HTTPException(status_code=400, detail="Invalid push subscription payload")
+            self._push_subscriptions[endpoint] = payload
+            return JSONResponse({"status": "ok", "count": len(self._push_subscriptions)})
+
+        @self.app.post("/api/push/unsubscribe")
+        async def push_unsubscribe(payload: dict[str, object]) -> JSONResponse:
+            endpoint = self._extract_subscription_endpoint(payload)
+            if endpoint is None:
+                raise HTTPException(status_code=400, detail="Invalid push subscription payload")
+            removed = self._push_subscriptions.pop(endpoint, None) is not None
+            return JSONResponse(
+                {
+                    "status": "ok",
+                    "removed": removed,
+                    "count": len(self._push_subscriptions),
+                },
+            )
 
         @self.app.websocket("/ws")
         async def ws_endpoint(websocket: WebSocket) -> None:
+            session_id = self._resolve_session_id(websocket.query_params.get("session"))
+            connection_key = self._connection_key(websocket)
+
             await websocket.accept()
             async with self._ws_lock:
-                self._websocket = websocket
+                self._websockets_by_session[session_id] = websocket
+                self._active_sessions_by_connection.setdefault(connection_key, set()).add(session_id)
+                if session_id == self.scope_id or self._websocket is None:
+                    self._websocket = websocket
 
             try:
                 while True:
                     payload = await websocket.receive_text()
-                    await self._handle_client_payload(payload)
+                    await self._handle_client_payload(payload, session_id=session_id)
             except WebSocketDisconnect:
                 pass
             finally:
                 async with self._ws_lock:
+                    current = self._websockets_by_session.get(session_id)
+                    if current is websocket:
+                        self._websockets_by_session.pop(session_id, None)
+
+                    sessions = self._active_sessions_by_connection.get(connection_key)
+                    if sessions is not None:
+                        sessions.discard(session_id)
+                        if not sessions:
+                            self._active_sessions_by_connection.pop(connection_key, None)
+
                     if self._websocket is websocket:
-                        self._websocket = None
+                        self._websocket = self._websockets_by_session.get(self.scope_id)
+                        if self._websocket is None and self._websockets_by_session:
+                            self._websocket = next(iter(self._websockets_by_session.values()))
 
         if self.web_dir.exists():
 
@@ -94,7 +155,100 @@ class WebChannel(ChannelAdapterCore):
             headers=headers,
         )
 
-    async def _handle_client_payload(self, payload: str) -> None:
+    def _resolve_session_id(self, raw_session: str | None) -> str:
+        if raw_session is None:
+            return self.scope_id
+        cleaned = raw_session.strip()
+        return cleaned or self.scope_id
+
+    @staticmethod
+    def _connection_key(websocket: WebSocket) -> str:
+        client = websocket.client
+        if client is None:
+            return f"unknown:{id(websocket)}"
+        return f"{client.host}:{client.port}"
+
+    def _extract_subscription_endpoint(self, payload: dict[str, object]) -> str | None:
+        endpoint = payload.get("endpoint")
+        if isinstance(endpoint, str) and endpoint.strip():
+            return endpoint.strip()
+
+        subscription = payload.get("subscription")
+        if isinstance(subscription, dict):
+            nested_endpoint = subscription.get("endpoint")
+            if isinstance(nested_endpoint, str) and nested_endpoint.strip():
+                return nested_endpoint.strip()
+        return None
+
+    def active_sessions(self) -> dict[str, list[str]]:
+        return {
+            connection: sorted(sessions)
+            for connection, sessions in self._active_sessions_by_connection.items()
+        }
+
+    async def notify_subscribers(
+        self,
+        title: str,
+        body: str,
+        data: dict[str, object] | None = None,
+    ) -> dict[str, Any]:
+        if not self._push_subscriptions:
+            return {"sent": 0, "failed": 0}
+
+        if webpush is None:
+            return {
+                "sent": 0,
+                "failed": len(self._push_subscriptions),
+                "reason": "pywebpush_unavailable",
+            }
+
+        if not self._vapid_private_key:
+            return {
+                "sent": 0,
+                "failed": len(self._push_subscriptions),
+                "reason": "missing_vapid_private_key",
+            }
+
+        payload = json.dumps(
+            {
+                "title": title,
+                "body": body,
+                "data": data or {},
+            },
+        )
+
+        sent = 0
+        failed = 0
+        stale_endpoints: list[str] = []
+        for endpoint, subscription in list(self._push_subscriptions.items()):
+            try:
+                await asyncio.to_thread(
+                    webpush,
+                    subscription_info=subscription,
+                    data=payload,
+                    vapid_private_key=self._vapid_private_key,
+                    vapid_claims={"sub": self._vapid_subject},
+                )
+                sent += 1
+            except WebPushException as exc:  # pragma: no cover - depends on pywebpush runtime
+                failed += 1
+                response = getattr(exc, "response", None)
+                status_code = getattr(response, "status_code", None)
+                if status_code in {404, 410}:
+                    stale_endpoints.append(endpoint)
+            except Exception:
+                failed += 1
+
+        for endpoint in stale_endpoints:
+            self._push_subscriptions.pop(endpoint, None)
+
+        return {
+            "sent": sent,
+            "failed": failed,
+            "remaining": len(self._push_subscriptions),
+        }
+
+    async def _handle_client_payload(self, payload: str, session_id: str) -> None:
         sender_id = self.scope_id
         text = payload
         try:
@@ -117,16 +271,26 @@ class WebChannel(ChannelAdapterCore):
             text=text,
             timestamp=utc_now(),
         )
-        await self._incoming.put((message, self.scope_id))
+        await self._incoming.put((message, session_id))
 
     async def listen(self) -> AsyncIterator[tuple[ChannelMessage, str]]:
         while True:
             yield await self._incoming.get()
 
-    async def send(self, recipient_id: str, text: str, reply_to: str | None = None) -> None:
-        del recipient_id
+    async def _resolve_socket_for_recipient(self, recipient_id: str) -> WebSocket | None:
         async with self._ws_lock:
-            websocket = self._websocket
+            if recipient_id and recipient_id in self._websockets_by_session:
+                return self._websockets_by_session[recipient_id]
+            if self.scope_id in self._websockets_by_session:
+                return self._websockets_by_session[self.scope_id]
+            if self._websocket is not None:
+                return self._websocket
+            if self._websockets_by_session:
+                return next(iter(self._websockets_by_session.values()))
+            return None
+
+    async def send(self, recipient_id: str, text: str, reply_to: str | None = None) -> None:
+        websocket = await self._resolve_socket_for_recipient(recipient_id)
         if websocket is None:
             return
 
@@ -140,9 +304,7 @@ class WebChannel(ChannelAdapterCore):
         await websocket.send_text(json.dumps(payload))
 
     async def send_approval_card(self, recipient_id: str, card: dict[str, object]) -> None:
-        del recipient_id
-        async with self._ws_lock:
-            websocket = self._websocket
+        websocket = await self._resolve_socket_for_recipient(recipient_id)
         if websocket is None:
             return
 
@@ -161,9 +323,12 @@ class WebChannel(ChannelAdapterCore):
         action = payload.get("action")
         if not isinstance(card_id, str) or not card_id.strip():
             return
-        if action not in {"approve", "decline"}:
+        if action not in {"approve", "decline", "deny", "defer"}:
+            return
+        if action == "defer":
             return
 
+        normalized_action = "decline" if action == "deny" else action
         handler = self._approval_response_handler
         if handler is None:
             return
@@ -172,7 +337,7 @@ class WebChannel(ChannelAdapterCore):
         resolved_by = sender_id if isinstance(sender_id, str) and sender_id else self.scope_id
         verdict = (
             ApprovalVerdict.approved
-            if action == "approve"
+            if normalized_action == "approve"
             else ApprovalVerdict.declined
         )
         result = handler(card_id, verdict, resolved_by)
