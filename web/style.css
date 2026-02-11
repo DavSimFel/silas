@@ -32,14 +32,31 @@ body {
   padding: 20px;
 }
 
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .chat-header h1 {
   margin: 0;
   font-size: 1.4rem;
 }
 
-.chat-header p {
-  margin: 4px 0 0;
-  color: var(--subtle);
+.install-btn {
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 6px 14px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.install-btn:hover {
+  background: color-mix(in oklab, var(--accent) 15%, transparent);
 }
 
 .messages {
