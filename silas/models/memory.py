@@ -20,6 +20,8 @@ class MemoryType(str, Enum):
 class ReingestionTier(str, Enum):
     active = "active"
     low_reingestion = "low_reingestion"
+    core = "core"
+    dormant = "dormant"
 
 
 class TrustLevel(str, Enum):

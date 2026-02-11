@@ -26,5 +26,9 @@ class AutonomyCalibrator(Protocol):
 
     async def evaluate(self, scope_id: str, now: datetime) -> list[dict[str, object]]: ...
 
+    def rollback(self, scope_id: str, action_family: str) -> None: ...
+
+    def get_metrics(self, scope_id: str) -> dict[str, object]: ...
+
 
 __all__ = ["SuggestionEngine", "AutonomyCalibrator"]

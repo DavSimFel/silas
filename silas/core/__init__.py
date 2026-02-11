@@ -7,7 +7,14 @@ at import time (breaks test isolation).  Import Stream directly:
 
 from silas.core.context_manager import LiveContextManager
 from silas.core.plan_parser import MarkdownPlanParser
+from silas.core.subscriptions import ContextSubscriptionManager
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
 
-__all__ = ["HeuristicTokenCounter", "LiveContextManager", "MarkdownPlanParser", "TurnContext"]
+__all__ = [
+    "HeuristicTokenCounter",
+    "LiveContextManager",
+    "MarkdownPlanParser",
+    "ContextSubscriptionManager",
+    "TurnContext",
+]

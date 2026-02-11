@@ -48,6 +48,7 @@ from silas.models.gates import (
     GateTrigger,
     GateType,
 )
+from silas.models.goals import Goal, GoalRun, GoalSchedule, StandingApproval
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import ChannelMessage, SignedMessage, TaintLevel
 from silas.models.personality import (
@@ -58,7 +59,9 @@ from silas.models.personality import (
     PersonaState,
     VoiceConfig,
 )
+from silas.models.preferences import InferredPreference, PreferenceSignal
 from silas.models.proactivity import Suggestion, SuggestionProposal
+from silas.models.review import BatchActionDecision, BatchActionItem, BatchProposal
 from silas.models.sessions import Session, SessionType
 from silas.models.skills import SkillDefinition, SkillMetadata, SkillRef, SkillResult
 from silas.models.work import (
@@ -148,4 +151,13 @@ __all__ = [
     "SkillMetadata",
     "SkillRef",
     "SkillResult",
+    "GoalSchedule",
+    "Goal",
+    "GoalRun",
+    "StandingApproval",
+    "PreferenceSignal",
+    "InferredPreference",
+    "BatchActionItem",
+    "BatchProposal",
+    "BatchActionDecision",
 ]
