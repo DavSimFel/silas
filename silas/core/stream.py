@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -12,10 +13,12 @@ from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
 from silas.models.agents import RouteDecision
 from silas.models.context import ContextItem, ContextZone
+from silas.models.memory import MemoryItem, MemoryType, ReingestionTier
 from silas.models.messages import ChannelMessage, SignedMessage, TaintLevel
 from silas.protocols.channels import ChannelAdapterCore
 
 _counter = HeuristicTokenCounter()
+_MENTION_PATTERN = re.compile(r"@([A-Za-z0-9_:-]+)")
 
 
 @dataclass(slots=True)
@@ -25,6 +28,7 @@ class Stream:
     context_manager: LiveContextManager | None = None
     owner_id: str = "owner"
     default_context_profile: str = "conversation"
+    session_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.context_manager is not None:
@@ -34,6 +38,7 @@ class Stream:
             self.context_manager = self.turn_context.live_context_manager
 
     async def start(self) -> None:
+        self._ensure_session_id()
         await self._rehydrate()
         async for message, connection_id in self.channel.listen():
             await self._process_turn(message, connection_id)
@@ -42,6 +47,7 @@ class Stream:
         """Restore state from previous run (spec §5.1.3)."""
         tc = self.turn_context
         context_manager = self._context_manager()
+        session_id = self._ensure_session_id()
 
         # Step 1-2: Load recent chronicle entries
         if tc.chronicle_store is not None and context_manager is not None:
@@ -72,10 +78,31 @@ class Stream:
                     ),
                 )
 
+        # Step 3b: Rehydrate recent session memories
+        if tc.memory_store is not None and context_manager is not None:
+            recent_session_memories = await tc.memory_store.search_session(session_id)
+            for item in recent_session_memories[:10]:
+                context_manager.add(
+                    tc.scope_id,
+                    ContextItem(
+                        ctx_id=f"memory:session:{item.memory_id}",
+                        zone=ContextZone.memory,
+                        content=item.content,
+                        token_count=_counter.count(item.content),
+                        created_at=datetime.now(timezone.utc),
+                        turn_number=tc.turn_number,
+                        source="memory:session_rehydrate",
+                        taint=item.taint,
+                        kind="memory",
+                    ),
+                )
+
         # Step 5: System message
         await self._audit("stream_rehydrated", turn_number=tc.turn_number)
 
     async def _process_turn(self, message: ChannelMessage, connection_id: str = "owner") -> str:
+        session_id = self._ensure_session_id()
+
         await self._audit("phase1a_noop", step=0, note="active gates precompile skipped")
         await self._audit("phase1a_noop", step=0.5, note="review/proactive queue skipped")
         await self._audit("phase1a_noop", step=1, note="input gates skipped")
@@ -111,8 +138,27 @@ class Stream:
 
         # Step 4: auto-retrieve memories
         if self.turn_context.memory_store is not None and context_manager is not None:
-            recalled = await self.turn_context.memory_store.search_keyword(message.text, limit=3)
-            for item in recalled:
+            recalled_keyword = await self.turn_context.memory_store.search_keyword(message.text, limit=3)
+
+            recalled_entity: list[MemoryItem] = []
+            mentions = self._extract_mentions(message.text)
+            if mentions:
+                entity_candidates = await self.turn_context.memory_store.search_by_type(
+                    MemoryType.entity,
+                    limit=50,
+                )
+                recalled_entity = [
+                    item
+                    for item in entity_candidates
+                    if self._memory_matches_any_mention(item, mentions)
+                ]
+
+            recalled_unique: dict[str, MemoryItem] = {}
+            for item in [*recalled_keyword, *recalled_entity]:
+                recalled_unique.setdefault(item.memory_id, item)
+
+            for item in recalled_unique.values():
+                await self.turn_context.memory_store.increment_access(item.memory_id)
                 context_manager.add(
                     self.turn_context.scope_id,
                     ContextItem(
@@ -127,6 +173,22 @@ class Stream:
                         kind="memory",
                     ),
                 )
+
+        # Step 4.5: Raw memory ingest
+        if self.turn_context.memory_store is not None:
+            await self.turn_context.memory_store.store_raw(
+                MemoryItem(
+                    memory_id=f"raw:{self.turn_context.scope_id}:{turn_number}:{uuid.uuid4().hex}",
+                    content=message.text,
+                    memory_type=MemoryType.episode,
+                    reingestion_tier=ReingestionTier.low_reingestion,
+                    taint=signed.taint,
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                    session_id=session_id,
+                    source_kind="conversation_raw",
+                ),
+            )
 
         await self._audit("phase1a_noop", step=5, note="budget enforcement deferred to post-response")
         await self._audit("phase1a_noop", step=6, note="toolset pipeline skipped")
@@ -219,6 +281,33 @@ class Stream:
             "[USER MESSAGE]\n"
             f"{message_text}"
         )
+
+    def _ensure_session_id(self) -> str:
+        if self.session_id is None:
+            self.session_id = str(uuid.uuid4())
+        return self.session_id
+
+    def _extract_mentions(self, message_text: str) -> set[str]:
+        return {match.lstrip("@").lower() for match in _MENTION_PATTERN.findall(message_text)}
+
+    def _memory_matches_any_mention(self, item: MemoryItem, mentions: set[str]) -> bool:
+        if not mentions:
+            return False
+
+        content_lower = item.content.lower()
+        memory_id_lower = item.memory_id.lower()
+        entity_refs_lower = {ref.lstrip("@").lower() for ref in item.entity_refs}
+        semantic_tags_lower = [tag.lstrip("@").lower() for tag in item.semantic_tags]
+
+        for mention in mentions:
+            if (
+                mention in content_lower
+                or mention in memory_id_lower
+                or mention in entity_refs_lower
+                or any(mention in tag for tag in semantic_tags_lower)
+            ):
+                return True
+        return False
 
 
 __all__ = ["Stream"]

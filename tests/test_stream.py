@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import pytest
 from silas.core.stream import Stream
 from silas.models.context import ContextZone
+from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import ChannelMessage, TaintLevel
 
 from tests.fakes import (
@@ -135,6 +136,100 @@ async def test_no_memory_match_empty_zone(
     await stream._process_turn(_msg("xyz123"))
     memory_zone = context_manager.get_zone("owner", ContextZone.memory)
     assert len(memory_zone) == 0
+
+
+@pytest.mark.asyncio
+async def test_auto_retrieval_deduplicates_keyword_and_entity_matches(
+    channel: InMemoryChannel,
+    turn_context,
+    context_manager: InMemoryContextManager,
+    memory_store: InMemoryMemoryStore,
+) -> None:
+    await memory_store.store(
+        MemoryItem(
+            memory_id="m-entity-1",
+            content="notes for @alice",
+            memory_type=MemoryType.entity,
+            taint=TaintLevel.owner,
+            source_kind="test",
+            entity_refs=["alice"],
+        )
+    )
+
+    stream = _stream(channel, turn_context)
+    await stream._process_turn(_msg("@alice"))
+
+    memory_zone = context_manager.get_zone("owner", ContextZone.memory)
+    injected_ids = [item.ctx_id for item in memory_zone]
+    assert injected_ids.count("memory:m-entity-1") == 1
+    assert memory_store.incremented_ids.count("m-entity-1") == 1
+
+
+@pytest.mark.asyncio
+async def test_process_turn_stores_raw_memory_with_session_id(
+    channel: InMemoryChannel,
+    turn_context,
+    memory_store: InMemoryMemoryStore,
+) -> None:
+    stream = _stream(channel, turn_context)
+    await stream._process_turn(_msg("persist this turn"))
+
+    raw_items = [
+        item for item in memory_store.items.values()
+        if item.source_kind == "conversation_raw"
+    ]
+    assert len(raw_items) == 1
+    assert raw_items[0].session_id == stream.session_id
+    assert raw_items[0].session_id is not None
+
+
+@pytest.mark.asyncio
+async def test_rehydrate_loads_recent_memories_for_current_session(
+    channel: InMemoryChannel,
+    turn_context,
+    context_manager: InMemoryContextManager,
+    memory_store: InMemoryMemoryStore,
+) -> None:
+    await memory_store.store(
+        MemoryItem(
+            memory_id="rehydrate-sess-1",
+            content="session memory one",
+            memory_type=MemoryType.fact,
+            taint=TaintLevel.owner,
+            source_kind="test",
+            session_id="session-a",
+        )
+    )
+    await memory_store.store(
+        MemoryItem(
+            memory_id="rehydrate-sess-2",
+            content="session memory two",
+            memory_type=MemoryType.fact,
+            taint=TaintLevel.owner,
+            source_kind="test",
+            session_id="session-a",
+        )
+    )
+    await memory_store.store(
+        MemoryItem(
+            memory_id="rehydrate-other",
+            content="other session memory",
+            memory_type=MemoryType.fact,
+            taint=TaintLevel.owner,
+            source_kind="test",
+            session_id="session-b",
+        )
+    )
+
+    stream = _stream(channel, turn_context)
+    stream.session_id = "session-a"
+    await stream._rehydrate()
+
+    memory_zone = context_manager.get_zone("owner", ContextZone.memory)
+    memory_ids = {item.ctx_id for item in memory_zone}
+    assert "memory:session:rehydrate-sess-1" in memory_ids
+    assert "memory:session:rehydrate-sess-2" in memory_ids
+    assert "memory:session:rehydrate-other" not in memory_ids
 
 
 @pytest.mark.asyncio

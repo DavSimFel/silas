@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 import aiosqlite
 
@@ -89,11 +90,52 @@ class SQLiteMemoryStore:
             rows = await cursor.fetchall()
             return [_row_to_item(r) for r in rows]
 
+    async def search_by_type(self, memory_type: MemoryType, limit: int) -> list[MemoryItem]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """SELECT * FROM memories
+                   WHERE memory_type = ?
+                   ORDER BY updated_at DESC, created_at DESC, memory_id ASC
+                   LIMIT ?""",
+                (memory_type.value, limit),
+            )
+            rows = await cursor.fetchall()
+            return [_row_to_item(r) for r in rows]
+
+    async def list_recent(self, limit: int) -> list[MemoryItem]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """SELECT * FROM memories
+                   ORDER BY updated_at DESC, created_at DESC, memory_id ASC
+                   LIMIT ?""",
+                (limit,),
+            )
+            rows = await cursor.fetchall()
+            return [_row_to_item(r) for r in rows]
+
+    async def increment_access(self, memory_id: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """UPDATE memories
+                   SET access_count = access_count + 1,
+                       last_accessed = ?,
+                       updated_at = ?
+                   WHERE memory_id = ?""",
+                (now, now, memory_id),
+            )
+            await db.commit()
+
     async def search_session(self, session_id: str) -> list[MemoryItem]:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                "SELECT * FROM memories WHERE session_id = ?", (session_id,)
+                """SELECT * FROM memories
+                   WHERE session_id = ?
+                   ORDER BY updated_at DESC, created_at DESC, memory_id ASC""",
+                (session_id,),
             )
             rows = await cursor.fetchall()
             return [_row_to_item(r) for r in rows]

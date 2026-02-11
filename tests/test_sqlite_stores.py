@@ -160,6 +160,86 @@ class TestSQLiteMemoryStore:
         assert len(results) == 1
         assert results[0].memory_id == "m6"
 
+    async def test_search_by_type_filters_results(self, store) -> None:
+        from silas.models.memory import MemoryItem, MemoryType
+        from silas.models.messages import TaintLevel
+        await store.store(MemoryItem(
+            memory_id="m-type-1", content="entity one",
+            memory_type=MemoryType.entity, taint=TaintLevel.owner, source_kind="test",
+        ))
+        await store.store(MemoryItem(
+            memory_id="m-type-2", content="fact one",
+            memory_type=MemoryType.fact, taint=TaintLevel.owner, source_kind="test",
+        ))
+        await store.store(MemoryItem(
+            memory_id="m-type-3", content="entity two",
+            memory_type=MemoryType.entity, taint=TaintLevel.owner, source_kind="test",
+        ))
+
+        results = await store.search_by_type(MemoryType.entity, limit=10)
+        assert {item.memory_id for item in results} == {"m-type-1", "m-type-3"}
+        assert all(item.memory_type == MemoryType.entity for item in results)
+
+    async def test_list_recent_orders_by_updated_at_desc(self, store) -> None:
+        from silas.models.memory import MemoryItem, MemoryType
+        from silas.models.messages import TaintLevel
+        now = _utc_now()
+        await store.store(MemoryItem(
+            memory_id="m-recent-1", content="oldest",
+            memory_type=MemoryType.fact, taint=TaintLevel.owner,
+            source_kind="test",
+            created_at=now - timedelta(minutes=3),
+            updated_at=now - timedelta(minutes=3),
+        ))
+        await store.store(MemoryItem(
+            memory_id="m-recent-2", content="middle",
+            memory_type=MemoryType.fact, taint=TaintLevel.owner,
+            source_kind="test",
+            created_at=now - timedelta(minutes=2),
+            updated_at=now - timedelta(minutes=2),
+        ))
+        await store.store(MemoryItem(
+            memory_id="m-recent-3", content="newest",
+            memory_type=MemoryType.fact, taint=TaintLevel.owner,
+            source_kind="test",
+            created_at=now - timedelta(minutes=1),
+            updated_at=now - timedelta(minutes=1),
+        ))
+
+        results = await store.list_recent(limit=3)
+        assert [item.memory_id for item in results] == [
+            "m-recent-3",
+            "m-recent-2",
+            "m-recent-1",
+        ]
+
+    async def test_increment_access_updates_count_and_last_accessed(self, store) -> None:
+        from silas.models.memory import MemoryItem, MemoryType
+        from silas.models.messages import TaintLevel
+        item = MemoryItem(
+            memory_id="m-access-1",
+            content="track access",
+            memory_type=MemoryType.fact,
+            taint=TaintLevel.owner,
+            source_kind="test",
+            access_count=2,
+            last_accessed=None,
+        )
+        await store.store(item)
+
+        before = await store.get("m-access-1")
+        assert before is not None
+        assert before.access_count == 2
+        assert before.last_accessed is None
+
+        await store.increment_access("m-access-1")
+
+        after = await store.get("m-access-1")
+        assert after is not None
+        assert after.access_count == 3
+        assert after.last_accessed is not None
+        assert after.updated_at >= before.updated_at
+
     async def test_store_raw_and_search_raw(self, store) -> None:
         from silas.models.memory import MemoryItem, MemoryType, ReingestionTier
         from silas.models.messages import TaintLevel
