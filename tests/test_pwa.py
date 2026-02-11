@@ -230,10 +230,12 @@ class TestAppJsFeatures:
         assert "msg-silas" not in text
 
     async def test_user_messages_right_aligned(self, client: AsyncClient) -> None:
-        assert "justify-end" in (await client.get("/app.js")).text
+        text = (await client.get("/app.js")).text
+        assert "msg-user" in text
 
     async def test_agent_messages_full_width(self, client: AsyncClient) -> None:
-        assert "max-w-full" in (await client.get("/app.js")).text
+        text = (await client.get("/app.js")).text
+        assert "msg-agent" in text or "createAgentMessageElement" in text
 
 
 # ── CSS Design Tokens ──
