@@ -10,7 +10,9 @@ from datetime import datetime, timezone
 
 import pytest
 from silas.core.stream import Stream
+from silas.models.agents import InteractionMode, InteractionRegister, RouteDecision
 from silas.models.context import ContextZone
+from silas.models.gates import GateLane, GateResult
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import ChannelMessage, TaintLevel
 
@@ -19,6 +21,7 @@ from tests.fakes import (
     InMemoryChannel,
     InMemoryContextManager,
     InMemoryMemoryStore,
+    RunResult,
     sample_memory_item,
 )
 
@@ -42,6 +45,42 @@ def _stream(
         owner_id="owner",
         default_context_profile="conversation",
     )
+
+
+class BlockingOutputGateRunner:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, TaintLevel, str]] = []
+
+    def evaluate(
+        self,
+        response_text: str,
+        response_taint: TaintLevel,
+        sender_id: str,
+    ) -> tuple[str, list[GateResult]]:
+        self.calls.append((response_text, response_taint, sender_id))
+        return response_text, [
+            GateResult(
+                gate_name="block_all",
+                lane=GateLane.policy,
+                action="block",
+                reason="blocked by test",
+            )
+        ]
+
+
+class PlannerRouteModel:
+    async def run(self, prompt: str) -> RunResult:
+        del prompt
+        return RunResult(
+            output=RouteDecision(
+                route="planner",
+                reason="needs planning",
+                response=None,
+                interaction_register=InteractionRegister.execution,
+                interaction_mode=InteractionMode.default_and_offer,
+                context_profile="planning",
+            )
+        )
 
 
 @pytest.mark.asyncio
@@ -266,6 +305,49 @@ async def test_audit_events_logged(
     await stream._process_turn(_msg("hi"))
     event_names = [e["event"] for e in audit_log.events]
     assert "turn_processed" in event_names
+
+
+@pytest.mark.asyncio
+async def test_output_gate_block_sanitizes_response(
+    channel: InMemoryChannel,
+    turn_context,
+) -> None:
+    gate_runner = BlockingOutputGateRunner()
+    stream = Stream(
+        channel=channel,
+        turn_context=turn_context,
+        owner_id="owner",
+        default_context_profile="conversation",
+        output_gate_runner=gate_runner,
+    )
+
+    result = await stream._process_turn(_msg("hello", sender_id="stranger"))
+
+    assert result == "I cannot share that"
+    assert channel.outgoing[0]["text"] == "I cannot share that"
+    assert gate_runner.calls == [("echo: hello", TaintLevel.external, "stranger")]
+
+
+@pytest.mark.asyncio
+async def test_planner_route_response_runs_through_output_gates(
+    channel: InMemoryChannel,
+    turn_context,
+) -> None:
+    turn_context.proxy = PlannerRouteModel()
+    gate_runner = BlockingOutputGateRunner()
+    stream = Stream(
+        channel=channel,
+        turn_context=turn_context,
+        owner_id="owner",
+        default_context_profile="conversation",
+        output_gate_runner=gate_runner,
+    )
+
+    result = await stream._process_turn(_msg("build a 5-step plan"))
+
+    assert gate_runner.calls[0][0] == stream._planner_stub_response()
+    assert result == "I cannot share that"
+    assert channel.outgoing[0]["text"] == "I cannot share that"
 
 
 @pytest.mark.asyncio

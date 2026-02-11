@@ -111,6 +111,7 @@ class RouteDecision(BaseModel):
         "coding",
         "research",
         "support",
+        "planning",
     }
 
     @classmethod

@@ -15,6 +15,7 @@ from silas.core.context_manager import LiveContextManager
 from silas.core.stream import Stream
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
+from silas.gates import OutputGateRunner
 from silas.memory.sqlite_store import SQLiteMemoryStore
 from silas.persistence.chronicle_store import SQLiteChronicleStore
 from silas.persistence.migrations import run_migrations
@@ -56,6 +57,11 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
         token_budget=settings.context.as_token_budget(),
         token_counter=token_counter,
     )
+    output_gate_runner = (
+        OutputGateRunner(settings.output_gates, token_counter=token_counter)
+        if settings.output_gates
+        else None
+    )
 
     turn_context = TurnContext(
         scope_id=settings.owner_id,
@@ -74,6 +80,7 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
         context_manager=context_manager,
         owner_id=settings.owner_id,
         default_context_profile=settings.context.default_profile,
+        output_gate_runner=output_gate_runner,
     )
     return stream, channel
 

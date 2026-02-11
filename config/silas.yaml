@@ -23,6 +23,7 @@ silas:
       coding: { chronicle_pct: 0.20, memory_pct: 0.20, workspace_pct: 0.40 }
       research: { chronicle_pct: 0.20, memory_pct: 0.40, workspace_pct: 0.20 }
       support: { chronicle_pct: 0.40, memory_pct: 0.25, workspace_pct: 0.15 }
+      planning: { chronicle_pct: 0.15, memory_pct: 0.25, workspace_pct: 0.35 }
 
   skills:
     shipped_dir: "./silas/skills/shipped"

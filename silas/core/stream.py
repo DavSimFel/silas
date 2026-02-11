@@ -11,6 +11,7 @@ from silas.agents.structured import run_structured_agent
 from silas.core.context_manager import LiveContextManager
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
+from silas.gates import OutputGateRunner
 from silas.models.agents import RouteDecision
 from silas.models.context import ContextItem, ContextZone
 from silas.models.memory import MemoryItem, MemoryType, ReingestionTier
@@ -28,6 +29,7 @@ class Stream:
     context_manager: LiveContextManager | None = None
     owner_id: str = "owner"
     default_context_profile: str = "conversation"
+    output_gate_runner: OutputGateRunner | None = None
     session_id: str | None = None
 
     def __post_init__(self) -> None:
@@ -214,12 +216,58 @@ class Stream:
         if context_manager is not None:
             context_manager.set_profile(self.turn_context.scope_id, routed.context_profile)
 
-        await self._audit("phase1a_noop", step=8, note="output gates skipped")
+        response_text = self._route_response_text(routed)
+        if routed.route == "planner":
+            await self._audit("planner_stub_used", turn_number=turn_number, reason=routed.reason)
+
+        gate_results_payload: list[dict[str, object]] = []
+        warning_payload: list[dict[str, object]] = []
+        blocked_gate_names: list[str] = []
+        if self.output_gate_runner is not None:
+            response_text, gate_results = self.output_gate_runner.evaluate(
+                response_text=response_text,
+                response_taint=signed.taint,
+                sender_id=message.sender_id,
+            )
+            gate_results_payload = [
+                result.model_dump(mode="json")
+                for result in gate_results
+            ]
+            warning_payload = [
+                result.model_dump(mode="json")
+                for result in gate_results
+                if "warn" in result.flags
+            ]
+            blocked_gate_names = [
+                result.gate_name
+                for result in gate_results
+                if result.action == "block"
+            ]
+
+        await self._audit(
+            "output_gates_evaluated",
+            turn_number=turn_number,
+            results=gate_results_payload,
+            configured=self.output_gate_runner is not None,
+        )
+        if warning_payload:
+            await self._audit(
+                "output_gate_warnings",
+                turn_number=turn_number,
+                warnings=warning_payload,
+            )
+        if blocked_gate_names:
+            response_text = "I cannot share that"
+            await self._audit(
+                "output_gate_blocked",
+                turn_number=turn_number,
+                blocked_gates=blocked_gate_names,
+            )
+
         await self._audit("phase1a_noop", step=9, note="memory query processing skipped")
         await self._audit("phase1a_noop", step=10, note="memory op processing skipped")
 
         # Step 11: persist response to chronicle
-        response_text = routed.response.message if routed.response is not None else ""
         response_item = ContextItem(
             ctx_id=f"chronicle:{turn_number}:resp:{uuid.uuid4().hex}",
             zone=ContextZone.chronicle,
@@ -280,6 +328,17 @@ class Stream:
             f"{rendered_context}\n\n"
             "[USER MESSAGE]\n"
             f"{message_text}"
+        )
+
+    def _route_response_text(self, routed: RouteDecision) -> str:
+        if routed.route == "planner":
+            return self._planner_stub_response()
+        return routed.response.message if routed.response is not None else ""
+
+    def _planner_stub_response(self) -> str:
+        return (
+            "I need to plan this request before execution. "
+            "Planner execution is not available yet."
         )
 
     def _ensure_session_id(self) -> str:

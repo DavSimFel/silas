@@ -15,7 +15,7 @@ from tests.fakes import (
 
 @pytest.fixture(autouse=True)
 def configure_route_profiles() -> None:
-    RouteDecision.configure_profiles({"conversation", "coding", "research", "support"})
+    RouteDecision.configure_profiles({"conversation", "coding", "research", "support", "planning"})
 
 
 @pytest.fixture

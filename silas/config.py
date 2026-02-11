@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from silas.models.agents import RouteDecision
 from silas.models.context import ContextProfile, TokenBudget
+from silas.models.gates import Gate
 
 
 class ModelsConfig(BaseModel):
@@ -87,6 +88,7 @@ class SilasSettings(BaseSettings):
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    output_gates: list[Gate] = Field(default_factory=list)
 
     model_config = SettingsConfigDict(
         env_prefix="SILAS_",

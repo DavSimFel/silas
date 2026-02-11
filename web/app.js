@@ -660,6 +660,7 @@ function openWorkPanel(visible = SHEET_SNAP_VISIBLE.peek) {
   if (!workPanel || !workPanelBackdrop || !workPanelSheet) return;
 
   workPanel.setAttribute("aria-hidden", "false");
+  workPanel.style.visibility = "visible";
   statusStrip?.setAttribute("aria-expanded", "true");
 
   workPanelBackdrop.hidden = false;
