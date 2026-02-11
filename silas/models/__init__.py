@@ -20,6 +20,17 @@ from silas.models.approval import (
     Base64Bytes,
     PendingApproval,
 )
+from silas.models.connections import (
+    AuthStrategy,
+    Connection,
+    ConnectionFailure,
+    HealthCheckResult,
+    RecoveryOption,
+    SecureInputCompleted,
+    SecureInputRequest,
+    SetupStep,
+    SetupStepResponse,
+)
 from silas.models.context import (
     ContextItem,
     ContextProfile,
@@ -91,6 +102,15 @@ __all__ = [
     "ContextItem",
     "ContextSubscription",
     "TokenBudget",
+    "AuthStrategy",
+    "SecureInputRequest",
+    "SecureInputCompleted",
+    "SetupStep",
+    "SetupStepResponse",
+    "HealthCheckResult",
+    "RecoveryOption",
+    "ConnectionFailure",
+    "Connection",
     "WorkItemType",
     "WorkItemStatus",
     "Budget",
