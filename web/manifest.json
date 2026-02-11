@@ -4,8 +4,8 @@
   "description": "Personal AI agent",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0b1020",
-  "theme_color": "#141f3e",
+  "background_color": "#0a0f1e",
+  "theme_color": "#0a0f1e",
   "icons": [
     {
       "src": "/icons/icon-192.png",
