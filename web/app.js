@@ -1,4 +1,4 @@
-// Silas PWA — Quiet Design Phase B
+// Silas PWA — Quiet Design Phase C
 
 // --- Service Worker ---
 if ("serviceWorker" in navigator) {
@@ -37,14 +37,31 @@ const emptyState = document.getElementById("empty-state");
 const composer = document.getElementById("composer");
 const input = document.getElementById("message-input");
 const sendBtn = document.getElementById("send-btn");
+const slashPalette = document.getElementById("slash-palette");
+const slashList = document.getElementById("slash-list");
 const statusDot = document.getElementById("status-dot");
 const statusStrip = document.getElementById("status-strip");
 const workStatus = document.getElementById("work-status");
+const sidePanel = document.getElementById("side-panel");
+const sidePanelToggle = document.getElementById("side-panel-toggle");
+const sidePanelClose = document.getElementById("side-panel-close");
+const sideWorkItemsEl = document.getElementById("side-work-items");
+const sessionInfoEl = document.getElementById("session-info");
+const sideTabButtons = [...document.querySelectorAll("[data-side-tab]")];
+const sideTabPanels = {
+  memory: document.getElementById("panel-memory"),
+  work: document.getElementById("panel-work"),
+  session: document.getElementById("panel-session"),
+};
 const workPanel = document.getElementById("work-panel");
 const workPanelBackdrop = document.getElementById("work-panel-backdrop");
 const workPanelSheet = document.getElementById("work-panel-sheet");
 const workPanelHandle = document.getElementById("work-panel-handle");
 const workItemsEl = document.getElementById("work-items");
+const shortcutOverlay = document.getElementById("shortcut-overlay");
+const shortcutSheet = document.getElementById("shortcut-sheet");
+const shortcutClose = document.getElementById("shortcut-close");
+const liveRegion = document.getElementById("live-region");
 
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -52,6 +69,14 @@ let messageCount = 0;
 let elapsedTimer = null;
 let connectionState = "connecting";
 let panelVisiblePercent = 0;
+let sidePanelOpen = false;
+let sidePanelTab = "memory";
+let slashPaletteOpen = false;
+let slashSelectedIndex = 0;
+let slashFilteredCommands = [];
+let workPanelFocusReturn = null;
+let shortcutFocusReturn = null;
+let shortcutOpen = false;
 
 const SHEET_SNAP_VISIBLE = {
   dismissed: 0,
@@ -101,17 +126,176 @@ const DEMO_APPROVAL_ITEMS = [
   },
 ];
 
-// --- Auto-resize textarea ---
+const DESKTOP_QUERY = window.matchMedia("(min-width: 768px)");
+
+const SLASH_COMMANDS = [
+  {
+    command: "/clear",
+    description: "Clear conversation stream",
+    run: () => clearConversation(),
+  },
+  {
+    command: "/status",
+    description: "Show current connection status",
+    run: () => addMessage("system", statusSummary()),
+  },
+  {
+    command: "/theme",
+    description: "Theme toggle (reserved)",
+    run: () => addMessage("system", "Theme toggle is reserved for a future phase."),
+  },
+  {
+    command: "/help",
+    description: "Show keyboard shortcut help",
+    run: () => openShortcutOverlay(),
+  },
+];
+
+// --- Composer state ---
 input.addEventListener("input", () => {
   input.style.height = "auto";
   input.style.height = `${Math.min(input.scrollHeight, 132)}px`;
+  updateComposerState();
+  syncSlashPalette();
+});
 
+input.addEventListener("focus", () => {
+  syncSlashPalette();
+});
+
+input.addEventListener("blur", () => {
+  setTimeout(() => {
+    if (!composer.contains(document.activeElement)) {
+      closeSlashPalette();
+    }
+  }, 0);
+});
+
+function updateComposerState() {
   const hasContent = input.value.trim().length > 0;
   sendBtn.classList.toggle("opacity-0", !hasContent);
   sendBtn.classList.toggle("pointer-events-none", !hasContent);
   sendBtn.classList.toggle("opacity-100", hasContent);
   sendBtn.classList.toggle("pointer-events-auto", hasContent);
-});
+}
+
+function focusComposer() {
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
+function isEditableTarget(target) {
+  if (!(target instanceof HTMLElement)) return false;
+  return Boolean(target.closest("input, textarea, [contenteditable='true']"));
+}
+
+function clearConversation() {
+  removeThinking();
+  messages.replaceChildren(emptyState);
+  emptyState.classList.remove("hidden");
+  messageCount = 0;
+  applyHistoryFade();
+  renderSessionInfo();
+  scrollToBottom();
+}
+
+function statusSummary() {
+  const activeCount = workState.items.filter((item) => item.status === "active").length;
+  const needsReviewCount = workState.items.filter((item) => item.status === "needs_review").length;
+  return `Connection: ${connectionState}. Active work: ${activeCount}. Needs review: ${needsReviewCount}.`;
+}
+
+function slashQueryFromInput() {
+  const raw = input.value;
+  if (!raw.startsWith("/")) return null;
+  if (raw.includes("\n")) return null;
+  return raw.slice(1).trim().toLowerCase();
+}
+
+function syncSlashPalette() {
+  const query = slashQueryFromInput();
+  const shouldOpen = document.activeElement === input && query !== null;
+  if (!shouldOpen) {
+    closeSlashPalette();
+    return;
+  }
+
+  openSlashPalette(query);
+}
+
+function openSlashPalette(query = "") {
+  slashPaletteOpen = true;
+  const normalized = query.toLowerCase();
+  slashFilteredCommands = SLASH_COMMANDS.filter((item) => {
+    const command = item.command.slice(1).toLowerCase();
+    const description = item.description.toLowerCase();
+    return command.includes(normalized) || description.includes(normalized);
+  });
+
+  slashSelectedIndex = clamp(slashSelectedIndex, 0, Math.max(0, slashFilteredCommands.length - 1));
+  slashPalette.hidden = false;
+  renderSlashPalette();
+}
+
+function closeSlashPalette() {
+  slashPaletteOpen = false;
+  slashFilteredCommands = [];
+  slashSelectedIndex = 0;
+  slashPalette.hidden = true;
+  slashList.innerHTML = "";
+}
+
+function moveSlashSelection(delta) {
+  if (!slashPaletteOpen || slashFilteredCommands.length === 0) return;
+  slashSelectedIndex = (slashSelectedIndex + delta + slashFilteredCommands.length) % slashFilteredCommands.length;
+  renderSlashPalette();
+}
+
+function renderSlashPalette() {
+  if (!slashPaletteOpen) return;
+
+  if (slashFilteredCommands.length === 0) {
+    slashList.innerHTML = `<li class="slash-empty" role="option" aria-disabled="true">No commands found</li>`;
+    return;
+  }
+
+  slashList.innerHTML = slashFilteredCommands
+    .map((item, index) => {
+      const active = index === slashSelectedIndex;
+      return `
+        <li role="option" aria-selected="${String(active)}">
+          <button
+            type="button"
+            class="slash-option ${active ? "is-active" : ""}"
+            data-slash-index="${index}"
+            aria-label="${escapeHtml(item.command)}: ${escapeHtml(item.description)}"
+          >
+            <span class="slash-command">${escapeHtml(item.command)}</span>
+            <span class="slash-description">${escapeHtml(item.description)}</span>
+          </button>
+        </li>
+      `;
+    })
+    .join("");
+
+  slashList.querySelectorAll("[data-slash-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const index = Number.parseInt(button.getAttribute("data-slash-index") || "0", 10);
+      runSlashCommand(index);
+    });
+  });
+}
+
+function runSlashCommand(index) {
+  const selected = slashFilteredCommands[index];
+  if (!selected) return;
+
+  input.value = "";
+  input.style.height = "auto";
+  updateComposerState();
+  closeSlashPalette();
+  selected.run();
+}
 
 // --- WebSocket ---
 const RECONNECT_BASE_MS = 1000;
@@ -125,28 +309,42 @@ function setConnectionStatus(state) {
   const colors = {
     connected: "bg-status-green",
     connecting: "bg-status-amber",
+    reconnecting: "bg-status-amber",
     offline: "bg-status-red",
   };
 
-  statusDot.className = "w-2 h-2 rounded-full transition-colors duration-200";
+  statusDot.className = "status-dot w-2 h-2 rounded-full transition-colors duration-200";
   statusDot.classList.add(colors[state] || colors.offline);
+  statusDot.classList.toggle("status-dot-pulse", state === "reconnecting");
+  statusDot.setAttribute("aria-label", connectionAriaLabel(state));
   updateStatusStrip();
+  renderSessionInfo();
 }
 
-function connect() {
+function connectionAriaLabel(state) {
+  if (state === "connected") return "Connected";
+  if (state === "reconnecting") return "Reconnecting";
+  if (state === "connecting") return "Connecting";
+  return "Offline";
+}
+
+function connect(isReconnect = reconnectAttempt > 0) {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
-  setConnectionStatus("connecting");
+  setConnectionStatus(isReconnect ? "reconnecting" : "connecting");
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${window.location.host}/ws`);
 
   ws.addEventListener("open", () => {
     reconnectAttempt = 0;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     setConnectionStatus("connected");
   });
 
   ws.addEventListener("message", (event) => {
-    removeThinking();
     try {
       const data = JSON.parse(event.data);
       if (data.type === "message") {
@@ -156,6 +354,7 @@ function connect() {
       }
 
       if (data.type === "approval_card" || data.type === "action_card") {
+        removeThinking();
         renderActionCards([data.card || data]);
         return;
       }
@@ -185,7 +384,12 @@ function scheduleReconnect() {
   reconnectAttempt += 1;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    connect();
+    if (!navigator.onLine) {
+      setConnectionStatus("offline");
+      scheduleReconnect();
+      return;
+    }
+    connect(true);
   }, delay);
 }
 
@@ -199,6 +403,16 @@ function hideEmptyState() {
 function addMessage(role, text) {
   hideEmptyState();
   messageCount += 1;
+
+  if (role === "agent") {
+    const thinkingEl = document.getElementById("thinking");
+    if (thinkingEl) {
+      replaceThinkingWithMessage(thinkingEl, text);
+      announceMessage(role, text);
+      renderSessionInfo();
+      return;
+    }
+  }
 
   const el = document.createElement("div");
   el.className = "msg-enter";
@@ -223,19 +437,25 @@ function addMessage(role, text) {
   messages.appendChild(el);
   applyHistoryFade();
   scrollToBottom();
+  announceMessage(role, text);
+  renderSessionInfo();
 }
 
 function addThinking() {
   hideEmptyState();
+  removeThinking();
   const el = document.createElement("div");
   el.id = "thinking";
-  el.className = "msg-enter flex gap-1.5 py-1";
+  el.className = "msg-enter thinking-slot py-1";
   el.innerHTML = `
-    <span class="thinking-dot w-2 h-2 rounded-full"></span>
-    <span class="thinking-dot w-2 h-2 rounded-full"></span>
-    <span class="thinking-dot w-2 h-2 rounded-full"></span>
+    <div class="thinking-inline" aria-hidden="true">
+      <span class="thinking-dot w-2 h-2 rounded-full"></span>
+      <span class="thinking-dot w-2 h-2 rounded-full"></span>
+      <span class="thinking-dot w-2 h-2 rounded-full"></span>
+    </div>
   `;
   messages.appendChild(el);
+  applyHistoryFade();
   scrollToBottom();
   return el;
 }
@@ -243,6 +463,43 @@ function addThinking() {
 function removeThinking() {
   const el = document.getElementById("thinking");
   if (el) el.remove();
+}
+
+function replaceThinkingWithMessage(thinkingEl, text) {
+  const dots = thinkingEl.querySelector(".thinking-inline");
+  const response = document.createElement("div");
+  response.className = "agent-response text-[15px] leading-[22px] text-text-primary whitespace-pre-wrap";
+  response.textContent = text;
+  thinkingEl.appendChild(response);
+
+  if (prefersReducedMotion.matches) {
+    dots?.remove();
+    thinkingEl.removeAttribute("id");
+    thinkingEl.classList.remove("thinking-slot");
+    response.classList.add("is-visible");
+  } else {
+    requestAnimationFrame(() => {
+      dots?.classList.add("is-exit");
+      response.classList.add("is-visible");
+    });
+
+    setTimeout(() => {
+      dots?.remove();
+      thinkingEl.removeAttribute("id");
+      thinkingEl.classList.remove("thinking-slot");
+    }, MOTION.fast);
+  }
+
+  applyHistoryFade();
+  scrollToBottom();
+}
+
+function announceMessage(role, text) {
+  if (!liveRegion) return;
+  const value = String(text || "").trim();
+  if (!value) return;
+  const prefix = role === "agent" ? "Silas" : role === "user" ? "You" : "Status";
+  liveRegion.textContent = `${prefix}: ${value}`;
 }
 
 function applyHistoryFade() {
@@ -589,6 +846,8 @@ function renderWorkItems() {
   }
 
   updateElapsedTimes();
+  renderSideWorkItems();
+  renderSessionInfo();
 }
 
 function workItemTemplate(item) {
@@ -628,6 +887,63 @@ function updateElapsedTimes() {
   });
 }
 
+function renderSideWorkItems() {
+  if (!sideWorkItemsEl) return;
+
+  const priority = {
+    needs_review: 0,
+    active: 1,
+    completed: 2,
+  };
+
+  const ordered = [...workState.items].sort((a, b) => {
+    const priorityDelta = (priority[a.status] || 99) - (priority[b.status] || 99);
+    if (priorityDelta !== 0) return priorityDelta;
+    return b.startedAt - a.startedAt;
+  });
+
+  if (ordered.length === 0) {
+    sideWorkItemsEl.innerHTML = `<p class="side-panel-empty">No active work right now.</p>`;
+    return;
+  }
+
+  sideWorkItemsEl.innerHTML = ordered
+    .slice(0, 12)
+    .map((item) => {
+      return `
+        <article class="side-work-row">
+          <p class="side-work-title">${escapeHtml(item.title)}</p>
+          <p class="side-work-meta">${escapeHtml(sideWorkStatusLabel(item))}</p>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function sideWorkStatusLabel(item) {
+  if (item.status === "needs_review") return "Needs review";
+  if (item.status === "completed") return "Completed";
+  return `Active · ${elapsedLabel(item)}`;
+}
+
+function renderSessionInfo() {
+  if (!sessionInfoEl) return;
+
+  const activeCount = workState.items.filter((item) => item.status === "active").length;
+  const needsReviewCount = workState.items.filter((item) => item.status === "needs_review").length;
+  const completedCount = workState.items.filter((item) => item.status === "completed").length;
+
+  sessionInfoEl.innerHTML = `
+    <dl class="side-session-list">
+      <div><dt>Connection</dt><dd>${escapeHtml(connectionState)}</dd></div>
+      <div><dt>Messages</dt><dd>${messageCount}</dd></div>
+      <div><dt>Active</dt><dd>${activeCount}</dd></div>
+      <div><dt>Needs review</dt><dd>${needsReviewCount}</dd></div>
+      <div><dt>Completed</dt><dd>${completedCount}</dd></div>
+    </dl>
+  `;
+}
+
 function updateStatusStrip() {
   if (!statusStrip || !workStatus) return;
 
@@ -637,20 +953,31 @@ function updateStatusStrip() {
   if (connectionState !== "connected") {
     statusStrip.classList.remove("hidden", "is-clear");
     statusStrip.classList.add("is-visible");
-    workStatus.innerHTML = `\u25cf ${connectionState === "offline" ? "Connection lost" : "Connecting\u2026"}`;
+    statusStrip.classList.add("is-banner");
+    workStatus.textContent = "Reconnecting…";
+    statusStrip.setAttribute("aria-label", "Reconnecting");
     return;
   }
+
+  statusStrip.classList.remove("is-banner");
 
   if (activeCount === 0 && needsReviewCount === 0) {
     statusStrip.classList.add("hidden", "is-clear");
     statusStrip.classList.remove("is-visible");
     workStatus.textContent = "";
+    statusStrip.setAttribute("aria-label", "No active work");
     return;
   }
 
-  const reviewLabel = `${needsReviewCount} needs review`;
   const activeLabel = `${activeCount} active`;
-  workStatus.innerHTML = `${activeLabel} · <span class="status-strip-tint">${reviewLabel}</span>`;
+  if (needsReviewCount > 0) {
+    const reviewLabel = `${needsReviewCount} needs review`;
+    workStatus.innerHTML = `${activeLabel} · <span class="status-strip-tint">${reviewLabel}</span>`;
+    statusStrip.setAttribute("aria-label", `${activeLabel}, ${reviewLabel}`);
+  } else {
+    workStatus.textContent = activeLabel;
+    statusStrip.setAttribute("aria-label", activeLabel);
+  }
 
   statusStrip.classList.remove("hidden", "is-clear");
   statusStrip.classList.add("is-visible");
@@ -658,9 +985,11 @@ function updateStatusStrip() {
 
 function openWorkPanel(visible = SHEET_SNAP_VISIBLE.peek) {
   if (!workPanel || !workPanelBackdrop || !workPanelSheet) return;
+  if (panelVisiblePercent === 0 && document.activeElement instanceof HTMLElement) {
+    workPanelFocusReturn = document.activeElement;
+  }
 
   workPanel.setAttribute("aria-hidden", "false");
-  workPanel.style.visibility = "visible";
   statusStrip?.setAttribute("aria-expanded", "true");
 
   workPanelBackdrop.hidden = false;
@@ -669,6 +998,11 @@ function openWorkPanel(visible = SHEET_SNAP_VISIBLE.peek) {
   });
 
   snapPanel(visible, false);
+
+  const focusDelay = prefersReducedMotion.matches ? 0 : MOTION.fast;
+  setTimeout(() => {
+    focusFirstElement(workPanelSheet);
+  }, focusDelay);
 }
 
 function closeWorkPanel() {
@@ -695,6 +1029,11 @@ function snapPanel(visiblePercent, immediate) {
     workPanelSheet.style.transition = "";
   }
 
+  if (clamped > 0) {
+    workPanel.setAttribute("aria-hidden", "false");
+    statusStrip?.setAttribute("aria-expanded", "true");
+  }
+
   if (clamped === 0) {
     statusStrip?.setAttribute("aria-expanded", "false");
     workPanel.setAttribute("aria-hidden", "true");
@@ -705,6 +1044,13 @@ function snapPanel(visiblePercent, immediate) {
         workPanelBackdrop.hidden = true;
       }
     }, delay);
+
+    if (workPanelFocusReturn && document.contains(workPanelFocusReturn)) {
+      workPanelFocusReturn.focus();
+    } else {
+      statusStrip?.focus();
+    }
+    workPanelFocusReturn = null;
   }
 }
 
@@ -717,12 +1063,6 @@ function initWorkPanelInteractions() {
 
   workPanelBackdrop?.addEventListener("click", () => {
     closeWorkPanel();
-  });
-
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && panelVisiblePercent > 0) {
-      closeWorkPanel();
-    }
   });
 
   let drag = null;
@@ -787,6 +1127,150 @@ function initWorkPanelInteractions() {
   });
 }
 
+function initSidePanel() {
+  if (!sidePanel || !sidePanelToggle) return;
+
+  sidePanelToggle.addEventListener("click", () => {
+    toggleSidePanel();
+  });
+
+  sidePanelClose?.addEventListener("click", () => {
+    setSidePanelOpen(false);
+  });
+
+  sideTabButtons.forEach((tabButton) => {
+    tabButton.addEventListener("click", () => {
+      const tab = tabButton.getAttribute("data-side-tab") || "memory";
+      activateSidePanelTab(tab);
+    });
+  });
+
+  DESKTOP_QUERY.addEventListener("change", () => {
+    if (!isDesktopLayout()) {
+      setSidePanelOpen(false);
+    }
+  });
+
+  activateSidePanelTab(sidePanelTab);
+}
+
+function isDesktopLayout() {
+  return DESKTOP_QUERY.matches;
+}
+
+function toggleSidePanel() {
+  if (!isDesktopLayout()) return;
+  setSidePanelOpen(!sidePanelOpen);
+}
+
+function setSidePanelOpen(open) {
+  if (!sidePanel) return;
+  const canOpen = open && isDesktopLayout();
+  sidePanelOpen = canOpen;
+  sidePanel.classList.toggle("is-open", canOpen);
+  sidePanel.setAttribute("aria-hidden", String(!canOpen));
+  sidePanelToggle?.setAttribute("aria-expanded", String(canOpen));
+
+  if (canOpen) {
+    const focusDelay = prefersReducedMotion.matches ? 0 : MOTION.fast;
+    setTimeout(() => {
+      focusFirstElement(sidePanel);
+    }, focusDelay);
+  } else if (sidePanel.contains(document.activeElement)) {
+    sidePanelToggle?.focus();
+  }
+}
+
+function activateSidePanelTab(tab) {
+  if (!sideTabPanels[tab]) return;
+  sidePanelTab = tab;
+
+  sideTabButtons.forEach((button) => {
+    const active = button.getAttribute("data-side-tab") === tab;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", String(active));
+    button.setAttribute("tabindex", active ? "0" : "-1");
+  });
+
+  Object.entries(sideTabPanels).forEach(([panelId, panel]) => {
+    if (!panel) return;
+    panel.hidden = panelId !== tab;
+  });
+}
+
+function openShortcutOverlay() {
+  if (!shortcutOverlay || !shortcutSheet || shortcutOpen) return;
+  shortcutOpen = true;
+  shortcutFocusReturn = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  shortcutOverlay.hidden = false;
+  requestAnimationFrame(() => {
+    shortcutOverlay.classList.add("is-open");
+  });
+
+  const focusDelay = prefersReducedMotion.matches ? 0 : MOTION.fast;
+  setTimeout(() => {
+    focusFirstElement(shortcutSheet);
+  }, focusDelay);
+}
+
+function closeShortcutOverlay() {
+  if (!shortcutOverlay || !shortcutSheet || !shortcutOpen) return;
+  shortcutOpen = false;
+  shortcutOverlay.classList.remove("is-open");
+  const delay = prefersReducedMotion.matches ? 0 : MOTION.fast;
+  setTimeout(() => {
+    if (!shortcutOpen) {
+      shortcutOverlay.hidden = true;
+      if (shortcutFocusReturn && document.contains(shortcutFocusReturn)) {
+        shortcutFocusReturn.focus();
+      }
+      shortcutFocusReturn = null;
+    }
+  }, delay);
+}
+
+function focusableElements(scope) {
+  if (!scope) return [];
+  return [...scope.querySelectorAll("a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])")]
+    .filter((el) => !el.hasAttribute("hidden") && el.getAttribute("aria-hidden") !== "true");
+}
+
+function focusFirstElement(scope) {
+  const focusables = focusableElements(scope);
+  if (focusables.length === 0) return;
+  focusables[0].focus();
+}
+
+function trapFocusWithin(scope, event) {
+  if (event.key !== "Tab") return false;
+  const focusables = focusableElements(scope);
+  if (focusables.length === 0) return false;
+
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  const active = document.activeElement;
+
+  if (!scope.contains(active)) {
+    event.preventDefault();
+    first.focus();
+    return true;
+  }
+
+  if (event.shiftKey && active === first) {
+    event.preventDefault();
+    last.focus();
+    return true;
+  }
+
+  if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    first.focus();
+    return true;
+  }
+
+  return false;
+}
+
 function nearestSnap(value, snaps) {
   return snaps.reduce((closest, snap) => {
     return Math.abs(snap - value) < Math.abs(closest - value) ? snap : closest;
@@ -822,9 +1306,18 @@ composer.addEventListener("submit", (e) => {
   const text = input.value.trim();
   if (!text) return;
 
+  const slashQuery = slashQueryFromInput();
+  if (slashQuery !== null) {
+    if (!slashPaletteOpen) openSlashPalette(slashQuery);
+    if (slashFilteredCommands.length > 0) {
+      runSlashCommand(slashSelectedIndex);
+    }
+    return;
+  }
+
   if (!ws || ws.readyState !== WebSocket.OPEN) {
-    addMessage("system", "Reconnecting…");
-    connect();
+    setConnectionStatus("offline");
+    scheduleReconnect();
     return;
   }
 
@@ -844,32 +1337,148 @@ composer.addEventListener("submit", (e) => {
 
   input.value = "";
   input.style.height = "auto";
-  sendBtn.classList.add("opacity-0", "pointer-events-none");
-  sendBtn.classList.remove("opacity-100", "pointer-events-auto");
+  updateComposerState();
+  closeSlashPalette();
 });
 
 // --- Keyboard ---
 input.addEventListener("keydown", (e) => {
+  if (slashPaletteOpen) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      moveSlashSelection(1);
+      return;
+    }
+
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      moveSlashSelection(-1);
+      return;
+    }
+
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeSlashPalette();
+      return;
+    }
+
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (slashFilteredCommands.length > 0) {
+        runSlashCommand(slashSelectedIndex);
+      }
+      return;
+    }
+  }
+
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+    e.preventDefault();
+    composer.requestSubmit();
+    return;
+  }
+
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     composer.requestSubmit();
   }
 });
 
+document.addEventListener("keydown", (event) => {
+  if (panelVisiblePercent > 0 && trapFocusWithin(workPanelSheet, event)) {
+    return;
+  }
+
+  if (shortcutOpen && trapFocusWithin(shortcutSheet, event)) {
+    return;
+  }
+
+  const isEditable = isEditableTarget(event.target);
+  const key = event.key.toLowerCase();
+
+  if ((event.metaKey || event.ctrlKey) && key === "k") {
+    event.preventDefault();
+    focusComposer();
+    return;
+  }
+
+  if (!isEditable && !event.metaKey && !event.ctrlKey && !event.altKey && event.key === "/") {
+    event.preventDefault();
+    focusComposer();
+    return;
+  }
+
+  if ((event.metaKey || event.ctrlKey) && event.key === ".") {
+    event.preventDefault();
+    toggleSidePanel();
+    return;
+  }
+
+  if (!isEditable && !event.metaKey && !event.ctrlKey && !event.altKey && event.key === "?") {
+    event.preventDefault();
+    if (shortcutOpen) closeShortcutOverlay();
+    else openShortcutOverlay();
+    return;
+  }
+
+  if (event.key === "Escape") {
+    if (slashPaletteOpen) {
+      closeSlashPalette();
+      event.preventDefault();
+      return;
+    }
+
+    if (shortcutOpen) {
+      closeShortcutOverlay();
+      event.preventDefault();
+      return;
+    }
+
+    if (sidePanelOpen) {
+      setSidePanelOpen(false);
+      event.preventDefault();
+      return;
+    }
+
+    if (panelVisiblePercent > 0) {
+      closeWorkPanel();
+      event.preventDefault();
+      return;
+    }
+
+    if (document.activeElement === input) {
+      input.blur();
+      event.preventDefault();
+    }
+  }
+});
+
 // --- Network ---
 window.addEventListener("online", () => {
-  if (!ws || ws.readyState !== WebSocket.OPEN) connect();
+  if (!ws || ws.readyState !== WebSocket.OPEN) connect(true);
 });
 window.addEventListener("offline", () => setConnectionStatus("offline"));
 
+shortcutOverlay?.addEventListener("click", (event) => {
+  if (event.target === shortcutOverlay) {
+    closeShortcutOverlay();
+  }
+});
+
+shortcutClose?.addEventListener("click", () => {
+  closeShortcutOverlay();
+});
+
 // --- Init ---
 connect();
-input.focus();
-
 initWorkPanelInteractions();
+initSidePanel();
 snapPanel(SHEET_SNAP_VISIBLE.dismissed, true);
 renderWorkItems();
 updateStatusStrip();
+updateComposerState();
+renderSessionInfo();
+setSidePanelOpen(false);
+focusComposer();
 
 if (new URLSearchParams(window.location.search).get("demo") === "1" && DEMO_APPROVAL_ITEMS.length > 0) {
   setTimeout(() => {

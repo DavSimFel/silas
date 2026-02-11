@@ -12,74 +12,209 @@
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
     <link rel="stylesheet" href="/style.css" />
   </head>
-  <body class="h-full flex flex-col overflow-hidden">
-    <!-- Status Strip -->
-    <header class="shrink-0 px-4 pt-[env(safe-area-inset-top)]">
-      <div class="mx-auto max-w-[760px] h-11 flex items-center justify-between gap-3">
-        <button
-          id="status-strip"
-          type="button"
-          class="status-strip hidden"
-          aria-controls="work-panel"
-          aria-expanded="false"
-        >
-          <span id="work-status" class="status-strip-label"></span>
-        </button>
+  <body class="h-full overflow-hidden">
+    <a href="#stream" class="skip-link">Skip to content</a>
 
-        <div class="flex items-center gap-3 shrink-0">
-          <span id="status-dot" class="w-2 h-2 rounded-full bg-status-green transition-colors duration-200"></span>
-          <button id="install-btn" class="text-xs text-tint hover:text-tint-hover transition-colors duration-100 hidden">Install</button>
-        </div>
+    <div id="app-shell" class="app-shell">
+      <div id="app-main" class="flex-1 min-w-0 flex flex-col overflow-hidden">
+        <!-- Status Strip -->
+        <header class="shrink-0 px-4 pt-[env(safe-area-inset-top)]">
+          <div class="mx-auto max-w-[760px] h-11 flex items-center justify-between gap-3">
+            <button
+              id="status-strip"
+              type="button"
+              class="status-strip hidden"
+              aria-controls="work-panel"
+              aria-expanded="false"
+              aria-label="Open active work panel"
+            >
+              <span id="work-status" class="status-strip-label"></span>
+            </button>
+
+            <div class="flex items-center gap-3 shrink-0">
+              <button
+                id="side-panel-toggle"
+                type="button"
+                class="side-panel-toggle hidden md:inline-flex items-center justify-center w-11 h-11 rounded-full text-text-secondary hover:text-text-primary transition-colors duration-100"
+                aria-label="Toggle side panel"
+                aria-controls="side-panel"
+                aria-expanded="false"
+              >
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 18 18"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                >
+                  <path d="M3.5 5h11M3.5 9h11M3.5 13h11" />
+                </svg>
+              </button>
+              <span
+                id="status-dot"
+                class="status-dot w-2 h-2 rounded-full bg-status-amber transition-colors duration-200"
+                role="status"
+                aria-label="Connecting"
+              ></span>
+              <button
+                id="install-btn"
+                class="text-xs text-tint hover:text-tint-hover transition-colors duration-100 hidden"
+                aria-label="Install app"
+              >
+                Install
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <!-- Stream -->
+        <main id="stream" tabindex="-1" class="flex-1 overflow-y-auto px-4 pb-2">
+          <div id="messages" class="mx-auto max-w-[760px] flex flex-col gap-4 min-h-full py-6">
+            <!-- Empty State -->
+            <div id="empty-state" class="flex-1 flex flex-col items-center justify-center select-none">
+              <span class="text-5xl breathe mb-6">🪶</span>
+              <p class="text-xl font-light text-text-tertiary">What should I work on?</p>
+            </div>
+          </div>
+        </main>
+
+        <!-- Composer -->
+        <footer class="shrink-0 px-4 pb-[env(safe-area-inset-bottom)] pb-3">
+          <form id="composer" class="mx-auto max-w-[760px] relative" aria-label="Message composer">
+            <div id="slash-palette" class="slash-palette glass" hidden>
+              <ul id="slash-list" class="slash-list" role="listbox" aria-label="Slash commands"></ul>
+            </div>
+            <textarea
+              id="message-input"
+              rows="1"
+              placeholder="Message Silas…"
+              class="w-full resize-none bg-transparent text-[15px] text-text-primary placeholder:text-text-tertiary
+                     py-3 pl-4 pr-12
+                     border border-surface-border/0 rounded-[14px]
+                     focus:border-surface-border focus:outline-none
+                     transition-[border-color] duration-200
+                     leading-[22px] max-h-[132px] overflow-y-auto"
+              autocomplete="off"
+              aria-label="Message input"
+            ></textarea>
+            <button
+              type="submit"
+              id="send-btn"
+              class="absolute right-3 bottom-3 w-8 h-8 flex items-center justify-center
+                     rounded-full bg-tint-subtle text-tint
+                     hover:bg-tint hover:text-bg
+                     transition-all duration-100
+                     opacity-0 pointer-events-none"
+              aria-label="Send message"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M3 8h10M9 4l4 4-4 4" />
+              </svg>
+            </button>
+          </form>
+        </footer>
       </div>
-    </header>
 
-    <!-- Stream -->
-    <main id="stream" class="flex-1 overflow-y-auto px-4 pb-2">
-      <div id="messages" class="mx-auto max-w-[760px] flex flex-col gap-4 min-h-full py-6">
-        <!-- Empty State -->
-        <div id="empty-state" class="flex-1 flex flex-col items-center justify-center select-none">
-          <span class="text-5xl breathe mb-6">🪶</span>
-          <p class="text-xl font-light text-text-tertiary">What should I work on?</p>
+      <aside id="side-panel" class="side-panel glass" aria-hidden="true">
+        <div class="side-panel-header">
+          <h2 class="side-panel-title">Workspace</h2>
+          <button id="side-panel-close" type="button" class="side-panel-close" aria-label="Close side panel">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+            >
+              <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" />
+            </svg>
+          </button>
         </div>
-      </div>
-    </main>
 
-    <!-- Composer -->
-    <footer class="shrink-0 px-4 pb-[env(safe-area-inset-bottom)] pb-3">
-      <form id="composer" class="mx-auto max-w-[760px] relative">
-        <textarea
-          id="message-input"
-          rows="1"
-          placeholder="Message Silas…"
-          class="w-full resize-none bg-transparent text-[15px] text-text-primary placeholder:text-text-tertiary
-                 py-3 pl-4 pr-12
-                 border border-surface-border/0 rounded-[14px]
-                 focus:border-surface-border focus:outline-none
-                 transition-[border-color] duration-200
-                 leading-[22px] max-h-[132px] overflow-y-auto"
-          autocomplete="off"
-        ></textarea>
-        <button
-          type="submit"
-          id="send-btn"
-          class="absolute right-3 bottom-3 w-8 h-8 flex items-center justify-center
-                 rounded-full bg-tint-subtle text-tint
-                 hover:bg-tint hover:text-bg
-                 transition-all duration-100
-                 opacity-0 pointer-events-none"
-          aria-label="Send"
+        <div class="side-panel-tabs" role="tablist" aria-label="Side panel sections">
+          <button
+            id="tab-memory"
+            type="button"
+            class="side-tab is-active"
+            role="tab"
+            aria-selected="true"
+            aria-controls="panel-memory"
+            data-side-tab="memory"
+          >
+            Memory
+          </button>
+          <button
+            id="tab-work"
+            type="button"
+            class="side-tab"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-work"
+            data-side-tab="work"
+          >
+            Active Work
+          </button>
+          <button
+            id="tab-session"
+            type="button"
+            class="side-tab"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-session"
+            data-side-tab="session"
+          >
+            Session Info
+          </button>
+        </div>
+
+        <section id="panel-memory" class="side-panel-section" role="tabpanel" aria-labelledby="tab-memory">
+          <p class="side-panel-empty">No memory snippets yet.</p>
+        </section>
+        <section
+          id="panel-work"
+          class="side-panel-section"
+          role="tabpanel"
+          aria-labelledby="tab-work"
+          hidden
         >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 8h10M9 4l4 4-4 4"/>
-          </svg>
-        </button>
-      </form>
-    </footer>
+          <div id="side-work-items" class="side-work-items"></div>
+        </section>
+        <section
+          id="panel-session"
+          class="side-panel-section"
+          role="tabpanel"
+          aria-labelledby="tab-session"
+          hidden
+        >
+          <div id="session-info" class="side-session-info"></div>
+        </section>
+      </aside>
+    </div>
 
     <!-- Work Panel -->
     <div id="work-panel-backdrop" class="work-panel-backdrop" hidden></div>
-    <section id="work-panel" class="work-panel" aria-hidden="true" style="visibility:hidden">
-      <div id="work-panel-sheet" class="work-panel-sheet glass-overlay" role="dialog" aria-label="Active Work">
+    <section id="work-panel" class="work-panel" aria-hidden="true">
+      <div
+        id="work-panel-sheet"
+        class="work-panel-sheet glass-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Active work"
+        tabindex="-1"
+      >
         <button id="work-panel-handle" class="work-panel-handle" type="button" aria-label="Drag work panel">
           <span class="work-panel-grabber"></span>
         </button>
@@ -89,6 +224,44 @@
         </div>
       </div>
     </section>
+
+    <div id="shortcut-overlay" class="shortcut-overlay" hidden>
+      <div
+        id="shortcut-sheet"
+        class="shortcut-sheet glass-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="shortcut-title"
+      >
+        <div class="shortcut-header">
+          <h2 id="shortcut-title" class="shortcut-title">Keyboard shortcuts</h2>
+          <button id="shortcut-close" type="button" class="shortcut-close" aria-label="Close keyboard shortcuts">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+            >
+              <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" />
+            </svg>
+          </button>
+        </div>
+        <ul class="shortcut-list">
+          <li><kbd>/</kbd><span>Focus composer</span></li>
+          <li><kbd>Cmd</kbd><kbd>K</kbd><span>Focus composer</span></li>
+          <li><kbd>Cmd</kbd><kbd>.</kbd><span>Toggle side panel</span></li>
+          <li><kbd>Enter</kbd><span>Send message</span></li>
+          <li><kbd>Cmd</kbd><kbd>Enter</kbd><span>Send message</span></li>
+          <li><kbd>Esc</kbd><span>Close panel or blur composer</span></li>
+          <li><kbd>?</kbd><span>Show shortcut help</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div id="live-region" class="sr-only-live" aria-live="polite" aria-atomic="true"></div>
 
     <script src="/app.js" defer></script>
   </body>
