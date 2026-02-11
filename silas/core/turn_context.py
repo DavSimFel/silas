@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from silas.protocols.audit import AuditLog
 from silas.protocols.chronicle import ChronicleStore
@@ -13,6 +13,9 @@ from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
 from silas.protocols.skills import SkillLoader, SkillResolver
 from silas.protocols.work import WorkItemExecutor
 
+if TYPE_CHECKING:
+    from silas.core.context_manager import LiveContextManager
+
 
 class StructuredAgentRunner(Protocol):
     async def run(self, prompt: str) -> object: ...
@@ -22,6 +25,7 @@ class StructuredAgentRunner(Protocol):
 class TurnContext:
     scope_id: str = "owner"
     context_manager: ContextManager | None = None
+    live_context_manager: LiveContextManager | None = None
     memory_store: MemoryStore | None = None
     chronicle_store: ChronicleStore | None = None
     proxy: StructuredAgentRunner | None = None

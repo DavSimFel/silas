@@ -28,11 +28,16 @@ class TestModel:
         self.message_prefix = message_prefix
 
     async def run(self, prompt: str) -> RunResult:
+        user_prompt = prompt
+        marker = "\n\n[USER MESSAGE]\n"
+        if marker in prompt:
+            user_prompt = prompt.split(marker, 1)[1]
+
         decision = RouteDecision(
             route="direct",
             reason="test_model",
             response=AgentResponse(
-                message=f"{self.message_prefix} {prompt}",
+                message=f"{self.message_prefix} {user_prompt}",
                 needs_approval=False,
             ),
             interaction_register=InteractionRegister.status,

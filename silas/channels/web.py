@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 from pathlib import Path
 from typing import AsyncIterator
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, Response
 
 from silas.models.messages import ChannelMessage, utc_now
 from silas.protocols.channels import ChannelAdapterCore
@@ -58,7 +58,31 @@ class WebChannel(ChannelAdapterCore):
                         self._websocket = None
 
         if self.web_dir.exists():
-            self.app.mount("/", StaticFiles(directory=self.web_dir, html=True), name="web")
+
+            @self.app.get("/")
+            async def index() -> Response:
+                return self._serve_static("index.html")
+
+            @self.app.get("/{asset_path:path}")
+            async def static_asset(asset_path: str) -> Response:
+                return self._serve_static(asset_path)
+
+    def _serve_static(self, asset_path: str) -> Response:
+        asset = asset_path.lstrip("/")
+        target = (self.web_dir / asset).resolve()
+        web_root = self.web_dir.resolve()
+
+        # Block path traversal and reject unknown files.
+        if web_root not in target.parents:
+            raise HTTPException(status_code=404)
+        if not target.is_file():
+            raise HTTPException(status_code=404)
+
+        media_type, _ = mimetypes.guess_type(str(target))
+        return Response(
+            content=target.read_bytes(),
+            media_type=media_type or "application/octet-stream",
+        )
 
     async def _handle_client_payload(self, payload: str) -> None:
         sender_id = self.scope_id

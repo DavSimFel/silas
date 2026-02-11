@@ -11,7 +11,9 @@ from silas.agents.proxy import build_proxy_agent
 from silas.audit.sqlite_audit import SQLiteAuditLog
 from silas.channels.web import WebChannel
 from silas.config import SilasSettings, load_config
+from silas.core.context_manager import LiveContextManager
 from silas.core.stream import Stream
+from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
 from silas.memory.sqlite_store import SQLiteMemoryStore
 from silas.persistence.chronicle_store import SQLiteChronicleStore
@@ -49,10 +51,16 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
     work_item_store = SQLiteWorkItemStore(db)  # noqa: F841 — wired in Phase 3
     audit = SQLiteAuditLog(db)
     nonce_store = SQLiteNonceStore(db)  # noqa: F841 — wired in Phase 3
+    token_counter = HeuristicTokenCounter()
+    context_manager = LiveContextManager(
+        token_budget=settings.context.as_token_budget(),
+        token_counter=token_counter,
+    )
 
     turn_context = TurnContext(
         scope_id=settings.owner_id,
-        context_manager=None,  # Phase 1c: LiveContextManager
+        context_manager=context_manager,
+        live_context_manager=context_manager,
         memory_store=memory_store,
         chronicle_store=chronicle_store,
         proxy=proxy,
@@ -63,6 +71,7 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
     stream = Stream(
         channel=channel,
         turn_context=turn_context,
+        context_manager=context_manager,
         owner_id=settings.owner_id,
         default_context_profile=settings.context.default_profile,
     )
