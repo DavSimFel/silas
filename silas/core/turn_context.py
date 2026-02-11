@@ -1,0 +1,41 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Protocol
+
+from silas.protocols.audit import AuditLog
+from silas.protocols.context import ContextManager
+from silas.protocols.gates import GateRunner
+from silas.protocols.memory import MemoryStore
+from silas.protocols.personality import PersonalityEngine
+from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
+from silas.protocols.skills import SkillLoader, SkillResolver
+from silas.protocols.work import WorkItemExecutor
+
+
+class StructuredAgentRunner(Protocol):
+    async def run(self, prompt: str) -> object: ...
+
+
+@dataclass(slots=True)
+class TurnContext:
+    scope_id: str = "owner"
+    context_manager: ContextManager | None = None
+    memory_store: MemoryStore | None = None
+    chronicle_store: object | None = None
+    proxy: StructuredAgentRunner | None = None
+    planner: StructuredAgentRunner | None = None
+    work_executor: WorkItemExecutor | None = None
+    gate_runner: GateRunner | None = None
+    embedder: object | None = None
+    personality_engine: PersonalityEngine | None = None
+    skill_loader: SkillLoader | None = None
+    skill_resolver: SkillResolver | None = None
+    suggestion_engine: SuggestionEngine | None = None
+    autonomy_calibrator: AutonomyCalibrator | None = None
+    audit: AuditLog | None = None
+    config: object | None = None
+    turn_number: int = 0
+
+
+__all__ = ["TurnContext", "StructuredAgentRunner"]
