@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from silas.models.agents import RouteDecision
@@ -23,6 +23,12 @@ class WebChannelConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8420
     auth_token: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_remote_requires_auth(self) -> WebChannelConfig:
+        if self.host == "0.0.0.0" and self.auth_token is None:  # noqa: S104
+            raise ValueError("channels.web.auth_token is required when host is 0.0.0.0")
+        return self
 
 
 class ChannelsConfig(BaseModel):

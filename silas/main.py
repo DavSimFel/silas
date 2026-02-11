@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import click
@@ -12,26 +10,7 @@ from silas.channels.web import WebChannel
 from silas.config import SilasSettings, load_config
 from silas.core.stream import Stream
 from silas.core.turn_context import TurnContext
-
-
-@dataclass(slots=True)
-class InMemoryAuditLog:
-    events: list[dict[str, object]] = field(default_factory=list)
-
-    async def log(self, event: str, **data: object) -> str:
-        event_id = uuid.uuid4().hex
-        self.events.append({"id": event_id, "event": event, "data": data})
-        return event_id
-
-    async def verify_chain(self) -> tuple[bool, int]:
-        return True, len(self.events)
-
-    async def write_checkpoint(self) -> str:
-        return uuid.uuid4().hex
-
-    async def verify_from_checkpoint(self, checkpoint_id: str | None = None) -> tuple[bool, int]:
-        del checkpoint_id
-        return True, len(self.events)
+from silas.stubs import InMemoryAuditLog
 
 
 def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
