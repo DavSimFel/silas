@@ -39,4 +39,9 @@ class WorkItemStore(Protocol):
     ) -> None: ...
 
 
-__all__ = ["WorkItemExecutor", "VerificationRunner", "WorkItemStore"]
+@runtime_checkable
+class PlanParser(Protocol):
+    def parse(self, markdown: str) -> WorkItem: ...
+
+
+__all__ = ["WorkItemExecutor", "VerificationRunner", "WorkItemStore", "PlanParser"]

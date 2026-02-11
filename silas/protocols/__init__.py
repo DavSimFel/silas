@@ -14,7 +14,7 @@ from silas.protocols.personality import PersonalityEngine, PersonaStore
 from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
 from silas.protocols.scheduler import TaskScheduler
 from silas.protocols.skills import SkillLoader, SkillResolver
-from silas.protocols.work import VerificationRunner, WorkItemExecutor, WorkItemStore
+from silas.protocols.work import PlanParser, VerificationRunner, WorkItemExecutor, WorkItemStore
 
 __all__ = [
     "ChannelAdapterCore",
@@ -33,6 +33,7 @@ __all__ = [
     "WorkItemExecutor",
     "VerificationRunner",
     "WorkItemStore",
+    "PlanParser",
     "TaskScheduler",
     "AuditLog",
     "PersonalityEngine",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from silas.core.turn_context import TurnContext
 from silas.models.agents import RouteDecision
+
 from tests.fakes import (
     InMemoryAuditLog,
     InMemoryChannel,
