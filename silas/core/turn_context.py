@@ -15,6 +15,8 @@ from silas.protocols.work import WorkItemExecutor
 
 if TYPE_CHECKING:
     from silas.core.context_manager import LiveContextManager
+    from silas.skills.executor import SkillExecutor
+    from silas.skills.registry import SkillRegistry
 
 
 class StructuredAgentRunner(Protocol):
@@ -36,6 +38,8 @@ class TurnContext:
     personality_engine: PersonalityEngine | None = None
     skill_loader: SkillLoader | None = None
     skill_resolver: SkillResolver | None = None
+    skill_registry: SkillRegistry | None = None
+    skill_executor: SkillExecutor | None = None
     suggestion_engine: SuggestionEngine | None = None
     autonomy_calibrator: AutonomyCalibrator | None = None
     audit: AuditLog | None = None

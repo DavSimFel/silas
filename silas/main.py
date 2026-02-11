@@ -21,6 +21,8 @@ from silas.persistence.chronicle_store import SQLiteChronicleStore
 from silas.persistence.migrations import run_migrations
 from silas.persistence.nonce_store import SQLiteNonceStore
 from silas.persistence.work_item_store import SQLiteWorkItemStore
+from silas.skills.executor import SkillExecutor, register_builtin_skills
+from silas.skills.registry import SkillRegistry
 
 
 def _db_path(settings: SilasSettings) -> str:
@@ -57,6 +59,9 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
         token_budget=settings.context.as_token_budget(),
         token_counter=token_counter,
     )
+    skill_registry = SkillRegistry()
+    register_builtin_skills(skill_registry)
+    skill_executor = SkillExecutor(skill_registry=skill_registry, memory_store=memory_store)
     output_gate_runner = (
         OutputGateRunner(settings.output_gates, token_counter=token_counter)
         if settings.output_gates
@@ -70,6 +75,8 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
         memory_store=memory_store,
         chronicle_store=chronicle_store,
         proxy=proxy,
+        skill_registry=skill_registry,
+        skill_executor=skill_executor,
         audit=audit,
         config=settings,
     )

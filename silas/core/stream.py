@@ -12,7 +12,7 @@ from silas.core.context_manager import LiveContextManager
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
 from silas.gates import OutputGateRunner
-from silas.models.agents import RouteDecision
+from silas.models.agents import PlanAction, RouteDecision
 from silas.models.context import ContextItem, ContextZone
 from silas.models.memory import MemoryItem, MemoryType, ReingestionTier
 from silas.models.messages import ChannelMessage, SignedMessage, TaintLevel
@@ -193,8 +193,14 @@ class Stream:
             )
 
         await self._audit("phase1a_noop", step=5, note="budget enforcement deferred to post-response")
-        await self._audit("phase1a_noop", step=6, note="toolset pipeline skipped")
-        await self._audit("phase1a_noop", step=6.5, note="skill-aware toolset skipped")
+        available_skills = self._available_skill_names()
+        await self._audit(
+            "skill_availability_checked",
+            step=6,
+            available_skills=available_skills,
+            has_skills=bool(available_skills),
+        )
+        await self._audit("phase1a_noop", step=6.5, note="skill-aware toolset preparation deferred")
 
         # Step 7: render context and route through Proxy
         if self.turn_context.proxy is None:
@@ -218,7 +224,22 @@ class Stream:
 
         response_text = self._route_response_text(routed)
         if routed.route == "planner":
-            await self._audit("planner_stub_used", turn_number=turn_number, reason=routed.reason)
+            plan_actions = self._extract_plan_actions(routed)
+            if plan_actions:
+                for action in plan_actions:
+                    skill_name = self._extract_skill_name(action)
+                    await self._audit(
+                        "planner_skill_action_stub",
+                        turn_number=turn_number,
+                        action=action,
+                        skill_name=skill_name,
+                        skill_registered=(
+                            bool(skill_name)
+                            and skill_name in available_skills
+                        ),
+                    )
+            else:
+                await self._audit("planner_stub_used", turn_number=turn_number, reason=routed.reason)
 
         gate_results_payload: list[dict[str, object]] = []
         warning_payload: list[dict[str, object]] = []
@@ -340,6 +361,37 @@ class Stream:
             "I need to plan this request before execution. "
             "Planner execution is not available yet."
         )
+
+    def _available_skill_names(self) -> list[str]:
+        registry = self.turn_context.skill_registry
+        if registry is None:
+            return []
+        return [skill.name for skill in registry.list_all()]
+
+    def _extract_plan_actions(self, routed: RouteDecision) -> list[dict[str, object]]:
+        raw_actions = getattr(routed, "plan_actions", None)
+        if raw_actions is None:
+            return []
+        if not isinstance(raw_actions, list):
+            return []
+
+        normalized: list[dict[str, object]] = []
+        for action in raw_actions:
+            if isinstance(action, PlanAction):
+                normalized.append(action.model_dump(mode="json"))
+            elif isinstance(action, dict):
+                normalized.append(action)
+        return normalized
+
+    def _extract_skill_name(self, action: dict[str, object]) -> str | None:
+        candidate = (
+            action.get("skill_name")
+            or action.get("skill")
+            or action.get("tool")
+        )
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate
+        return None
 
     def _ensure_session_id(self) -> str:
         if self.session_id is None:
