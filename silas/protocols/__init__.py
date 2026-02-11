@@ -1,4 +1,4 @@
-from silas.protocols.approval import ApprovalVerifier, NonceStore
+from silas.protocols.approval import ApprovalManager, ApprovalVerifier, NonceStore
 from silas.protocols.audit import AuditLog
 from silas.protocols.channels import ChannelAdapterCore, RichCardChannel
 from silas.protocols.context import ContextManager
@@ -26,6 +26,7 @@ __all__ = [
     "ContextManager",
     "ApprovalVerifier",
     "NonceStore",
+    "ApprovalManager",
     "EphemeralExecutor",
     "SandboxManager",
     "GateCheckProvider",

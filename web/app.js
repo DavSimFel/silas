@@ -1067,9 +1067,17 @@ function handleCardDecision(cardId, action, cardEl) {
   const card = cardState.cards.get(cardId);
   if (!card || !cardEl) return;
 
+  const normalizedAction = action === "decline" ? "decline" : "approve";
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(JSON.stringify({ type: "approval_response", card_id: cardId, action: normalizedAction }));
+    } catch (_) {}
+  }
+
   const confirmation =
-    (action === "approve" ? card.confirmation?.approve : card.confirmation?.decline) ||
-    (action === "approve" ? "\u2713 Approved" : "Declined");
+    (normalizedAction === "approve" ? card.confirmation?.approve : card.confirmation?.decline) ||
+    (normalizedAction === "approve" ? "\u2713 Approved" : "Declined");
 
   const startHeight = cardEl.getBoundingClientRect().height;
   cardEl.style.height = `${startHeight}px`;

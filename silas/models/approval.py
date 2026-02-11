@@ -99,10 +99,42 @@ class ApprovalToken(BaseModel):
         return self
 
 
+class PendingApproval(BaseModel):
+    token: ApprovalToken
+    requested_at: datetime = Field(default_factory=utc_now)
+    decision: ApprovalDecision | None = None
+    resolved_at: datetime | None = None
+    resolved_by: str | None = None
+
+    @field_validator("requested_at", "resolved_at")
+    @classmethod
+    def _ensure_timezone_aware_optional(
+        cls,
+        value: datetime | None,
+    ) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+            raise ValueError("datetime fields must be timezone-aware")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_resolution_fields(self) -> PendingApproval:
+        if self.decision is None:
+            if self.resolved_at is not None or self.resolved_by is not None:
+                raise ValueError("resolved fields require a decision")
+            return self
+
+        if self.resolved_at is None or self.resolved_by is None:
+            raise ValueError("resolved_at and resolved_by are required when decision is set")
+        return self
+
+
 __all__ = [
     "ApprovalScope",
     "ApprovalVerdict",
     "ApprovalDecision",
     "Base64Bytes",
     "ApprovalToken",
+    "PendingApproval",
 ]

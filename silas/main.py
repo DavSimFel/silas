@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 
 from silas.agents.proxy import build_proxy_agent
+from silas.approval import LiveApprovalManager
 from silas.audit.sqlite_audit import SQLiteAuditLog
 from silas.channels.web import WebChannel
 from silas.config import SilasSettings, load_config
@@ -62,6 +63,7 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
     skill_registry = SkillRegistry()
     register_builtin_skills(skill_registry)
     skill_executor = SkillExecutor(skill_registry=skill_registry, memory_store=memory_store)
+    approval_manager = LiveApprovalManager()
     output_gate_runner = (
         OutputGateRunner(settings.output_gates, token_counter=token_counter)
         if settings.output_gates
@@ -77,6 +79,7 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
         proxy=proxy,
         skill_registry=skill_registry,
         skill_executor=skill_executor,
+        approval_manager=approval_manager,
         audit=audit,
         config=settings,
     )
@@ -88,8 +91,6 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
         owner_id=settings.owner_id,
         default_context_profile=settings.context.default_profile,
         output_gate_runner=output_gate_runner,
-        streaming_enabled=settings.stream.streaming_enabled,
-        chunk_size=settings.stream.chunk_size,
     )
     return stream, channel
 
