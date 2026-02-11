@@ -39,6 +39,7 @@ from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import ChannelMessage, SignedMessage, TaintLevel
 from silas.models.proactivity import Suggestion, SuggestionProposal
 from silas.models.sessions import Session, SessionType
+from silas.models.skills import SkillDefinition, SkillMetadata, SkillRef, SkillResult
 from silas.models.work import (
     Budget,
     BudgetUsed,
@@ -107,4 +108,8 @@ __all__ = [
     "SessionType",
     "Suggestion",
     "SuggestionProposal",
+    "SkillDefinition",
+    "SkillMetadata",
+    "SkillRef",
+    "SkillResult",
 ]

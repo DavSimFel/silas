@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from silas.models.skills import SkillMetadata
 from silas.models.work import WorkItem
 
 
 @runtime_checkable
 class SkillLoader(Protocol):
-    def scan(self) -> list[object]: ...
+    def scan(self) -> list[SkillMetadata]: ...
 
-    def load_metadata(self, skill_name: str) -> object: ...
+    def load_metadata(self, skill_name: str) -> SkillMetadata: ...
 
     def load_full(self, skill_name: str) -> str: ...
 
@@ -22,7 +23,7 @@ class SkillLoader(Protocol):
 
 @runtime_checkable
 class SkillResolver(Protocol):
-    def resolve_for_work_item(self, work_item: WorkItem) -> list[object]: ...
+    def resolve_for_work_item(self, work_item: WorkItem) -> list[SkillMetadata]: ...
 
     def prepare_toolset(
         self,
