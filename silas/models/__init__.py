@@ -38,6 +38,7 @@ from silas.models.context import (
     ContextZone,
     TokenBudget,
 )
+from silas.models.draft import DraftReview, DraftVerdict
 from silas.models.gates import (
     ALLOWED_MUTATIONS,
     AccessLevel,
@@ -64,6 +65,7 @@ from silas.models.proactivity import Suggestion, SuggestionProposal
 from silas.models.review import BatchActionDecision, BatchActionItem, BatchProposal
 from silas.models.sessions import Session, SessionType
 from silas.models.skills import SkillDefinition, SkillMetadata, SkillRef, SkillResult
+from silas.models.undo import UndoEntry
 from silas.models.work import (
     Budget,
     BudgetUsed,
@@ -105,6 +107,8 @@ __all__ = [
     "ContextItem",
     "ContextSubscription",
     "TokenBudget",
+    "DraftVerdict",
+    "DraftReview",
     "AuthStrategy",
     "SecureInputRequest",
     "SecureInputCompleted",
@@ -160,4 +164,5 @@ __all__ = [
     "BatchActionItem",
     "BatchProposal",
     "BatchActionDecision",
+    "UndoEntry",
 ]
