@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from silas.agents.structured import run_structured_agent
+from silas.core.context_manager import LiveContextManager
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
 from silas.models.agents import RouteDecision
@@ -20,8 +22,16 @@ _counter = HeuristicTokenCounter()
 class Stream:
     channel: ChannelAdapterCore
     turn_context: TurnContext
+    context_manager: LiveContextManager | None = None
     owner_id: str = "owner"
     default_context_profile: str = "conversation"
+
+    def __post_init__(self) -> None:
+        if self.context_manager is not None:
+            self.turn_context.context_manager = self.context_manager
+            self.turn_context.live_context_manager = self.context_manager
+        elif self.turn_context.live_context_manager is not None:
+            self.context_manager = self.turn_context.live_context_manager
 
     async def start(self) -> None:
         await self._rehydrate()
@@ -31,27 +41,29 @@ class Stream:
     async def _rehydrate(self) -> None:
         """Restore state from previous run (spec §5.1.3)."""
         tc = self.turn_context
+        context_manager = self._context_manager()
 
         # Step 1-2: Load recent chronicle entries
-        if tc.chronicle_store is not None and tc.context_manager is not None:
+        if tc.chronicle_store is not None and context_manager is not None:
             recent = await tc.chronicle_store.get_recent(tc.scope_id, limit=50)
             for item in recent:
-                tc.context_manager.add(tc.scope_id, item)
+                context_manager.add(tc.scope_id, item)
             if recent:
                 # Restore turn number from last entry
                 tc.turn_number = max(item.turn_number for item in recent)
 
         # Step 3: Search memory for user profile
-        if tc.memory_store is not None and tc.context_manager is not None:
+        if tc.memory_store is not None and context_manager is not None:
             profile_items = await tc.memory_store.search_keyword("user profile preferences", limit=1)
             for item in profile_items:
-                tc.context_manager.add(
+                context_manager.add(
                     tc.scope_id,
                     ContextItem(
                         ctx_id=f"memory:profile:{item.memory_id}",
                         zone=ContextZone.memory,
                         content=item.content,
                         token_count=_counter.count(item.content),
+                        created_at=datetime.now(timezone.utc),
                         turn_number=tc.turn_number,
                         source="memory:profile",
                         taint=item.taint,
@@ -76,6 +88,7 @@ class Stream:
             nonce=uuid.uuid4().hex,
             taint=taint,
         )
+        context_manager = self._context_manager()
 
         # Step 3: add inbound message to chronicle zone + persist
         self.turn_context.turn_number += 1
@@ -85,27 +98,29 @@ class Stream:
             zone=ContextZone.chronicle,
             content=f"[{signed.taint.value}] {message.sender_id}: {message.text}",
             token_count=_counter.count(message.text),
+            created_at=datetime.now(timezone.utc),
             turn_number=turn_number,
             source=f"channel:{message.channel}",
             taint=signed.taint,
             kind="message",
         )
-        if self.turn_context.context_manager is not None:
-            self.turn_context.context_manager.add(self.turn_context.scope_id, chronicle_item)
+        if context_manager is not None:
+            context_manager.add(self.turn_context.scope_id, chronicle_item)
         if self.turn_context.chronicle_store is not None:
             await self.turn_context.chronicle_store.append(self.turn_context.scope_id, chronicle_item)
 
         # Step 4: auto-retrieve memories
-        if self.turn_context.memory_store is not None and self.turn_context.context_manager is not None:
+        if self.turn_context.memory_store is not None and context_manager is not None:
             recalled = await self.turn_context.memory_store.search_keyword(message.text, limit=3)
             for item in recalled:
-                self.turn_context.context_manager.add(
+                context_manager.add(
                     self.turn_context.scope_id,
                     ContextItem(
                         ctx_id=f"memory:{item.memory_id}",
                         zone=ContextZone.memory,
                         content=item.content,
                         token_count=_counter.count(item.content),
+                        created_at=datetime.now(timezone.utc),
                         turn_number=turn_number,
                         source="memory:auto_retrieve",
                         taint=item.taint,
@@ -113,25 +128,29 @@ class Stream:
                     ),
                 )
 
-        await self._audit("phase1a_noop", step=5, note="budget enforcement skipped")
+        await self._audit("phase1a_noop", step=5, note="budget enforcement deferred to post-response")
         await self._audit("phase1a_noop", step=6, note="toolset pipeline skipped")
         await self._audit("phase1a_noop", step=6.5, note="skill-aware toolset skipped")
 
-        # Step 7: route through Proxy
+        # Step 7: render context and route through Proxy
         if self.turn_context.proxy is None:
             raise RuntimeError("turn_context.proxy is required")
 
+        rendered_context = ""
+        if context_manager is not None:
+            rendered_context = context_manager.render(self.turn_context.scope_id, turn_number)
+
         routed = await run_structured_agent(
             agent=self.turn_context.proxy,
-            prompt=message.text,
+            prompt=self._build_proxy_prompt(message.text, rendered_context),
             call_name="proxy",
             default_context_profile=self.default_context_profile,
         )
         if not isinstance(routed, RouteDecision):
             raise TypeError("proxy must return RouteDecision")
 
-        if self.turn_context.context_manager is not None:
-            self.turn_context.context_manager.set_profile(self.turn_context.scope_id, routed.context_profile)
+        if context_manager is not None:
+            context_manager.set_profile(self.turn_context.scope_id, routed.context_profile)
 
         await self._audit("phase1a_noop", step=8, note="output gates skipped")
         await self._audit("phase1a_noop", step=9, note="memory query processing skipped")
@@ -144,15 +163,30 @@ class Stream:
             zone=ContextZone.chronicle,
             content=f"Silas: {response_text}",
             token_count=_counter.count(response_text),
+            created_at=datetime.now(timezone.utc),
             turn_number=turn_number,
             source="agent:proxy",
             taint=TaintLevel.owner,
             kind="message",
         )
-        if self.turn_context.context_manager is not None:
-            self.turn_context.context_manager.add(self.turn_context.scope_id, response_item)
+        if context_manager is not None:
+            context_manager.add(self.turn_context.scope_id, response_item)
         if self.turn_context.chronicle_store is not None:
             await self.turn_context.chronicle_store.append(self.turn_context.scope_id, response_item)
+
+        evicted_ctx_ids: list[str] = []
+        if context_manager is not None:
+            evicted_ctx_ids = context_manager.enforce_budget(
+                self.turn_context.scope_id,
+                turn_number=turn_number,
+                current_goal=None,
+            )
+        if evicted_ctx_ids:
+            await self._audit(
+                "context_budget_enforced",
+                turn_number=turn_number,
+                evicted_ctx_ids=evicted_ctx_ids,
+            )
 
         await self._audit("phase1a_noop", step=11.5, note="raw output ingest skipped")
         await self._audit("phase1a_noop", step=12, note="plan/approval flow skipped")
@@ -170,6 +204,21 @@ class Stream:
         if self.turn_context.audit is None:
             return
         await self.turn_context.audit.log(event, **data)
+
+    def _context_manager(self):
+        if self.context_manager is not None:
+            return self.context_manager
+        return self.turn_context.context_manager
+
+    def _build_proxy_prompt(self, message_text: str, rendered_context: str) -> str:
+        if not rendered_context.strip():
+            return message_text
+        return (
+            "[CONTEXT]\n"
+            f"{rendered_context}\n\n"
+            "[USER MESSAGE]\n"
+            f"{message_text}"
+        )
 
 
 __all__ = ["Stream"]
