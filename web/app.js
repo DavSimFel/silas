@@ -77,6 +77,11 @@ let slashFilteredCommands = [];
 let workPanelFocusReturn = null;
 let shortcutFocusReturn = null;
 let shortcutOpen = false;
+let activeStreamMessageEl = null;
+
+const LONG_MESSAGE_THRESHOLD = 300;
+const STREAM_DONE_TYPES = new Set(["message_done", "stream_done", "completion_done"]);
+const copyResetTimers = new WeakMap();
 
 const SHEET_SNAP_VISIBLE = {
   dismissed: 0,
@@ -190,6 +195,7 @@ function isEditableTarget(target) {
 }
 
 function clearConversation() {
+  activeStreamMessageEl = null;
   removeThinking();
   messages.replaceChildren(emptyState);
   emptyState.classList.remove("hidden");
@@ -347,13 +353,29 @@ function connect(isReconnect = reconnectAttempt > 0) {
   ws.addEventListener("message", (event) => {
     try {
       const data = JSON.parse(event.data);
+      if (data.type === "message_chunk") {
+        addStreamChunk(data.text ?? "");
+        return;
+      }
+
+      if (STREAM_DONE_TYPES.has(data.type)) {
+        finalizeStreamingMessage(data.text ?? null);
+        completeOldestActiveWork();
+        return;
+      }
+
       if (data.type === "message") {
-        addMessage("agent", data.text ?? "");
+        if (activeStreamMessageEl) {
+          finalizeStreamingMessage(data.text ?? null);
+        } else {
+          addMessage("agent", data.text ?? "");
+        }
         completeOldestActiveWork();
         return;
       }
 
       if (data.type === "approval_card" || data.type === "action_card") {
+        finalizeStreamingMessage();
         removeThinking();
         renderActionCards([data.card || data]);
         return;
@@ -366,6 +388,7 @@ function connect(isReconnect = reconnectAttempt > 0) {
     } catch (_) {
       // fall through to raw text rendering
     }
+    finalizeStreamingMessage();
     addMessage("agent", String(event.data));
     completeOldestActiveWork();
   });
@@ -401,43 +424,31 @@ function hideEmptyState() {
 }
 
 function addMessage(role, text) {
+  const value = String(text ?? "");
+
   hideEmptyState();
-  messageCount += 1;
+  removeThinking();
 
+  if (role === "agent" && activeStreamMessageEl && activeStreamMessageEl.isConnected) {
+    finalizeStreamingMessage(value);
+    return;
+  }
+
+  let el = null;
   if (role === "agent") {
-    const thinkingEl = document.getElementById("thinking");
-    if (thinkingEl) {
-      replaceThinkingWithMessage(thinkingEl, text);
-      announceMessage(role, text);
-      renderSessionInfo();
-      return;
-    }
-  }
-
-  const el = document.createElement("div");
-  el.className = "msg-enter";
-
-  if (role === "user") {
-    el.innerHTML = `
-      <div class="flex justify-end items-end gap-2">
-        <p class="text-[13px] leading-[18px] text-text-secondary max-w-[85%] text-right">${escapeHtml(text)}</p>
-        <span class="text-xs text-text-tertiary shrink-0">${timeLabel()}</span>
-      </div>
-    `;
-  } else if (role === "agent") {
-    el.innerHTML = `
-      <div class="max-w-full">
-        <div class="text-[15px] leading-[22px] text-text-primary whitespace-pre-wrap">${escapeHtml(text)}</div>
-      </div>
-    `;
+    el = createAgentMessageElement(value);
+  } else if (role === "user") {
+    el = createUserMessageElement(value);
   } else {
-    el.innerHTML = `<p class="text-xs text-text-tertiary text-center">${escapeHtml(text)}</p>`;
+    el = createSystemMessageElement(value);
   }
 
+  if (!el) return;
+  messageCount += 1;
   messages.appendChild(el);
   applyHistoryFade();
   scrollToBottom();
-  announceMessage(role, text);
+  announceMessage(role, value);
   renderSessionInfo();
 }
 
@@ -465,33 +476,431 @@ function removeThinking() {
   if (el) el.remove();
 }
 
-function replaceThinkingWithMessage(thinkingEl, text) {
-  const dots = thinkingEl.querySelector(".thinking-inline");
-  const response = document.createElement("div");
-  response.className = "agent-response text-[15px] leading-[22px] text-text-primary whitespace-pre-wrap";
-  response.textContent = text;
-  thinkingEl.appendChild(response);
+function createUserMessageElement(text) {
+  const el = document.createElement("div");
+  el.className = "msg-enter msg-row msg-user";
+  el.innerHTML = `
+    <p class="msg-main">${escapeHtml(text)}</p>
+    <span class="msg-time" aria-hidden="true">${timeLabel()}</span>
+  `;
+  wireMessageMetaReveal(el);
+  return el;
+}
 
-  if (prefersReducedMotion.matches) {
-    dots?.remove();
-    thinkingEl.removeAttribute("id");
-    thinkingEl.classList.remove("thinking-slot");
-    response.classList.add("is-visible");
-  } else {
-    requestAnimationFrame(() => {
-      dots?.classList.add("is-exit");
-      response.classList.add("is-visible");
-    });
+function createSystemMessageElement(text) {
+  const el = document.createElement("div");
+  el.className = "msg-enter msg-system";
+  el.innerHTML = `<p class="msg-system-text">${escapeHtml(text)}</p>`;
+  return el;
+}
 
-    setTimeout(() => {
-      dots?.remove();
-      thinkingEl.removeAttribute("id");
-      thinkingEl.classList.remove("thinking-slot");
-    }, MOTION.fast);
+function createAgentMessageElement(text, options = {}) {
+  const { streaming = false } = options;
+  const el = document.createElement("div");
+  el.className = "msg-enter msg-row msg-agent";
+  if (streaming) {
+    el.dataset.streaming = "true";
+    activeStreamMessageEl = el;
   }
 
+  el.innerHTML = `
+    <div class="msg-main" data-agent-content></div>
+    <span class="msg-time" aria-hidden="true">${timeLabel()}</span>
+  `;
+
+  wireMessageMetaReveal(el);
+  renderAgentMessageContent(el, text, { streaming });
+  return el;
+}
+
+function renderAgentMessageContent(el, text, options = {}) {
+  const { streaming = false } = options;
+  const container = el.querySelector("[data-agent-content]");
+  if (!container) return;
+
+  const fullText = String(text ?? "");
+  const expanded = el.dataset.expanded === "true";
+  const isLong = fullText.length > LONG_MESSAGE_THRESHOLD;
+  const shouldClamp = isLong && !expanded && !streaming;
+  const preview = shouldClamp
+    ? `${fullText.slice(0, LONG_MESSAGE_THRESHOLD).trimEnd()}…`
+    : fullText;
+
+  el.dataset.fullText = fullText;
+  container.innerHTML = `
+    <div class="md-prose" data-md-prose>${renderMarkdown(preview)}</div>
+    ${
+      isLong && !streaming
+        ? `<button type="button" class="msg-expand-toggle" data-msg-expand>${
+          expanded ? "Show less" : "Show more"
+        }</button>`
+        : ""
+    }
+  `;
+
+  if (streaming) {
+    const prose = container.querySelector("[data-md-prose]");
+    if (prose) {
+      const cursor = document.createElement("span");
+      cursor.className = "stream-cursor";
+      cursor.setAttribute("aria-hidden", "true");
+      prose.appendChild(cursor);
+    }
+  }
+
+  const toggle = container.querySelector("[data-msg-expand]");
+  if (toggle) {
+    toggle.addEventListener("click", () => {
+      el.dataset.expanded = String(!(el.dataset.expanded === "true"));
+      renderAgentMessageContent(el, el.dataset.fullText || "", { streaming: false });
+      applyHistoryFade();
+      scrollToBottom();
+    });
+  }
+
+  wireMarkdownInteractions(container);
+}
+
+function addStreamChunk(text) {
+  const chunk = String(text ?? "");
+  if (!chunk) return;
+
+  hideEmptyState();
+  removeThinking();
+
+  let target = activeStreamMessageEl;
+  if (!target || !target.isConnected) {
+    target = createAgentMessageElement("", { streaming: true });
+    messages.appendChild(target);
+    messageCount += 1;
+  }
+
+  const nextText = `${target.dataset.fullText || ""}${chunk}`;
+  renderAgentMessageContent(target, nextText, { streaming: true });
   applyHistoryFade();
   scrollToBottom();
+  renderSessionInfo();
+}
+
+function finalizeStreamingMessage(text = null) {
+  const target = activeStreamMessageEl && activeStreamMessageEl.isConnected
+    ? activeStreamMessageEl
+    : null;
+  const hasIncomingText = text !== null && text !== undefined;
+
+  if (!target) {
+    if (hasIncomingText && String(text).trim()) {
+      addMessage("agent", String(text));
+    }
+    return;
+  }
+
+  const finalText = hasIncomingText ? String(text) : (target.dataset.fullText || "");
+  target.removeAttribute("data-streaming");
+  activeStreamMessageEl = null;
+  renderAgentMessageContent(target, finalText, { streaming: false });
+  announceMessage("agent", finalText);
+  applyHistoryFade();
+  scrollToBottom();
+  renderSessionInfo();
+}
+
+function wireMessageMetaReveal(messageEl) {
+  if (!messageEl || messageEl.dataset.metaRevealBound === "true") return;
+  messageEl.dataset.metaRevealBound = "true";
+
+  messageEl.addEventListener("pointerdown", (event) => {
+    if (event.pointerType !== "touch") return;
+    if (event.target instanceof Element && event.target.closest("button, a")) return;
+    messageEl.classList.add("show-meta");
+
+    const currentTimer = Number.parseInt(messageEl.dataset.metaRevealTimer || "0", 10);
+    if (currentTimer) {
+      clearTimeout(currentTimer);
+    }
+
+    const timer = window.setTimeout(() => {
+      messageEl.classList.remove("show-meta");
+      messageEl.dataset.metaRevealTimer = "0";
+    }, 1600);
+    messageEl.dataset.metaRevealTimer = String(timer);
+  });
+}
+
+function wireMarkdownInteractions(scopeEl) {
+  if (!scopeEl) return;
+  scopeEl.querySelectorAll("[data-code-copy]").forEach((button) => {
+    if (button.dataset.copyBound === "true") return;
+    button.dataset.copyBound = "true";
+    button.addEventListener("click", async () => {
+      const codeBlock = button.closest("[data-code-block]");
+      const code = codeBlock?.querySelector("code")?.textContent || "";
+      if (!code) return;
+
+      const copied = await copyToClipboard(code);
+      if (!copied) return;
+
+      button.classList.add("is-copied");
+      button.textContent = "Copied";
+
+      const existingTimer = copyResetTimers.get(button);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+      }
+
+      const timer = window.setTimeout(() => {
+        button.classList.remove("is-copied");
+        button.textContent = "Copy";
+        copyResetTimers.delete(button);
+      }, 1200);
+      copyResetTimers.set(button, timer);
+    });
+  });
+}
+
+async function copyToClipboard(text) {
+  const content = String(text ?? "");
+  if (!content) return false;
+
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(content);
+      return true;
+    } catch (_) {
+      // fall through to legacy copy
+    }
+  }
+
+  const temp = document.createElement("textarea");
+  temp.value = content;
+  temp.setAttribute("readonly", "true");
+  temp.style.position = "absolute";
+  temp.style.left = "-9999px";
+  document.body.appendChild(temp);
+  temp.select();
+
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch (_) {
+    copied = false;
+  }
+
+  temp.remove();
+  return copied;
+}
+
+function renderMarkdown(text) {
+  const source = String(text ?? "").replace(/\r\n?/g, "\n");
+  if (!source.trim()) {
+    return "<p></p>";
+  }
+
+  const lines = source.split("\n");
+  const blocks = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index];
+
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+
+    const fence = line.match(/^```([\w.+-]+)?\s*$/);
+    if (fence) {
+      const language = (fence[1] || "").trim();
+      const codeLines = [];
+      index += 1;
+
+      while (index < lines.length && !/^```\s*$/.test(lines[index])) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+
+      if (index < lines.length && /^```\s*$/.test(lines[index])) {
+        index += 1;
+      }
+
+      blocks.push(renderCodeBlock(codeLines.join("\n"), language));
+      continue;
+    }
+
+    if (/^\s*---\s*$/.test(line)) {
+      blocks.push('<hr class="md-hr" />');
+      index += 1;
+      continue;
+    }
+
+    const heading = line.match(/^\s{0,3}(#{1,3})\s+(.*)$/);
+    if (heading) {
+      const level = heading[1].length;
+      blocks.push(`<h${level}>${renderInlineMarkdown(heading[2].trim())}</h${level}>`);
+      index += 1;
+      continue;
+    }
+
+    if (/^\s*>\s?/.test(line)) {
+      const quoteLines = [];
+      while (index < lines.length && /^\s*>\s?/.test(lines[index])) {
+        quoteLines.push(lines[index].replace(/^\s*>\s?/, ""));
+        index += 1;
+      }
+
+      const quoteText = quoteLines.join(" ").trim();
+      blocks.push(`<blockquote class="md-blockquote"><p>${renderInlineMarkdown(quoteText)}</p></blockquote>`);
+      continue;
+    }
+
+    if (/^\s*-\s+/.test(line)) {
+      const items = [];
+      while (index < lines.length && /^\s*-\s+/.test(lines[index])) {
+        items.push(lines[index].replace(/^\s*-\s+/, "").trim());
+        index += 1;
+      }
+
+      blocks.push(
+        `<ul class="md-list md-list-ul">${items.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("")}</ul>`,
+      );
+      continue;
+    }
+
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const items = [];
+      let start = 1;
+
+      while (index < lines.length && /^\s*\d+\.\s+/.test(lines[index])) {
+        const ordered = lines[index].match(/^\s*(\d+)\.\s+(.*)$/);
+        if (ordered) {
+          if (items.length === 0) {
+            start = Number.parseInt(ordered[1], 10) || 1;
+          }
+          items.push(ordered[2].trim());
+        }
+        index += 1;
+      }
+
+      const startAttr = start > 1 ? ` start="${start}"` : "";
+      blocks.push(
+        `<ol class="md-list md-list-ol"${startAttr}>${items.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("")}</ol>`,
+      );
+      continue;
+    }
+
+    const paragraphLines = [];
+    while (index < lines.length) {
+      const candidate = lines[index];
+      if (!candidate.trim()) break;
+      if (isMarkdownBlockStart(candidate) && paragraphLines.length > 0) break;
+      paragraphLines.push(candidate.trim());
+      index += 1;
+    }
+
+    const paragraph = paragraphLines.join(" ");
+    if (paragraph) {
+      blocks.push(`<p>${renderInlineMarkdown(paragraph)}</p>`);
+    }
+  }
+
+  return blocks.join("");
+}
+
+function isMarkdownBlockStart(line) {
+  return (
+    /^\s*```/.test(line) ||
+    /^\s*---\s*$/.test(line) ||
+    /^\s*>\s?/.test(line) ||
+    /^\s*-\s+/.test(line) ||
+    /^\s*\d+\.\s+/.test(line) ||
+    /^\s{0,3}(#{1,3})\s+/.test(line)
+  );
+}
+
+function renderCodeBlock(code, language) {
+  const label = language ? `<span class="md-code-lang">${escapeHtml(language)}</span>` : "<span></span>";
+  return `
+    <div class="md-code-block" data-code-block>
+      <div class="md-code-meta">
+        ${label}
+        <button type="button" class="md-code-copy" data-code-copy aria-label="Copy code">Copy</button>
+      </div>
+      <pre><code>${escapeHtml(code)}</code></pre>
+    </div>
+  `;
+}
+
+function renderInlineMarkdown(text) {
+  const source = String(text ?? "");
+  let index = 0;
+  let html = "";
+
+  while (index < source.length) {
+    if (source.startsWith("**", index)) {
+      const close = source.indexOf("**", index + 2);
+      if (close !== -1) {
+        html += `<strong>${renderInlineMarkdown(source.slice(index + 2, close))}</strong>`;
+        index = close + 2;
+        continue;
+      }
+    }
+
+    if (source[index] === "*") {
+      const close = source.indexOf("*", index + 1);
+      if (close !== -1) {
+        html += `<em>${renderInlineMarkdown(source.slice(index + 1, close))}</em>`;
+        index = close + 1;
+        continue;
+      }
+    }
+
+    if (source[index] === "`") {
+      const close = source.indexOf("`", index + 1);
+      if (close !== -1) {
+        html += `<code class="md-inline-code">${escapeHtml(source.slice(index + 1, close))}</code>`;
+        index = close + 1;
+        continue;
+      }
+    }
+
+    if (source[index] === "[") {
+      const closeBracket = source.indexOf("]", index + 1);
+      if (closeBracket !== -1 && source[closeBracket + 1] === "(") {
+        const closeParen = source.indexOf(")", closeBracket + 2);
+        if (closeParen !== -1) {
+          const label = source.slice(index + 1, closeBracket);
+          const href = source.slice(closeBracket + 2, closeParen).trim();
+          const safeUrl = sanitizeUrl(href);
+          if (safeUrl) {
+            html += `<a class="md-link" href="${escapeAttribute(safeUrl)}" target="_blank" rel="noopener">${renderInlineMarkdown(label)}</a>`;
+          } else {
+            html += escapeHtml(source.slice(index, closeParen + 1));
+          }
+          index = closeParen + 1;
+          continue;
+        }
+      }
+    }
+
+    html += escapeHtml(source[index]);
+    index += 1;
+  }
+
+  return html;
+}
+
+function sanitizeUrl(url) {
+  if (!url) return null;
+
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (!["http:", "https:", "mailto:"].includes(parsed.protocol)) {
+      return null;
+    }
+    return parsed.href;
+  } catch (_) {
+    return null;
+  }
 }
 
 function announceMessage(role, text) {
@@ -538,6 +947,14 @@ function escapeHtml(text) {
   const div = document.createElement("div");
   div.textContent = text;
   return div.innerHTML;
+}
+
+function escapeAttribute(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 // --- Cards ---
