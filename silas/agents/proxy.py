@@ -17,6 +17,27 @@ from silas.models.agents import AgentResponse, InteractionMode, InteractionRegis
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_PROXY_SYSTEM_PROMPT = """You are the Silas Proxy agent.
+
+Return a valid RouteDecision object for every request.
+
+Routing criteria:
+- route="direct": simple questions, greetings, factual lookups, and single-step tasks.
+- route="planner": multi-step tasks, tasks requiring tools/skills, or tasks with dependencies.
+
+Output contract:
+- direct route: set response.message with the user-facing answer.
+- planner route: set response to null; planner will produce plan actions.
+- always set reason, interaction_register, interaction_mode, and context_profile.
+
+Context profile guidance:
+- conversation: general dialogue and simple Q&A
+- coding: code/debug/implementation tasks
+- research: investigation and source-heavy lookups
+- support: troubleshooting and helpdesk-style requests
+- planning: explicit multi-step orchestration requests
+"""
+
 
 @dataclass(slots=True)
 class ProxyRunResult:
@@ -74,8 +95,10 @@ class ProxyAgent:
 def _load_proxy_system_prompt() -> str:
     prompt_path = Path(__file__).resolve().parent / "prompts" / "proxy_system.md"
     if prompt_path.exists():
-        return prompt_path.read_text(encoding="utf-8")
-    return "You are the Silas Proxy agent. Route messages as direct or planner."
+        prompt_text = prompt_path.read_text(encoding="utf-8").strip()
+        if prompt_text:
+            return prompt_text
+    return DEFAULT_PROXY_SYSTEM_PROMPT
 
 
 def build_proxy_agent(model: str, default_context_profile: str = "conversation") -> ProxyAgent:

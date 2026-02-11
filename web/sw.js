@@ -1,4 +1,4 @@
-const CACHE_NAME = "silas-v1";
+const CACHE_NAME = "silas-v2";
 const SHELL = ["/", "/style.css", "/app.js", "/manifest.json"];
 
 self.addEventListener("install", (event) => {
