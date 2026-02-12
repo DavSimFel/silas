@@ -116,6 +116,8 @@ class StreamConfig(BaseModel):
 
 class SilasSettings(BaseSettings):
     owner_id: str = "owner"
+    agent_name: str = "Silas"
+    owner_name: str = ""
     data_dir: Path = Path("./data")
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)

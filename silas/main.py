@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 import click
+import httpx
+import yaml
 
 from silas.agents.proxy import build_proxy_agent
 from silas.approval import LiveApprovalManager
@@ -26,6 +29,10 @@ from silas.persistence.work_item_store import SQLiteWorkItemStore
 from silas.proactivity import SimpleAutonomyCalibrator, SimpleSuggestionEngine
 from silas.skills.executor import SkillExecutor, register_builtin_skills
 from silas.skills.registry import SkillRegistry
+
+_DEFAULT_OWNER_ID = "owner"
+_DEFAULT_AGENT_NAME = "Silas"
+_OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
 
 def _db_path(settings: SilasSettings) -> str:
@@ -110,16 +117,104 @@ def cli() -> None:
     setup_logging()
 
 
+def _load_config_mapping(config_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(loaded, dict):
+        raise ValueError("config file must contain a top-level mapping")
+
+    silas_mapping = loaded.get("silas")
+    if silas_mapping is None:
+        return loaded, loaded
+    if not isinstance(silas_mapping, dict):
+        raise ValueError("silas config section must be a mapping")
+    return loaded, silas_mapping
+
+
+def _is_already_configured(silas_mapping: dict[str, Any]) -> bool:
+    owner_id = silas_mapping.get("owner_id")
+    return isinstance(owner_id, str) and owner_id != _DEFAULT_OWNER_ID
+
+
+def _validate_openrouter_api_key(api_key: str) -> bool:
+    if not api_key:
+        return False
+
+    try:
+        response = httpx.get(
+            _OPENROUTER_MODELS_URL,
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10.0,
+        )
+    except httpx.HTTPError:
+        return False
+    return response.status_code == 200
+
+
+def _prompt_onboarding_values() -> tuple[str, str, str]:
+    agent_name = click.prompt(
+        "What should I call myself?",
+        default=_DEFAULT_AGENT_NAME,
+        show_default=True,
+        type=str,
+    ).strip()
+    owner_name = click.prompt("What is your name?", type=str).strip()
+
+    while True:
+        api_key = click.prompt("OpenRouter API key", type=str, hide_input=True).strip()
+        if _validate_openrouter_api_key(api_key):
+            return agent_name or _DEFAULT_AGENT_NAME, owner_name, api_key
+        click.echo("Invalid OpenRouter API key. Please try again.")
+
+
+def _write_onboarding_config(
+    config_path: Path,
+    root_mapping: dict[str, Any],
+    silas_mapping: dict[str, Any],
+    agent_name: str,
+    owner_name: str,
+    api_key: str,
+) -> None:
+    silas_mapping["agent_name"] = agent_name
+    silas_mapping["owner_name"] = owner_name
+
+    models_mapping = silas_mapping.get("models")
+    if not isinstance(models_mapping, dict):
+        models_mapping = {}
+        silas_mapping["models"] = models_mapping
+    models_mapping["api_key"] = api_key
+
+    config_path.write_text(yaml.safe_dump(root_mapping, sort_keys=False), encoding="utf-8")
+
+
+def _run_onboarding(config_path: Path) -> None:
+    root_mapping, silas_mapping = _load_config_mapping(config_path)
+    if _is_already_configured(silas_mapping):
+        click.echo("Already configured")
+        return
+
+    agent_name, owner_name, api_key = _prompt_onboarding_values()
+    _write_onboarding_config(
+        config_path=config_path,
+        root_mapping=root_mapping,
+        silas_mapping=silas_mapping,
+        agent_name=agent_name,
+        owner_name=owner_name,
+        api_key=api_key,
+    )
+
+
 @cli.command("init")
 @click.option("--config", "config_path", default="config/silas.yaml", show_default=True)
 def init_command(config_path: str) -> None:
-    """Initialize Silas data directory and run migrations."""
+    """Run first-time onboarding then initialize Silas data directory."""
+    config_file = Path(config_path)
+    _run_onboarding(config_file)
     settings = load_config(config_path)
     db = _db_path(settings)
 
     # Run migrations synchronously
     asyncio.run(run_migrations(db))
-    click.echo(f"Database initialized: {db}")
+    click.echo(f"{settings.agent_name} is ready. Run `silas start` to begin.")
 
 
 async def _start_runtime(settings: SilasSettings) -> None:
