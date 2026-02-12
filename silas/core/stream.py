@@ -14,6 +14,7 @@ import json
 import re
 import uuid
 from collections.abc import Awaitable
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,6 +26,7 @@ from pydantic import ValidationError
 from silas.agents.structured import run_structured_agent
 from silas.core.approval_flow import ApprovalFlow
 from silas.core.context_manager import LiveContextManager
+from silas.core.interaction_mode import resolve_interaction_mode
 from silas.core.logging import correlation_scope
 from silas.core.plan_executor import (
     build_skill_work_item,
@@ -35,7 +37,7 @@ from silas.core.plan_executor import (
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
 from silas.gates import OutputGateRunner
-from silas.models.agents import AgentResponse, PlanAction, RouteDecision
+from silas.models.agents import AgentResponse, InteractionMode, PlanAction, RouteDecision
 from silas.models.approval import ApprovalScope, ApprovalVerdict
 from silas.models.connections import ConnectionFailure
 from silas.models.context import ContextItem, ContextSubscription, ContextZone
@@ -89,6 +91,19 @@ class _InMemoryNonceStore:
 
 
 @dataclass(slots=True)
+class TurnProcessor:
+    """Per-connection turn processor state container.
+
+    Why: Stream needs isolated mutable turn state by connection to prevent
+    chronicle/memory/workspace leakage across concurrent customer sessions.
+    """
+
+    connection_key: str
+    turn_context: TurnContext
+    session_id: str
+
+
+@dataclass(slots=True)
 class Stream:
     channel: ChannelAdapterCore
     turn_context: TurnContext
@@ -106,6 +121,19 @@ class Stream:
     session_id: str | None = None
     _approval_flow: ApprovalFlow | None = None
     _pending_persona_scopes: set[str] = field(default_factory=set, init=False, repr=False)
+    _turn_processors: dict[str, TurnProcessor] = field(default_factory=dict, init=False, repr=False)
+    _connection_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
+    _active_turn_context: ContextVar[TurnContext | None] = field(
+        default_factory=lambda: ContextVar("stream_active_turn_context", default=None),
+        init=False,
+        repr=False,
+    )
+    _active_session_id: ContextVar[str | None] = field(
+        default_factory=lambda: ContextVar("stream_active_session_id", default=None),
+        init=False,
+        repr=False,
+    )
+    _multi_connection_mode: bool = field(default=False, init=False, repr=False)
     # Startup should inject an Ed25519 key; bytes remains for legacy HMAC-only tests.
     _signing_key: Ed25519PrivateKey | bytes | None = None
     _nonce_store: NonceStore | None = None
@@ -116,6 +144,12 @@ class Stream:
         if self._nonce_store is None:
             self._nonce_store = _InMemoryNonceStore()
         self._sync_turn_context_fields()
+        self._register_turn_processor(
+            self.owner_id,
+            scope_id=self.turn_context.scope_id,
+            turn_context=self.turn_context,
+            session_id=self._ensure_session_id(),
+        )
         self._approval_flow = ApprovalFlow(
             approval_manager=self.turn_context.approval_manager,
             channel=self.channel,
@@ -140,6 +174,101 @@ class Stream:
             tc.autonomy_calibrator = self.autonomy_calibrator
         elif tc.autonomy_calibrator is not None:
             self.autonomy_calibrator = tc.autonomy_calibrator
+
+    def _turn_context(self) -> TurnContext:
+        active_turn_context = self._active_turn_context.get()
+        if active_turn_context is not None:
+            return active_turn_context
+        return self.turn_context
+
+    def _derive_connection_key(self, connection_id: str) -> str:
+        normalized_connection_id = connection_id.strip() if connection_id.strip() else self.owner_id
+        if normalized_connection_id == self.owner_id and not self._multi_connection_mode:
+            return self.owner_id
+        self._multi_connection_mode = True
+        return normalized_connection_id
+
+    def _register_turn_processor(
+        self,
+        connection_key: str,
+        *,
+        scope_id: str,
+        turn_context: TurnContext,
+        session_id: str,
+    ) -> TurnProcessor:
+        turn_context.scope_id = scope_id
+        processor = TurnProcessor(
+            connection_key=connection_key,
+            turn_context=turn_context,
+            session_id=session_id,
+        )
+        self._turn_processors[connection_key] = processor
+        self._pending_persona_scopes.add(scope_id)
+        self._connection_locks.setdefault(connection_key, asyncio.Lock())
+        return processor
+
+    def _build_scoped_turn_context(self, scope_id: str) -> TurnContext:
+        base = self.turn_context
+        scoped = TurnContext(
+            scope_id=scope_id,
+            context_manager=base.context_manager,
+            live_context_manager=base.live_context_manager,
+            memory_store=base.memory_store,
+            chronicle_store=base.chronicle_store,
+            proxy=base.proxy,
+            planner=base.planner,
+            work_executor=base.work_executor,
+            gate_runner=base.gate_runner,
+            embedder=base.embedder,
+            personality_engine=base.personality_engine,
+            skill_loader=base.skill_loader,
+            skill_resolver=base.skill_resolver,
+            skill_registry=base.skill_registry,
+            skill_executor=base.skill_executor,
+            approval_manager=base.approval_manager,
+            suggestion_engine=base.suggestion_engine,
+            autonomy_calibrator=base.autonomy_calibrator,
+            audit=base.audit,
+            config=base.config,
+            turn_number=0,
+        )
+        return scoped
+
+    def _get_or_create_turn_processor(self, connection_id: str) -> TurnProcessor:
+        connection_key = self._derive_connection_key(connection_id)
+        processor = self._turn_processors.get(connection_key)
+        if processor is not None:
+            return processor
+
+        if connection_key == self.owner_id and connection_key not in self._turn_processors:
+            return self._register_turn_processor(
+                connection_key,
+                scope_id=self.owner_id,
+                turn_context=self.turn_context,
+                session_id=self._ensure_session_id(),
+            )
+
+        return self._register_turn_processor(
+            connection_key,
+            scope_id=connection_key,
+            turn_context=self._build_scoped_turn_context(connection_key),
+            session_id=str(uuid.uuid4()),
+        )
+
+    def _activate_turn_processor(
+        self, processor: TurnProcessor,
+    ) -> tuple[Token[TurnContext | None], Token[str | None]]:
+        turn_token = self._active_turn_context.set(processor.turn_context)
+        session_token = self._active_session_id.set(processor.session_id)
+        return turn_token, session_token
+
+    def _deactivate_turn_processor(
+        self,
+        turn_token: Token[TurnContext | None],
+        session_token: Token[str | None],
+    ) -> None:
+        self._active_turn_context.reset(turn_token)
+        self._active_session_id.reset(session_token)
 
     # ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -313,7 +442,7 @@ class Stream:
         )
 
     async def _run_scheduled_goal(self, active_goal: WorkItem) -> None:
-        executor = self.turn_context.work_executor
+        executor = self._turn_context().work_executor
         if executor is None:
             await self._audit("stream_startup_dependency_missing", dependency="work_executor")
             return
@@ -452,7 +581,7 @@ class Stream:
                     content=constitution_content,
                     token_count=_counter.count(constitution_content),
                     created_at=datetime.now(UTC),
-                    turn_number=self.turn_context.turn_number,
+                    turn_number=self._turn_context().turn_number,
                     source="system:constitution",
                     taint=TaintLevel.owner,
                     kind="system",
@@ -468,7 +597,7 @@ class Stream:
                     content=tools_content,
                     token_count=_counter.count(tools_content),
                     created_at=datetime.now(UTC),
-                    turn_number=self.turn_context.turn_number,
+                    turn_number=self._turn_context().turn_number,
                     source="system:tools",
                     taint=TaintLevel.owner,
                     kind="system",
@@ -484,7 +613,7 @@ class Stream:
                     content=config_content,
                     token_count=_counter.count(config_content),
                     created_at=datetime.now(UTC),
-                    turn_number=self.turn_context.turn_number,
+                    turn_number=self._turn_context().turn_number,
                     source="system:configuration",
                     taint=TaintLevel.owner,
                     kind="system",
@@ -580,7 +709,7 @@ class Stream:
             return
 
         restored = 0
-        scope_id = self.turn_context.scope_id
+        scope_id = self._turn_context().scope_id
         for item in in_progress_items:
             for target in self._file_subscription_targets(item):
                 subscription = ContextSubscription(
@@ -589,7 +718,7 @@ class Stream:
                     target=target,
                     zone=ContextZone.workspace,
                     created_at=datetime.now(UTC),
-                    turn_created=self.turn_context.turn_number,
+                    turn_created=self._turn_context().turn_number,
                     content_hash=hashlib.sha256(target.encode("utf-8")).hexdigest(),
                     active=True,
                     token_count=0,
@@ -616,14 +745,15 @@ class Stream:
                 content=content,
                 token_count=_counter.count(content),
                 created_at=datetime.now(UTC),
-                turn_number=self.turn_context.turn_number,
+                turn_number=self._turn_context().turn_number,
                 source="system:rehydrate",
                 taint=TaintLevel.owner,
                 kind="message",
             )
             cm.add(scope_id, item)
-            if self.turn_context.chronicle_store is not None:
-                await self.turn_context.chronicle_store.append(scope_id, item)
+            chronicle_store = self._turn_context().chronicle_store
+            if chronicle_store is not None:
+                await chronicle_store.append(scope_id, item)
 
     async def _resume_in_progress_work_items(
         self, in_progress_items: list[WorkItem],
@@ -631,7 +761,7 @@ class Stream:
         if not in_progress_items:
             return
 
-        executor = self.turn_context.work_executor
+        executor = self._turn_context().work_executor
         if executor is None:
             await self._audit("stream_startup_dependency_missing", dependency="work_executor")
             return
@@ -817,11 +947,24 @@ class Stream:
     # ── Turn Processing ────────────────────────────────────────────────
 
     async def _process_turn(self, message: ChannelMessage, connection_id: str = "owner") -> str:
+        processor = self._get_or_create_turn_processor(connection_id)
+        lock = self._connection_locks.setdefault(processor.connection_key, asyncio.Lock())
+        async with lock:
+            turn_token, session_token = self._activate_turn_processor(processor)
+            try:
+                return await self._process_turn_with_active_context(message, connection_id)
+            finally:
+                self._deactivate_turn_processor(turn_token, session_token)
+
+    async def _process_turn_with_active_context(
+        self, message: ChannelMessage, connection_id: str,
+    ) -> str:
+        tc = self._turn_context()
         session_id = self._ensure_session_id()
-        scope_id = self.turn_context.scope_id
+        scope_id = tc.scope_id
         await self._ensure_persona_state_loaded(scope_id)
-        self.turn_context.turn_number += 1
-        turn_number = self.turn_context.turn_number
+        tc.turn_number += 1
+        turn_number = tc.turn_number
         turn_id = f"{scope_id}:{turn_number}"
 
         with correlation_scope(turn_id=turn_id, scope_id=scope_id):
@@ -833,7 +976,7 @@ class Stream:
                 active_gate_count=len(active_gates),
             )
             high_confidence_suggestions = await self._collect_suggestions(connection_id)
-            processed_message_text, blocked_response = await self._run_input_gates(
+            processed_message_text, blocked_response, input_gate_results = await self._run_input_gates(
                 active_gates=active_gates,
                 message=message,
                 connection_id=connection_id,
@@ -868,8 +1011,8 @@ class Stream:
             )
             if cm is not None:
                 cm.add(scope_id, chronicle_item)
-            if self.turn_context.chronicle_store is not None:
-                await self.turn_context.chronicle_store.append(scope_id, chronicle_item)
+            if tc.chronicle_store is not None:
+                await tc.chronicle_store.append(scope_id, chronicle_item)
 
             await self._auto_retrieve_memories(signed.message.text, cm, signed.taint, turn_number)
             await self._ingest_raw_memory(signed.message.text, signed.taint, session_id, turn_number)
@@ -898,10 +1041,12 @@ class Stream:
                 has_skills=bool(available_skills),
             )
             await self._audit(
-                "phase1a_noop", step=6.5, note="skill-aware toolset preparation deferred",
+                "phase1a_noop",
+                step=6.5,
+                note="skill-aware toolset preparation deferred",
             )
 
-            if self.turn_context.proxy is None:
+            if tc.proxy is None:
                 raise RuntimeError("turn_context.proxy is required")
 
             rendered_context = ""
@@ -909,13 +1054,28 @@ class Stream:
                 rendered_context = cm.render(scope_id, turn_number)
 
             routed = await run_structured_agent(
-                agent=self.turn_context.proxy,
+                agent=tc.proxy,
                 prompt=self._build_proxy_prompt(processed_message_text, rendered_context),
                 call_name="proxy",
                 default_context_profile=self.default_context_profile,
             )
             if not isinstance(routed, RouteDecision):
                 raise TypeError("proxy must return RouteDecision")
+
+            interaction_mode = await resolve_interaction_mode(
+                route_decision=routed,
+                scope_id=scope_id,
+                autonomy_calibrator=self._get_autonomy_calibrator(),
+                gate_results=input_gate_results,
+                personality_engine=tc.personality_engine,
+            )
+            await self._audit(
+                "interaction_mode_resolved",
+                turn_number=turn_number,
+                interaction_register=routed.interaction_register.value,
+                interaction_mode=interaction_mode.value,
+                context_profile=routed.context_profile,
+            )
 
             if cm is not None:
                 cm.set_profile(scope_id, routed.context_profile)
@@ -928,12 +1088,17 @@ class Stream:
                 turn_number,
                 message.text,
                 rendered_context,
+                interaction_mode,
             )
             response_text = self._prepend_high_confidence_suggestions(
-                response_text, high_confidence_suggestions,
+                response_text,
+                high_confidence_suggestions,
             )
             response_text, blocked_gate_names = await self._evaluate_output_gates(
-                response_text, signed.taint, message.sender_id, turn_number,
+                response_text,
+                signed.taint,
+                message.sender_id,
+                turn_number,
             )
 
             await self._audit("phase1a_noop", step=9, note="memory query processing skipped")
@@ -952,14 +1117,16 @@ class Stream:
             )
             if cm is not None:
                 cm.add(scope_id, response_item)
-            if self.turn_context.chronicle_store is not None:
-                await self.turn_context.chronicle_store.append(scope_id, response_item)
+            if tc.chronicle_store is not None:
+                await tc.chronicle_store.append(scope_id, response_item)
 
             await self._audit("phase1a_noop", step=11.5, note="raw output ingest skipped")
             await self.channel.send(connection_id, response_text, reply_to=message.reply_to)
             await self._audit("phase1a_noop", step=14, note="access state updates skipped")
             await self._record_autonomy_outcome(
-                turn_number=turn_number, route=routed.route, blocked=bool(blocked_gate_names),
+                turn_number=turn_number,
+                route=routed.route,
+                blocked=bool(blocked_gate_names),
             )
             await self._audit("turn_processed", turn_number=turn_number, route=routed.route)
 
@@ -1055,6 +1222,7 @@ class Stream:
         turn_number: int,
         message_text: str,
         rendered_context: str,
+        interaction_mode: InteractionMode,
     ) -> str:
         plan_flow_payload: dict[str, object] = {
             "actions_seen": 0, "skills_executed": 0, "skills_skipped": 0,
@@ -1079,13 +1247,17 @@ class Stream:
                     plan_actions,
                     turn_number,
                     continuation_of,
+                    interaction_mode,
                 )
                 if work_exec_summary is not None:
                     response_text = work_exec_summary
                 else:
                     response_text, plan_flow_payload = await self._execute_planner_skill_actions(
-                        plan_actions=plan_actions, connection_id=connection_id,
-                        turn_number=turn_number, fallback_response=response_text,
+                        plan_actions=plan_actions,
+                        connection_id=connection_id,
+                        turn_number=turn_number,
+                        fallback_response=response_text,
+                        interaction_mode=interaction_mode,
                     )
             else:
                 if planner_message:
@@ -1100,7 +1272,7 @@ class Stream:
 
     def _precompile_active_gates(self) -> tuple[Gate, ...]:
         system_gates = self._load_system_gates()
-        gate_runner = self.turn_context.gate_runner
+        gate_runner = self._turn_context().gate_runner
         if gate_runner is None:
             return tuple(system_gates)
 
@@ -1112,7 +1284,7 @@ class Stream:
         return tuple(compiled)
 
     def _load_system_gates(self) -> list[Gate]:
-        config = self.turn_context.config
+        config = self._turn_context().config
         if config is None:
             return []
 
@@ -1146,8 +1318,8 @@ class Stream:
         message: ChannelMessage,
         connection_id: str,
         turn_number: int,
-    ) -> tuple[str, str | None]:
-        gate_runner = self.turn_context.gate_runner
+    ) -> tuple[str, str | None, list[GateResult]]:
+        gate_runner = self._turn_context().gate_runner
         if gate_runner is None or not active_gates:
             await self._audit(
                 "input_gates_evaluated",
@@ -1157,7 +1329,7 @@ class Stream:
                 quality_results=[],
                 configured=bool(active_gates),
             )
-            return message.text, None
+            return message.text, None, []
 
         policy_results, quality_results, merged_context = await gate_runner.check_gates(
             gates=list(active_gates),
@@ -1209,7 +1381,7 @@ class Stream:
                     reason=result.reason,
                 )
                 blocked = self._input_gate_block_response(merged_context, result)
-                return message.text, blocked
+                return message.text, blocked, policy_results
 
             if result.action == "block":
                 await self._audit(
@@ -1219,12 +1391,12 @@ class Stream:
                     reason=result.reason,
                 )
                 blocked = self._input_gate_block_response(merged_context, result)
-                return message.text, blocked
+                return message.text, blocked, policy_results
 
         rewritten = merged_context.get("message")
         if isinstance(rewritten, str) and rewritten.strip():
-            return rewritten, None
-        return message.text, None
+            return rewritten, None, policy_results
+        return message.text, None, policy_results
 
     def _input_gate_block_response(
         self,
@@ -1272,7 +1444,7 @@ class Stream:
         rendered_context: str,
         turn_number: int,
     ) -> tuple[list[dict[str, object]], str | None]:
-        planner = self.turn_context.planner
+        planner = self._turn_context().planner
         if planner is None:
             await self._audit("planner_handoff_missing", turn_number=turn_number)
             return [], None
@@ -1344,15 +1516,26 @@ class Stream:
         return [action_payload]
 
     async def _try_work_execution(
-        self, plan_actions: list[dict[str, object]], turn_number: int, continuation_of: str | None,
+        self,
+        plan_actions: list[dict[str, object]],
+        turn_number: int,
+        continuation_of: str | None,
+        interaction_mode: InteractionMode,
     ) -> str | None:
         """Try executing plan actions via work executor. Returns summary or None."""
-        executor = self.turn_context.work_executor
+        executor = self._turn_context().work_executor
         if executor is None:
             return None
 
+        plan_actions_with_mode = [
+            {**action, "interaction_mode": interaction_mode.value}
+            for action in plan_actions
+        ]
         summary = await execute_plan_actions(
-            plan_actions, executor, turn_number=turn_number, continuation_of=continuation_of,
+            plan_actions_with_mode,
+            executor,
+            turn_number=turn_number,
+            continuation_of=continuation_of,
         )
         await self._audit("planner_actions_executed", turn_number=turn_number, summary=summary)
         return summary
@@ -1363,6 +1546,7 @@ class Stream:
         connection_id: str,
         turn_number: int,
         fallback_response: str,
+        interaction_mode: InteractionMode,
     ) -> tuple[str, dict[str, int]]:
         """Execute skill-based plan actions with approval flow."""
         payload: dict[str, int] = {
@@ -1371,15 +1555,21 @@ class Stream:
             "approval_requested": 0, "approval_approved": 0, "approval_declined": 0,
         }
 
-        skill_registry = self.turn_context.skill_registry
-        skill_executor = self.turn_context.skill_executor
+        tc = self._turn_context()
+        skill_registry = tc.skill_registry
+        skill_executor = tc.skill_executor
         if skill_registry is None or skill_executor is None:
             return fallback_response, payload
 
         summary_lines: list[str] = []
         for action in plan_actions:
             line, action_payload = await self._execute_single_skill_action(
-                action, connection_id, turn_number, skill_registry, skill_executor,
+                action,
+                connection_id,
+                turn_number,
+                skill_registry,
+                skill_executor,
+                interaction_mode,
             )
             if line is not None:
                 summary_lines.append(line)
@@ -1397,6 +1587,7 @@ class Stream:
         turn_number: int,
         skill_registry: object,
         skill_executor: object,
+        interaction_mode: InteractionMode,
     ) -> tuple[str | None, dict[str, int]]:
         """Execute a single skill action, returning (summary_line, counters)."""
         counters: dict[str, int] = {}
@@ -1410,7 +1601,13 @@ class Stream:
             counters["skills_skipped"] = 1
             return f"Skipped skill '{skill_name}': skill not registered.", counters
 
-        work_item = build_skill_work_item(skill_name, action, turn_number, skill_def.requires_approval)
+        work_item = build_skill_work_item(
+            skill_name,
+            action,
+            turn_number,
+            skill_def.requires_approval,
+            interaction_mode=interaction_mode,
+        )
 
         if skill_def.requires_approval:
             counters["approval_requested"] = 1
@@ -1479,7 +1676,8 @@ class Stream:
             await self._audit("phase1a_noop", step=0.5, note="review/proactive queue skipped")
             return []
 
-        idle = await engine.generate_idle(self.turn_context.scope_id, datetime.now(UTC))
+        scope_id = self._turn_context().scope_id
+        idle = await engine.generate_idle(scope_id, datetime.now(UTC))
         high = [s for s in idle if s.confidence > 0.80]
         low = [s for s in idle if s.confidence <= 0.80]
         for suggestion in low:
@@ -1501,7 +1699,7 @@ class Stream:
             await self._audit("phase1a_noop", step=15, note="personality/autonomy post-turn updates skipped")
             return
         outcome = "declined" if blocked else "approved"
-        await calibrator.record_outcome(self.turn_context.scope_id, action_family=route, outcome=outcome)
+        await calibrator.record_outcome(self._turn_context().scope_id, action_family=route, outcome=outcome)
         await self._audit("autonomy_calibration_recorded", step=15, turn_number=turn_number, action_family=route, outcome=outcome)
 
     # ── Memory ─────────────────────────────────────────────────────────
@@ -1509,14 +1707,16 @@ class Stream:
     async def _auto_retrieve_memories(
         self, text: str, cm: LiveContextManager | None, taint: TaintLevel, turn_number: int,
     ) -> None:
-        if self.turn_context.memory_store is None or cm is None:
+        tc = self._turn_context()
+        memory_store = tc.memory_store
+        if memory_store is None or cm is None:
             return
 
-        recalled_keyword = await self.turn_context.memory_store.search_keyword(text, limit=3)
+        recalled_keyword = await memory_store.search_keyword(text, limit=3)
         recalled_entity: list[MemoryItem] = []
         mentions = self._extract_mentions(text)
         if mentions:
-            entity_candidates = await self.turn_context.memory_store.search_by_type(MemoryType.entity, limit=50)
+            entity_candidates = await memory_store.search_by_type(MemoryType.entity, limit=50)
             recalled_entity = [item for item in entity_candidates if self._memory_matches_any_mention(item, mentions)]
 
         recalled_unique: dict[str, MemoryItem] = {}
@@ -1524,9 +1724,9 @@ class Stream:
             recalled_unique.setdefault(item.memory_id, item)
 
         for item in recalled_unique.values():
-            await self.turn_context.memory_store.increment_access(item.memory_id)
+            await memory_store.increment_access(item.memory_id)
             cm.add(
-                self.turn_context.scope_id,
+                tc.scope_id,
                 ContextItem(
                     ctx_id=f"memory:{item.memory_id}",
                     zone=ContextZone.memory,
@@ -1541,11 +1741,13 @@ class Stream:
             )
 
     async def _ingest_raw_memory(self, text: str, taint: TaintLevel, session_id: str, turn_number: int) -> None:
-        if self.turn_context.memory_store is None:
+        tc = self._turn_context()
+        memory_store = tc.memory_store
+        if memory_store is None:
             return
-        await self.turn_context.memory_store.store_raw(
+        await memory_store.store_raw(
             MemoryItem(
-                memory_id=f"raw:{self.turn_context.scope_id}:{turn_number}:{uuid.uuid4().hex}",
+                memory_id=f"raw:{tc.scope_id}:{turn_number}:{uuid.uuid4().hex}",
                 content=text,
                 memory_type=MemoryType.episode,
                 reingestion_tier=ReingestionTier.low_reingestion,
@@ -1578,14 +1780,15 @@ class Stream:
         session_id: str,
         turn_number: int,
     ) -> None:
-        memory_store = self.turn_context.memory_store
+        tc = self._turn_context()
+        memory_store = tc.memory_store
         if memory_store is None or not evicted_items:
             return
 
         for item in evicted_items:
             await memory_store.store(
                 MemoryItem(
-                    memory_id=f"evicted:{self.turn_context.scope_id}:{turn_number}:{uuid.uuid4().hex}",
+                    memory_id=f"evicted:{tc.scope_id}:{turn_number}:{uuid.uuid4().hex}",
                     content=item.content,
                     memory_type=MemoryType.episode,
                     reingestion_tier=ReingestionTier.low_reingestion,
@@ -1603,7 +1806,7 @@ class Stream:
         if scope_id not in self._pending_persona_scopes:
             return
 
-        personality_engine = self.turn_context.personality_engine
+        personality_engine = self._turn_context().personality_engine
         if personality_engine is None:
             self._pending_persona_scopes.discard(scope_id)
             await self._audit("stream_startup_dependency_missing", dependency="personality_engine")
@@ -1617,7 +1820,11 @@ class Stream:
             self._pending_persona_scopes.discard(scope_id)
 
     def _known_scopes(self) -> list[str]:
-        scopes = {self.turn_context.scope_id}
+        scopes = {self._turn_context().scope_id}
+        scopes.update(
+            processor.turn_context.scope_id
+            for processor in self._turn_processors.values()
+        )
 
         context_manager = self._get_context_manager()
         if context_manager is not None:
@@ -1628,7 +1835,7 @@ class Stream:
                     if isinstance(scope_id, str) and scope_id.strip()
                 )
 
-        chronicle_store = self.turn_context.chronicle_store
+        chronicle_store = self._turn_context().chronicle_store
         if chronicle_store is not None:
             for attr_name in ("by_scope", "known_scopes", "scopes"):
                 raw = getattr(chronicle_store, attr_name, None)
@@ -1641,7 +1848,7 @@ class Stream:
         return sorted(scopes)
 
     def _config_value(self, *path: str, default: object | None = None) -> object | None:
-        current: object | None = self.turn_context.config
+        current: object | None = self._turn_context().config
         for key in path:
             if current is None:
                 return default
@@ -1710,7 +1917,7 @@ class Stream:
         )
 
     def _tool_descriptions_content(self) -> str:
-        skill_registry = self.turn_context.skill_registry
+        skill_registry = self._turn_context().skill_registry
         if skill_registry is None:
             return "Tool descriptions: no registered skills."
 
@@ -1724,7 +1931,7 @@ class Stream:
         return "Tool descriptions:\n" + "\n".join(descriptions)
 
     def _configuration_content(self) -> str:
-        config = self.turn_context.config
+        config = self._turn_context().config
         if config is None:
             return "Runtime configuration snapshot: <missing>"
 
@@ -1792,7 +1999,7 @@ class Stream:
         return routed.response.message if routed.response is not None else ""
 
     def _available_skill_names(self) -> list[str]:
-        registry = self.turn_context.skill_registry
+        registry = self._turn_context().skill_registry
         if registry is None:
             return []
         return [skill.name for skill in registry.list_all()]
@@ -1810,26 +2017,30 @@ class Stream:
         return normalized
 
     async def _audit(self, event: str, **data: object) -> None:
-        if self.turn_context.audit is None:
+        audit_log = self._turn_context().audit
+        if audit_log is None:
             return
-        await self.turn_context.audit.log(event, **data)
+        await audit_log.log(event, **data)
 
     def _get_context_manager(self) -> LiveContextManager | None:
         if self.context_manager is not None:
             return self.context_manager
-        return self.turn_context.context_manager
+        return self._turn_context().context_manager
 
     def _get_suggestion_engine(self) -> SuggestionEngine | None:
         if self.suggestion_engine is not None:
             return self.suggestion_engine
-        return self.turn_context.suggestion_engine
+        return self._turn_context().suggestion_engine
 
     def _get_autonomy_calibrator(self) -> AutonomyCalibrator | None:
         if self.autonomy_calibrator is not None:
             return self.autonomy_calibrator
-        return self.turn_context.autonomy_calibrator
+        return self._turn_context().autonomy_calibrator
 
     def _ensure_session_id(self) -> str:
+        active_session_id = self._active_session_id.get()
+        if active_session_id is not None:
+            return active_session_id
         if self.session_id is None:
             self.session_id = str(uuid.uuid4())
         return self.session_id

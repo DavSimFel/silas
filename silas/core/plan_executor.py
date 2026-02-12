@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from typing import Protocol
 
 from silas.core.plan_parser import MarkdownPlanParser
+from silas.models.agents import InteractionMode
 from silas.models.work import WorkItem, WorkItemResult, WorkItemStatus, WorkItemType
 
 
@@ -187,6 +188,7 @@ def build_skill_work_item(
     action: dict[str, object],
     turn_number: int,
     requires_approval: bool,
+    interaction_mode: InteractionMode | None = None,
 ) -> WorkItem:
     """Build a WorkItem for a skill execution from a plan action."""
     title = action.get("title")
@@ -204,6 +206,7 @@ def build_skill_work_item(
         body=body,
         needs_approval=requires_approval,
         skills=[skill_name],
+        interaction_mode=interaction_mode or InteractionMode.confirm_only_when_required,
     )
 
 
