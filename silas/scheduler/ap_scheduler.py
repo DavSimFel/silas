@@ -15,6 +15,7 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import Any
 
+from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -139,7 +140,7 @@ class SilasScheduler:
 
         try:
             self._scheduler.remove_job(schedule_id)
-        except Exception:
+        except (KeyError, JobLookupError):
             # Job might already have been removed by APScheduler (one-shot, etc.)
             logger.debug("Job %s already removed from APScheduler", schedule_id)
 
@@ -177,7 +178,7 @@ class SilasScheduler:
         async def _wrapper() -> None:
             try:
                 await callback()
-            except Exception:
+            except Exception:  # Intentional catch-all: scheduler wrapper must never crash
                 logger.exception("Schedule %s callback failed", schedule_id)
 
         return _wrapper

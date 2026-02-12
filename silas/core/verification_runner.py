@@ -75,7 +75,7 @@ class SilasVerificationRunner:
                 output=output,
                 exit_code=execution.exit_code,
             )
-        except Exception as exc:
+        except (OSError, ValueError, RuntimeError, KeyError) as exc:
             return VerificationResult(
                 name=check.name,
                 passed=False,

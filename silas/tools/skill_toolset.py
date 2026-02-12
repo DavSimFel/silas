@@ -80,7 +80,7 @@ class FunctionToolset:
 
         try:
             output = tool.call(arguments)
-        except Exception as exc:
+        except (TypeError, ValueError, RuntimeError, OSError) as exc:
             return ToolCallResult(status="error", error=str(exc))
         return ToolCallResult(status="ok", output=output)
 
@@ -133,7 +133,7 @@ class SkillToolset:
         if skill_tool is not None:
             try:
                 output = skill_tool.call(arguments)
-            except Exception as exc:
+            except (TypeError, ValueError, RuntimeError, OSError) as exc:
                 return ToolCallResult(status="error", error=str(exc))
             return ToolCallResult(status="ok", output=output)
 

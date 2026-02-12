@@ -54,7 +54,7 @@ class ShellExecutor:
                 error=error,
                 duration_seconds=outcome.duration_seconds,
             )
-        except Exception as exc:
+        except (OSError, ValueError, RuntimeError, KeyError) as exc:
             return ExecutionResult(
                 execution_id=envelope.execution_id,
                 step_index=envelope.step_index,
