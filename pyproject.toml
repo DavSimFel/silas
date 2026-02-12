@@ -25,6 +25,7 @@ dependencies = [
   "ruff>=0.6",
   "aiosqlite>=0.22.1",
   "apscheduler>=3.11,<4",
+  "pydantic-ai-backend>=0.1.6",
 ]
 
 [project.scripts]

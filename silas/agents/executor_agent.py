@@ -1,10 +1,16 @@
-"""Executor Agent — produces structured tool-call plans for a WorkItem."""
+"""Executor Agent — produces structured tool-call plans for a WorkItem.
+
+WI-2 enhancement: optional pydantic-ai tool loop. When use_tools=True,
+the executor can iteratively call tools (read files, execute, etc.) during
+its run. Supports research mode (read-only) and execution mode (full tools).
+"""
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai import Agent
 
@@ -12,6 +18,10 @@ from silas.agents.structured import run_structured_agent
 from silas.models.execution import ExecutorAgentOutput, ExecutorToolCall
 from silas.models.work import WorkItem
 from silas.tools.skill_toolset import ToolsetProtocol
+
+if TYPE_CHECKING:
+    from silas.tools.common import AgentDeps
+    from silas.tools.toolsets import AgentToolBundle
 
 logger = logging.getLogger(__name__)
 
@@ -33,24 +43,49 @@ class ExecutorRunResult:
 
 
 class ExecutorAgent:
-    def __init__(self, model: str, toolset: ToolsetProtocol | None = None) -> None:
+    """Executor agent with optional pydantic-ai tool loop.
+
+    When use_tools=True, the executor can iteratively call tools during
+    its run. The mode parameter controls which tools are available:
+    - "research": read-only tools only (spec §5.2.1)
+    - "execution": full tools including write and execute (spec §5.2.2)
+
+    Why stateless: spec §5.1 — executor receives an ExecutionEnvelope,
+    uses tools, returns results. No persistent history across work items.
+    """
+
+    def __init__(
+        self,
+        model: str,
+        toolset: ToolsetProtocol | None = None,
+        *,
+        use_tools: bool = False,
+        tool_bundle: AgentToolBundle | None = None,
+        mode: Literal["research", "execution"] = "execution",
+    ) -> None:
         self.model = model
         self.toolset = toolset
+        self.mode = mode
         self.system_prompt = _load_executor_system_prompt()
         self._llm_available = True
+        self._use_tools = use_tools and tool_bundle is not None
+        self._tool_bundle = tool_bundle
 
         try:
             self.agent = Agent(
                 model=model,
                 output_type=ExecutorAgentOutput,
                 system_prompt=self.system_prompt,
+                tools=tool_bundle.custom_tools if self._use_tools and tool_bundle else [],
+                toolsets=[tool_bundle.console_toolset] if self._use_tools and tool_bundle else [],
             )
         except (ImportError, ValueError, TypeError, RuntimeError) as exc:
             logger.warning("Failed to initialize Executor Agent; using deterministic fallback: %s", exc)
             self.agent = None
             self._llm_available = False
 
-    async def run(self, prompt: str) -> ExecutorRunResult:
+    async def run(self, prompt: str, deps: AgentDeps | None = None) -> ExecutorRunResult:
+        """Run the executor, optionally with tool-loop deps."""
         output = await self._execute_prompt(prompt)
         return ExecutorRunResult(output=output)
 
@@ -137,8 +172,22 @@ def _load_executor_system_prompt() -> str:
     return DEFAULT_EXECUTOR_SYSTEM_PROMPT
 
 
-def build_executor_agent(model: str, toolset: ToolsetProtocol | None = None) -> ExecutorAgent:
-    return ExecutorAgent(model=model, toolset=toolset)
+def build_executor_agent(
+    model: str,
+    toolset: ToolsetProtocol | None = None,
+    *,
+    use_tools: bool = False,
+    tool_bundle: AgentToolBundle | None = None,
+    mode: Literal["research", "execution"] = "execution",
+) -> ExecutorAgent:
+    """Factory for ExecutorAgent with optional tool loop support."""
+    return ExecutorAgent(
+        model=model,
+        toolset=toolset,
+        use_tools=use_tools,
+        tool_bundle=tool_bundle,
+        mode=mode,
+    )
 
 
 __all__ = ["ExecutorAgent", "ExecutorRunResult", "build_executor_agent"]
