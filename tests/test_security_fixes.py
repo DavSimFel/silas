@@ -10,14 +10,13 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
-
 from silas.channels.web import WebChannel
 from silas.connections.manager import SilasConnectionManager
 from silas.core.plan_executor import plan_action_to_work_item
 from silas.core.plan_parser import MarkdownPlanParser
 from silas.goals.manager import SilasGoalManager
 from silas.models.approval import ApprovalVerdict
+from starlette.websockets import WebSocketDisconnect
 
 _PLAN_MARKDOWN_NEEDS_APPROVAL_FALSE = """---
 id: wi-markdown
@@ -59,26 +58,22 @@ def _action_from_inline_payload() -> dict[str, object]:
 @pytest.mark.parametrize("path", ["/ws", "/ws?token=wrong-token"])
 def test_ws_rejects_without_valid_token_when_auth_token_configured(path: str) -> None:
     channel = WebChannel(auth_token="expected-token")
-    with TestClient(channel.app) as client:
-        with pytest.raises(WebSocketDisconnect) as exc_info:
-            with client.websocket_connect(path):
-                pass
+    with TestClient(channel.app) as client, pytest.raises(WebSocketDisconnect) as exc_info, client.websocket_connect(path):
+        pass
 
     assert exc_info.value.code == 4401
 
 
 def test_ws_accepts_with_valid_token_when_auth_token_configured() -> None:
     channel = WebChannel(auth_token="expected-token")
-    with TestClient(channel.app) as client:
-        with client.websocket_connect("/ws?token=expected-token") as websocket:
-            websocket.send_text("hello")
+    with TestClient(channel.app) as client, client.websocket_connect("/ws?token=expected-token") as websocket:
+        websocket.send_text("hello")
 
 
 def test_ws_loopback_accepts_when_no_auth_token_configured() -> None:
     channel = WebChannel(auth_token=None)
-    with TestClient(channel.app) as client:
-        with client.websocket_connect("/ws") as websocket:
-            websocket.send_text("hello")
+    with TestClient(channel.app) as client, client.websocket_connect("/ws") as websocket:
+        websocket.send_text("hello")
 
 
 @pytest.mark.asyncio
