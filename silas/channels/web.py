@@ -33,6 +33,10 @@ type ApprovalResponseHandler = Callable[[str, ApprovalVerdict, str], Awaitable[N
 logger = logging.getLogger(__name__)
 
 
+class _SecretPayload(BaseModel):
+    value: str
+
+
 class OnboardPayload(BaseModel):
     agent_name: str
     api_key: str
@@ -92,6 +96,7 @@ class WebChannel(ChannelAdapterCore):
             )
 
         self._setup_push_routes()
+        self._setup_secret_routes()
         self._setup_onboarding_routes()
 
         @self.app.websocket("/ws")
@@ -199,6 +204,21 @@ class WebChannel(ChannelAdapterCore):
                 },
             )
 
+    def _setup_secret_routes(self) -> None:
+        """POST /secrets/{ref_id} — secure credential ingestion (§0.5).
+
+        Bypasses WebSocket so secrets never enter the agent pipeline.
+        """
+
+        @self.app.post("/secrets/{ref_id}")
+        async def store_secret(ref_id: str, request: _SecretPayload) -> JSONResponse:
+            from silas.secrets import SecretStore
+
+            data_dir = Path("./data")  # TODO: wire from settings
+            store = SecretStore(data_dir)
+            store.set(ref_id, request.value)
+            return JSONResponse({"ref_id": ref_id, "success": True})
+
     def _setup_onboarding_routes(self) -> None:
         @self.app.post("/api/onboard")
         async def onboard(payload: OnboardPayload) -> JSONResponse:
@@ -246,7 +266,15 @@ class WebChannel(ChannelAdapterCore):
 
         silas_section["agent_name"] = payload.agent_name
         silas_section["owner_name"] = payload.owner_name
-        models_section["api_key"] = payload.api_key
+
+        # Store API key in SecretStore (§0.5 — never in config files)
+        from silas.secrets import SecretStore
+
+        data_dir = Path(silas_section.get("data_dir", "./data"))
+        api_key_ref = "openrouter-api-key"
+        secret_store = SecretStore(data_dir)
+        secret_store.set(api_key_ref, payload.api_key)
+        models_section["api_key_ref"] = api_key_ref
 
         self._config_path.parent.mkdir(parents=True, exist_ok=True)
         rendered = yaml.safe_dump(config_data, sort_keys=False)

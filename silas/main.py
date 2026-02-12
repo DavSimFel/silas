@@ -166,6 +166,9 @@ def _prompt_onboarding_values() -> tuple[str, str, str]:
         click.echo("Invalid OpenRouter API key. Please try again.")
 
 
+_API_KEY_REF_ID = "openrouter-api-key"
+
+
 def _write_onboarding_config(
     config_path: Path,
     root_mapping: dict[str, Any],
@@ -174,14 +177,22 @@ def _write_onboarding_config(
     owner_name: str,
     api_key: str,
 ) -> None:
+    from silas.secrets import SecretStore
+
     silas_mapping["agent_name"] = agent_name
     silas_mapping["owner_name"] = owner_name
 
+    # Store API key in SecretStore (§0.5 — never in config files)
+    data_dir = Path(silas_mapping.get("data_dir", "./data"))
+    secret_store = SecretStore(data_dir)
+    secret_store.set(_API_KEY_REF_ID, api_key)
+
+    # Config stores only the opaque ref_id
     models_mapping = silas_mapping.get("models")
     if not isinstance(models_mapping, dict):
         models_mapping = {}
         silas_mapping["models"] = models_mapping
-    models_mapping["api_key"] = api_key
+    models_mapping["api_key_ref"] = _API_KEY_REF_ID
 
     config_path.write_text(yaml.safe_dump(root_mapping, sort_keys=False), encoding="utf-8")
 
