@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from silas.gates.predicates import PredicateChecker
+from silas.gates.script import ScriptChecker
 from silas.models.gates import (
     ALLOWED_MUTATIONS,
     Gate,
@@ -25,12 +26,17 @@ class SilasGateRunner(GateRunner):
         self,
         providers: Mapping[GateProvider | str, GateCheckProvider] | None = None,
         predicate_checker: PredicateChecker | None = None,
+        script_checker: ScriptChecker | None = None,
+        llm_checker: GateCheckProvider | None = None,
     ) -> None:
         self._providers: dict[str, GateCheckProvider] = {}
         self.quality_log: list[GateResult] = []
         self.rejected_mutations: list[tuple[str, str]] = []
 
         self.register_provider(GateProvider.predicate, predicate_checker or PredicateChecker())
+        self.register_provider(GateProvider.script, script_checker or ScriptChecker())
+        if llm_checker is not None:
+            self.register_provider(GateProvider.llm, llm_checker)
         if providers:
             for provider_name, provider in providers.items():
                 self.register_provider(provider_name, provider)
