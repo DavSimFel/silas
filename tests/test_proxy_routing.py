@@ -92,3 +92,20 @@ def test_build_stream_wires_output_gate_runner(
     stream, _ = build_stream(settings)
 
     assert stream.output_gate_runner is not None
+
+
+def test_build_stream_passes_web_auth_token_to_channel(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = SilasSettings.model_validate(
+        {
+            "data_dir": str(tmp_path / "data"),
+            "channels": {"web": {"auth_token": "secret-token"}},
+        }
+    )
+    monkeypatch.setattr("silas.main.build_proxy_agent", lambda model, default_context_profile: TestModel())
+
+    _, channel = build_stream(settings)
+
+    assert channel.auth_token == "secret-token"

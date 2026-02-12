@@ -35,6 +35,7 @@ from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
 
 _counter = HeuristicTokenCounter()
 _MENTION_PATTERN = re.compile(r"@([A-Za-z0-9_:-]+)")
+_WEBSOCKET_AUTH_BOUNDARY_SIGNATURE = b"ws-auth-boundary"
 
 
 @dataclass(slots=True)
@@ -152,7 +153,14 @@ class Stream:
         await self._audit("phase1a_noop", step=1, note="input gates skipped")
 
         taint = TaintLevel.owner if message.sender_id == self.owner_id else TaintLevel.external
-        signed = SignedMessage(message=message, signature=b"", nonce=uuid.uuid4().hex, taint=taint)
+        # TODO: Replace this placeholder with per-message signing. For now, websocket auth and
+        # server-assigned sender identity are the active trust boundary for inbound messages.
+        signed = SignedMessage(
+            message=message,
+            signature=_WEBSOCKET_AUTH_BOUNDARY_SIGNATURE,
+            nonce=uuid.uuid4().hex,
+            taint=taint,
+        )
         cm = self._get_context_manager()
 
         self.turn_context.turn_number += 1

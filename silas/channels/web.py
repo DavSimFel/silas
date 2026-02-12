@@ -39,10 +39,12 @@ class WebChannel(ChannelAdapterCore):
         port: int = 8420,
         web_dir: str | Path = "web",
         scope_id: str = "owner",
+        auth_token: str | None = None,
     ) -> None:
         self.host = host
         self.port = port
         self.scope_id = scope_id
+        self.auth_token = auth_token
         self.web_dir = Path(web_dir)
         self._incoming: asyncio.Queue[tuple[ChannelMessage, str]] = asyncio.Queue()
         self._websocket: WebSocket | None = None
@@ -92,8 +94,17 @@ class WebChannel(ChannelAdapterCore):
                 },
             )
 
+        self._setup_websocket_route()
+        self._setup_static_routes()
+
+    def _setup_websocket_route(self) -> None:
         @self.app.websocket("/ws")
         async def ws_endpoint(websocket: WebSocket) -> None:
+            if not self._is_websocket_authorized(websocket):
+                # Authorization must fail closed before the socket is accepted.
+                await websocket.close(code=1008)
+                return
+
             session_id = self._resolve_session_id(websocket.query_params.get("session"))
             connection_key = self._connection_key(websocket)
 
@@ -109,6 +120,7 @@ class WebChannel(ChannelAdapterCore):
             finally:
                 await self._unregister_websocket(session_id, connection_key, websocket)
 
+    def _setup_static_routes(self) -> None:
         if self.web_dir.exists():
 
             @self.app.get("/")
@@ -176,6 +188,12 @@ class WebChannel(ChannelAdapterCore):
             return self.scope_id
         cleaned = raw_session.strip()
         return cleaned or self.scope_id
+
+    def _is_websocket_authorized(self, websocket: WebSocket) -> bool:
+        """Reject unauthenticated websocket clients when auth is configured."""
+        if self.auth_token is None:
+            return True
+        return websocket.query_params.get("token") == self.auth_token
 
     @staticmethod
     def _connection_key(websocket: WebSocket) -> str:
@@ -266,7 +284,6 @@ class WebChannel(ChannelAdapterCore):
         }
 
     async def _handle_client_payload(self, payload: str, session_id: str) -> None:
-        sender_id = self.scope_id
         text = payload
         try:
             parsed = json.loads(payload)
@@ -278,13 +295,13 @@ class WebChannel(ChannelAdapterCore):
                 if msg_type != "message":
                     return
                 text = str(parsed.get("text", ""))
-                sender_id = str(parsed.get("sender_id", self.scope_id))
         except json.JSONDecodeError:
             pass
 
         message = ChannelMessage(
             channel=self.channel_name,
-            sender_id=sender_id,
+            # The websocket session identity is the trust boundary; payload sender_id is ignored.
+            sender_id=self.scope_id,
             text=text,
             timestamp=utc_now(),
         )
@@ -350,8 +367,8 @@ class WebChannel(ChannelAdapterCore):
         if handler is None:
             return
 
-        sender_id = payload.get("sender_id")
-        resolved_by = sender_id if isinstance(sender_id, str) and sender_id else self.scope_id
+        # Only the authenticated websocket owner can resolve approvals.
+        resolved_by = self.scope_id
         verdict = (
             ApprovalVerdict.approved
             if normalized_action == "approve"

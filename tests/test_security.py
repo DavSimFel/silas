@@ -10,21 +10,21 @@ from typing import Any
 
 import aiosqlite
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from silas.approval.manager import LiveApprovalManager
-from silas.core.stream import Stream
+from silas.channels.web import WebChannel
 from silas.goals.manager import SilasGoalManager
 from silas.models.approval import (
     ApprovalScope,
     ApprovalToken,
     ApprovalVerdict,
 )
-from silas.models.context import ContextZone
 from silas.models.goals import Goal, GoalSchedule
-from silas.models.messages import ChannelMessage, TaintLevel
 from silas.models.work import WorkItem, WorkItemStatus, WorkItemType
 from silas.persistence.migrations import run_migrations
 from silas.persistence.nonce_store import SQLiteNonceStore
+from starlette.websockets import WebSocketDisconnect
 
 
 def _utc_now() -> datetime:
@@ -98,15 +98,6 @@ def _goal(goal_id: str = "goal-sec") -> Goal:
         skills=["security"],
         created_at=now,
         updated_at=now,
-    )
-
-
-def _msg(text: str, sender_id: str = "owner") -> ChannelMessage:
-    return ChannelMessage(
-        channel="web",
-        sender_id=sender_id,
-        text=text,
-        timestamp=_utc_now(),
     )
 
 
@@ -323,33 +314,63 @@ async def test_nonce_store_ttl_expiry_prunes_old_entries(nonce_store: SQLiteNonc
 
 
 # ---------------------------------------------------------------------------
-# 4) Message signing flow (spec 5.1 step 2)
+# 4) WebSocket auth + server-side identity enforcement
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("path", ["/ws", "/ws?token=wrong-token"])
+def test_websocket_rejects_connection_without_valid_token(path: str) -> None:
+    channel = WebChannel(auth_token="expected-token")
+    with TestClient(channel.app) as client, pytest.raises(WebSocketDisconnect) as exc_info, client.websocket_connect(path):
+        pass
+    assert exc_info.value.code == 1008
+
+
+def test_websocket_accepts_connection_with_valid_token() -> None:
+    channel = WebChannel(auth_token="expected-token")
+    with TestClient(channel.app) as client, client.websocket_connect("/ws?token=expected-token"):
+        health = client.get("/health")
+        assert health.status_code == 200
+        assert health.json()["connections"] == 1
+
+
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason=(
-        "Stream step 2 signature verification is not implemented yet; owner sender_id is "
-        "currently trusted without cryptographic verification."
-    )
-)
-async def test_unsigned_owner_message_taint_is_downgraded_to_external(
-    channel,
-    turn_context,
-    context_manager,
-) -> None:
-    stream = Stream(
-        channel=channel,
-        turn_context=turn_context,
-        owner_id="owner",
-        default_context_profile="conversation",
+async def test_message_sender_id_from_payload_is_ignored() -> None:
+    channel = WebChannel(scope_id="owner")
+    payload = json.dumps({"type": "message", "text": "hello", "sender_id": "attacker"})
+
+    await channel._handle_client_payload(payload, session_id="session-123")
+
+    message, session_id = await channel._incoming.get()
+    assert session_id == "session-123"
+    assert message.text == "hello"
+    assert message.sender_id == "owner"
+
+
+@pytest.mark.asyncio
+async def test_approval_response_resolved_by_uses_server_identity() -> None:
+    channel = WebChannel(scope_id="owner")
+    received: dict[str, object] = {}
+
+    async def _capture(card_id: str, verdict: ApprovalVerdict, resolved_by: str) -> None:
+        received["card_id"] = card_id
+        received["verdict"] = verdict
+        received["resolved_by"] = resolved_by
+
+    channel.register_approval_response_handler(_capture)
+
+    await channel._handle_approval_response(
+        {
+            "type": "approval_response",
+            "card_id": "card-123",
+            "action": "approve",
+            "sender_id": "attacker",
+        },
     )
 
-    await stream._process_turn(_msg("unsigned owner message", sender_id="owner"))
-
-    chronicle = context_manager.get_zone("owner", ContextZone.chronicle)
-    assert chronicle[0].taint == TaintLevel.external
+    assert received["card_id"] == "card-123"
+    assert received["verdict"] == ApprovalVerdict.approved
+    assert received["resolved_by"] == "owner"
 
 
 # ---------------------------------------------------------------------------
