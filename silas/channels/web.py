@@ -10,9 +10,12 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+import httpx
 import uvicorn
+import yaml
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, field_validator
 
 from silas.models.approval import ApprovalVerdict
 from silas.models.messages import ChannelMessage, utc_now
@@ -30,6 +33,20 @@ type ApprovalResponseHandler = Callable[[str, ApprovalVerdict, str], Awaitable[N
 logger = logging.getLogger(__name__)
 
 
+class OnboardPayload(BaseModel):
+    agent_name: str
+    api_key: str
+    owner_name: str
+
+    @field_validator("agent_name", "api_key", "owner_name")
+    @classmethod
+    def _validate_not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("value must not be empty")
+        return cleaned
+
+
 class WebChannel(ChannelAdapterCore):
     channel_name = "web"
 
@@ -40,12 +57,14 @@ class WebChannel(ChannelAdapterCore):
         web_dir: str | Path = "web",
         scope_id: str = "owner",
         auth_token: str | None = None,
+        config_path: str | Path = "config/silas.yaml",
     ) -> None:
         self.host = host
         self.port = port
         self.scope_id = scope_id
         self._auth_token = auth_token
         self.web_dir = Path(web_dir)
+        self._config_path = Path(config_path)
         self._incoming: asyncio.Queue[tuple[ChannelMessage, str]] = asyncio.Queue()
         self._websocket: WebSocket | None = None
         self._websockets_by_session: dict[str, WebSocket] = {}
@@ -73,6 +92,7 @@ class WebChannel(ChannelAdapterCore):
             )
 
         self._setup_push_routes()
+        self._setup_onboarding_routes()
 
         @self.app.websocket("/ws")
         async def ws_endpoint(websocket: WebSocket) -> None:
@@ -178,6 +198,70 @@ class WebChannel(ChannelAdapterCore):
                     "count": len(self._push_subscriptions),
                 },
             )
+
+    def _setup_onboarding_routes(self) -> None:
+        @self.app.post("/api/onboard")
+        async def onboard(payload: OnboardPayload) -> JSONResponse:
+            is_valid_key = await self._validate_openrouter_key(payload.api_key)
+            if not is_valid_key:
+                raise HTTPException(status_code=400, detail="Invalid OpenRouter API key")
+
+            try:
+                self._write_onboarding_config(payload)
+            except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+                logger.warning("Failed to persist onboarding config", exc_info=True)
+                raise HTTPException(
+                    status_code=500,
+                    detail="Unable to persist onboarding settings",
+                ) from exc
+
+            return JSONResponse({"status": "ok"})
+
+    async def _validate_openrouter_key(self, api_key: str) -> bool:
+        headers = {"Authorization": f"Bearer {api_key}"}
+        timeout = httpx.Timeout(8.0)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get("https://openrouter.ai/api/v1/models", headers=headers)
+        except httpx.HTTPError:
+            logger.warning("OpenRouter key validation request failed", exc_info=True)
+            return False
+        return response.status_code == 200
+
+    def _write_onboarding_config(self, payload: OnboardPayload) -> None:
+        config_data = self._load_config_mapping()
+        silas_section = config_data.get("silas")
+        if silas_section is None:
+            silas_section = {}
+            config_data["silas"] = silas_section
+        if not isinstance(silas_section, dict):
+            raise ValueError("config top-level 'silas' key must be a mapping")
+
+        models_section = silas_section.get("models")
+        if models_section is None:
+            models_section = {}
+            silas_section["models"] = models_section
+        if not isinstance(models_section, dict):
+            raise ValueError("config 'silas.models' key must be a mapping")
+
+        silas_section["agent_name"] = payload.agent_name
+        silas_section["owner_name"] = payload.owner_name
+        models_section["api_key"] = payload.api_key
+
+        self._config_path.parent.mkdir(parents=True, exist_ok=True)
+        rendered = yaml.safe_dump(config_data, sort_keys=False)
+        self._config_path.write_text(rendered, encoding="utf-8")
+
+    def _load_config_mapping(self) -> dict[str, object]:
+        if not self._config_path.exists():
+            return {}
+
+        loaded = yaml.safe_load(self._config_path.read_text(encoding="utf-8"))
+        if loaded is None:
+            return {}
+        if not isinstance(loaded, dict):
+            raise ValueError("config file must contain a top-level mapping")
+        return loaded
 
     async def _check_ws_auth(self, websocket: WebSocket) -> bool:
         """Reject WebSocket connections that fail token auth. Returns True if authorized."""

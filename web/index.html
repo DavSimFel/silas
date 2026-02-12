@@ -345,6 +345,61 @@
 
     <div id="live-region" class="sr-only-live" aria-live="polite" aria-atomic="true"></div>
 
+    <div id="onboarding-overlay" class="onboarding-overlay" hidden>
+      <div class="onboarding-backdrop" aria-hidden="true"></div>
+      <section
+        id="onboarding-card"
+        class="onboarding-card glass-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="onboarding-title"
+      >
+        <p id="onboarding-step-indicator" class="onboarding-step-indicator">Step 1 of 2</p>
+        <form id="onboarding-form" class="onboarding-form">
+          <div id="onboarding-step-1" class="onboarding-step" data-onboarding-step="1">
+            <h2 id="onboarding-title" class="onboarding-title">What should I call myself?</h2>
+            <p class="onboarding-copy">You can change this later.</p>
+            <label for="onboarding-agent-name" class="onboarding-label">Agent name</label>
+            <input
+              id="onboarding-agent-name"
+              class="onboarding-input"
+              type="text"
+              value="Silas"
+              minlength="1"
+              maxlength="64"
+              autocomplete="off"
+            />
+            <div class="onboarding-actions">
+              <button id="onboarding-next-btn" type="button" class="card-cta-primary">Next</button>
+            </div>
+          </div>
+
+          <div
+            id="onboarding-step-2"
+            class="onboarding-step hidden"
+            data-onboarding-step="2"
+            aria-hidden="true"
+          >
+            <h2 class="onboarding-title">OpenRouter API key</h2>
+            <p class="onboarding-copy">Used to validate and enable model access.</p>
+            <label for="onboarding-api-key" class="onboarding-label">API key</label>
+            <input
+              id="onboarding-api-key"
+              class="onboarding-input"
+              type="password"
+              minlength="1"
+              autocomplete="off"
+            />
+            <div class="onboarding-actions">
+              <button id="onboarding-back-btn" type="button" class="card-cta-secondary">Back</button>
+              <button id="onboarding-finish-btn" type="submit" class="card-cta-primary">Finish</button>
+            </div>
+          </div>
+          <p id="onboarding-error" class="onboarding-error" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+    </div>
+
     <script src="/app.js" defer></script>
   </body>
 </html>

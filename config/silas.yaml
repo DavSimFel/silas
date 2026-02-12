@@ -1,5 +1,7 @@
 silas:
   owner_id: "owner"
+  agent_name: "Silas"
+  owner_name: ""
   data_dir: "./data"
 
   models:

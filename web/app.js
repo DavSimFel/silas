@@ -84,6 +84,18 @@ const newSideSessionBtn = document.getElementById("new-side-session-btn");
 const notificationPromptEl = document.getElementById("notification-prompt");
 const notificationEnableBtn = document.getElementById("notification-enable-btn");
 const notificationDismissBtn = document.getElementById("notification-dismiss-btn");
+const onboardingOverlay = document.getElementById("onboarding-overlay");
+const onboardingCard = document.getElementById("onboarding-card");
+const onboardingForm = document.getElementById("onboarding-form");
+const onboardingStepIndicator = document.getElementById("onboarding-step-indicator");
+const onboardingStepOne = document.getElementById("onboarding-step-1");
+const onboardingStepTwo = document.getElementById("onboarding-step-2");
+const onboardingAgentNameInput = document.getElementById("onboarding-agent-name");
+const onboardingApiKeyInput = document.getElementById("onboarding-api-key");
+const onboardingNextBtn = document.getElementById("onboarding-next-btn");
+const onboardingBackBtn = document.getElementById("onboarding-back-btn");
+const onboardingFinishBtn = document.getElementById("onboarding-finish-btn");
+const onboardingError = document.getElementById("onboarding-error");
 
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -102,12 +114,16 @@ let shortcutOpen = false;
 let activeStreamMessageEl = null;
 let hasRequestedNotificationPermission = false;
 let notificationPromptDismissed = false;
+let onboardingStep = 1;
+let onboardingBusy = false;
+let onboardingOpen = false;
 
 const LONG_MESSAGE_THRESHOLD = 300;
 const STREAM_CHUNK_TYPES = new Set(["stream_chunk", "message_chunk"]);
 const STREAM_DONE_TYPES = new Set(["message_done", "stream_done", "completion_done"]);
 const copyResetTimers = new WeakMap();
 const NOTIFICATION_PROMPT_DISMISS_KEY = "silas.push.prompt.dismissed";
+const ONBOARDING_FLAG_KEY = "silas_onboarded";
 const SESSION_MAIN_KEY = "main";
 const sessionsByKey = new Map();
 let activeSessionKey = SESSION_MAIN_KEY;
@@ -185,6 +201,200 @@ const SLASH_COMMANDS = [
     run: () => openShortcutOverlay(),
   },
 ];
+
+function readLocalStorageValue(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeLocalStorageValue(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch (_) {}
+}
+
+function isOnboardingComplete() {
+  return readLocalStorageValue(ONBOARDING_FLAG_KEY) === "true";
+}
+
+function setOnboardingStep(step) {
+  onboardingStep = step === 2 ? 2 : 1;
+  const firstStepActive = onboardingStep === 1;
+  onboardingStepIndicator.textContent = `Step ${onboardingStep} of 2`;
+  onboardingStepOne.classList.toggle("hidden", !firstStepActive);
+  onboardingStepOne.setAttribute("aria-hidden", String(!firstStepActive));
+  onboardingStepTwo.classList.toggle("hidden", firstStepActive);
+  onboardingStepTwo.setAttribute("aria-hidden", String(firstStepActive));
+}
+
+function setOnboardingOpen(open) {
+  onboardingOpen = open;
+  if (!onboardingOverlay) return;
+
+  if (open) {
+    onboardingOverlay.hidden = false;
+    requestAnimationFrame(() => {
+      onboardingOverlay.classList.add("is-visible");
+    });
+    return;
+  }
+
+  onboardingOverlay.classList.remove("is-visible");
+  const delay = prefersReducedMotion.matches ? 0 : MOTION.fast;
+  setTimeout(() => {
+    if (!onboardingOpen) {
+      onboardingOverlay.hidden = true;
+    }
+  }, delay);
+}
+
+function setOnboardingBusy(isBusy) {
+  onboardingBusy = isBusy;
+  if (onboardingNextBtn) onboardingNextBtn.disabled = isBusy;
+  if (onboardingBackBtn) onboardingBackBtn.disabled = isBusy;
+  if (onboardingFinishBtn) {
+    onboardingFinishBtn.disabled = isBusy;
+    onboardingFinishBtn.textContent = isBusy ? "Finishing…" : "Finish";
+  }
+}
+
+function setOnboardingError(message) {
+  if (!onboardingError) return;
+  const text = String(message ?? "").trim();
+  onboardingError.textContent = text;
+  onboardingError.classList.toggle("is-visible", text.length > 0);
+}
+
+function ownerNameForOnboarding() {
+  const storedOwner = readLocalStorageValue("silas_owner_name");
+  if (storedOwner && storedOwner.trim()) {
+    return storedOwner.trim();
+  }
+  return "owner";
+}
+
+async function submitOnboarding() {
+  if (onboardingBusy) return;
+
+  const normalizedName = (onboardingAgentNameInput?.value || "").trim() || "Silas";
+  if (onboardingAgentNameInput) onboardingAgentNameInput.value = normalizedName;
+
+  const apiKey = (onboardingApiKeyInput?.value || "").trim();
+  if (!apiKey) {
+    setOnboardingError("Please enter your OpenRouter API key.");
+    onboardingApiKeyInput?.focus();
+    return;
+  }
+
+  setOnboardingBusy(true);
+  setOnboardingError("");
+
+  try {
+    const response = await fetch("/api/onboard", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        agent_name: normalizedName,
+        api_key: apiKey,
+        owner_name: ownerNameForOnboarding(),
+      }),
+    });
+
+    if (!response.ok) {
+      let message = "Unable to complete onboarding.";
+      try {
+        const payload = await response.json();
+        if (payload?.detail && typeof payload.detail === "string") {
+          message = payload.detail;
+        }
+      } catch (_) {}
+      throw new Error(message);
+    }
+
+    writeLocalStorageValue(ONBOARDING_FLAG_KEY, "true");
+    setOnboardingOpen(false);
+    focusComposer();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to complete onboarding.";
+    setOnboardingError(message);
+  } finally {
+    setOnboardingBusy(false);
+  }
+}
+
+function initOnboarding() {
+  if (
+    !onboardingOverlay ||
+    !onboardingCard ||
+    !onboardingForm ||
+    !onboardingStepIndicator ||
+    !onboardingStepOne ||
+    !onboardingStepTwo ||
+    !onboardingAgentNameInput ||
+    !onboardingApiKeyInput
+  ) {
+    return true;
+  }
+
+  onboardingNextBtn?.addEventListener("click", () => {
+    if (onboardingBusy) return;
+
+    const normalizedName = onboardingAgentNameInput.value.trim();
+    if (!normalizedName) {
+      setOnboardingError("Please choose an agent name.");
+      onboardingAgentNameInput.focus();
+      return;
+    }
+
+    onboardingAgentNameInput.value = normalizedName;
+    setOnboardingError("");
+    setOnboardingStep(2);
+    onboardingApiKeyInput.focus();
+  });
+
+  onboardingBackBtn?.addEventListener("click", () => {
+    if (onboardingBusy) return;
+    setOnboardingError("");
+    setOnboardingStep(1);
+    onboardingAgentNameInput.focus();
+  });
+
+  onboardingForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (onboardingStep === 1) {
+      onboardingNextBtn?.click();
+      return;
+    }
+    void submitOnboarding();
+  });
+
+  setOnboardingStep(1);
+  setOnboardingBusy(false);
+  setOnboardingError("");
+
+  if (isOnboardingComplete()) {
+    setOnboardingOpen(false);
+    return true;
+  }
+
+  setOnboardingOpen(true);
+  const focusDelay = prefersReducedMotion.matches ? 0 : MOTION.fast;
+  setTimeout(() => {
+    if (onboardingOpen) {
+      onboardingAgentNameInput.focus();
+      onboardingAgentNameInput.setSelectionRange(
+        onboardingAgentNameInput.value.length,
+        onboardingAgentNameInput.value.length,
+      );
+    }
+  }, focusDelay);
+  return false;
+}
 
 // --- Composer state ---
 input.addEventListener("input", () => {
