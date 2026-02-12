@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from binascii import Error as BinasciiError
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal
@@ -23,7 +24,7 @@ def _validate_base64_bytes(value: str | bytes) -> bytes:
     if isinstance(value, str):
         try:
             return base64.b64decode(value.encode("utf-8"), validate=True)
-        except Exception as exc:  # pragma: no cover - exact decoder errors are implementation detail
+        except BinasciiError as exc:  # pragma: no cover - exact decoder errors are implementation detail
             raise ValueError("invalid base64 data") from exc
     raise TypeError("Base64Bytes must be provided as bytes or base64 string")
 
