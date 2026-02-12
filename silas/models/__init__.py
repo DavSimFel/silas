@@ -39,6 +39,16 @@ from silas.models.context import (
     TokenBudget,
 )
 from silas.models.draft import DraftReview, DraftVerdict
+from silas.models.execution import (
+    ExecutionEnvelope,
+    ExecutionResult,
+    ExecutorAgentOutput,
+    ExecutorToolCall,
+    Sandbox,
+    SandboxConfig,
+    VerificationReport,
+    VerificationResult,
+)
 from silas.models.gates import (
     ALLOWED_MUTATIONS,
     AccessLevel,
@@ -107,6 +117,14 @@ __all__ = [
     "ContextItem",
     "ContextSubscription",
     "TokenBudget",
+    "SandboxConfig",
+    "Sandbox",
+    "ExecutionEnvelope",
+    "ExecutionResult",
+    "ExecutorToolCall",
+    "ExecutorAgentOutput",
+    "VerificationResult",
+    "VerificationReport",
     "DraftVerdict",
     "DraftReview",
     "AuthStrategy",

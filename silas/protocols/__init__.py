@@ -3,7 +3,7 @@ from silas.protocols.audit import AuditLog
 from silas.protocols.channels import ChannelAdapterCore, RichCardChannel
 from silas.protocols.connections import ConnectionManager
 from silas.protocols.context import ContextManager
-from silas.protocols.execution import EphemeralExecutor, SandboxManager
+from silas.protocols.execution import EphemeralExecutor, KeyManager, SandboxManager
 from silas.protocols.gates import GateCheckProvider, GateRunner
 from silas.protocols.goals import GoalManager
 from silas.protocols.memory import (
@@ -31,6 +31,7 @@ __all__ = [
     "NonceStore",
     "ApprovalManager",
     "EphemeralExecutor",
+    "KeyManager",
     "SandboxManager",
     "GateCheckProvider",
     "GateRunner",
