@@ -1,15 +1,25 @@
-# Specs Companion Index
+# Specs
 
-This folder holds companion documents extracted from `specs.md` to keep the core spec shorter and easier to scan.
+Authoritative behavioral specifications for the Silas runtime.
 
-- `project-structure.md` — Section 1 project tree and onboarding/frontend structure
-- `models.md` — Section 3 data models (`3.1` to `3.12`)
-- `protocols.md` — Section 4 protocol contracts (`4.1` to `4.24`)
-- `examples.md` — Section 13 example plans
-- `testing.md` — Section 14 testing strategy
-- `security-model.md` — Section 15 security model summary and prohibited-capability matrix
-- `adrs.md` — Section 16 architecture decisions and tradeoffs
-- `operations-roadmap.md` — Sections 17-18 operations, reliability, and roadmap
-- `benchmarking.md` — Sections 19-20 context eviction feedback loop and agent/skill benchmarking
+These files define **what the system must do** — contracts between design and implementation.
+For **what is currently implemented**, see `STATUS.md` in the repo root.
 
-Section numbering is preserved inside each companion file for stable cross-references.
+## Files
+
+| File | Content |
+|------|---------|
+| `adrs.md` | Architecture Decision Records — historical rationale |
+| `security-model.md` | Cross-cutting security model (layers, enforcement, LLM boundaries) |
+| `protocols.md` | Protocol signatures + behavioral requirements spanning multiple components |
+| `models.md` | Pydantic model schemas, field constraints, canonical formats |
+| `benchmarking.md` | Eviction calibration + benchmarking framework (§19-20, not yet implemented) |
+| `operations-roadmap.md` | Release phases and migration targets |
+| `examples.md` | Example plans and configuration |
+
+## What moved to source
+
+- **Project structure** → deleted (use `find` or your IDE)
+- **Testing strategy** → `tests/README.md` (lives with the tests)
+- **Protocol behavioral docs** → being migrated to docstrings on `silas/protocols/*.py`
+- **Model field docs** → being migrated to docstrings on `silas/models/*.py`
