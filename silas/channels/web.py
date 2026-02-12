@@ -94,11 +94,7 @@ class WebChannel(ChannelAdapterCore):
             connection_key = self._connection_key(websocket)
 
             await websocket.accept()
-            async with self._ws_lock:
-                self._websockets_by_session[session_id] = websocket
-                self._active_sessions_by_connection.setdefault(connection_key, set()).add(session_id)
-                if session_id == self.scope_id or self._websocket is None:
-                    self._websocket = websocket
+            await self._register_websocket(session_id, connection_key, websocket)
 
             try:
                 while True:
@@ -107,21 +103,7 @@ class WebChannel(ChannelAdapterCore):
             except WebSocketDisconnect:
                 pass
             finally:
-                async with self._ws_lock:
-                    current = self._websockets_by_session.get(session_id)
-                    if current is websocket:
-                        self._websockets_by_session.pop(session_id, None)
-
-                    sessions = self._active_sessions_by_connection.get(connection_key)
-                    if sessions is not None:
-                        sessions.discard(session_id)
-                        if not sessions:
-                            self._active_sessions_by_connection.pop(connection_key, None)
-
-                    if self._websocket is websocket:
-                        self._websocket = self._websockets_by_session.get(self.scope_id)
-                        if self._websocket is None and self._websockets_by_session:
-                            self._websocket = next(iter(self._websockets_by_session.values()))
+                await self._unregister_websocket(session_id, connection_key, websocket)
 
         if self.web_dir.exists():
 
@@ -132,6 +114,36 @@ class WebChannel(ChannelAdapterCore):
             @self.app.get("/{asset_path:path}")
             async def static_asset(asset_path: str) -> Response:
                 return self._serve_static(asset_path)
+
+    async def _register_websocket(
+        self, session_id: str, connection_key: str, websocket: WebSocket,
+    ) -> None:
+        """Track a new websocket connection in session and connection maps."""
+        async with self._ws_lock:
+            self._websockets_by_session[session_id] = websocket
+            self._active_sessions_by_connection.setdefault(connection_key, set()).add(session_id)
+            if session_id == self.scope_id or self._websocket is None:
+                self._websocket = websocket
+
+    async def _unregister_websocket(
+        self, session_id: str, connection_key: str, websocket: WebSocket,
+    ) -> None:
+        """Clean up websocket tracking on disconnect, promoting next available socket."""
+        async with self._ws_lock:
+            current = self._websockets_by_session.get(session_id)
+            if current is websocket:
+                self._websockets_by_session.pop(session_id, None)
+
+            sessions = self._active_sessions_by_connection.get(connection_key)
+            if sessions is not None:
+                sessions.discard(session_id)
+                if not sessions:
+                    self._active_sessions_by_connection.pop(connection_key, None)
+
+            if self._websocket is websocket:
+                self._websocket = self._websockets_by_session.get(self.scope_id)
+                if self._websocket is None and self._websockets_by_session:
+                    self._websocket = next(iter(self._websockets_by_session.values()))
 
     def _serve_static(self, asset_path: str) -> Response:
         asset = asset_path.lstrip("/")

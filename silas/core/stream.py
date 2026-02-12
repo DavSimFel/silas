@@ -125,34 +125,8 @@ class Stream:
         session_id = self._ensure_session_id()
 
         await self._audit("phase1a_noop", step=0, note="active gates precompile skipped")
-        high_confidence_suggestions: list[SuggestionProposal] = []
-        suggestion_engine = self._suggestion_engine()
-        if suggestion_engine is None:
-            await self._audit("phase1a_noop", step=0.5, note="review/proactive queue skipped")
-        else:
-            idle_suggestions = await suggestion_engine.generate_idle(
-                self.turn_context.scope_id,
-                datetime.now(timezone.utc),
-            )
-            high_confidence_suggestions = [
-                suggestion
-                for suggestion in idle_suggestions
-                if suggestion.confidence > 0.80
-            ]
-            low_confidence_suggestions = [
-                suggestion
-                for suggestion in idle_suggestions
-                if suggestion.confidence <= 0.80
-            ]
-            for suggestion in low_confidence_suggestions:
-                await self._push_suggestion_to_side_panel(connection_id, suggestion)
-            await self._audit(
-                "proactive_queue_reviewed",
-                step=0.5,
-                surfaced=len(idle_suggestions),
-                high_confidence=len(high_confidence_suggestions),
-                side_panel=len(low_confidence_suggestions),
-            )
+        # Collect high-confidence suggestions to prepend to response later
+        high_confidence_suggestions = await self._collect_suggestions(connection_id)
         await self._audit("phase1a_noop", step=1, note="input gates skipped")
 
         # Step 2: sign/taint classification
@@ -184,59 +158,11 @@ class Stream:
         if self.turn_context.chronicle_store is not None:
             await self.turn_context.chronicle_store.append(self.turn_context.scope_id, chronicle_item)
 
-        # Step 4: auto-retrieve memories
-        if self.turn_context.memory_store is not None and context_manager is not None:
-            recalled_keyword = await self.turn_context.memory_store.search_keyword(message.text, limit=3)
+        # Step 4: auto-retrieve relevant memories and inject into context
+        await self._auto_retrieve_memories(message.text, context_manager, signed.taint, turn_number)
 
-            recalled_entity: list[MemoryItem] = []
-            mentions = self._extract_mentions(message.text)
-            if mentions:
-                entity_candidates = await self.turn_context.memory_store.search_by_type(
-                    MemoryType.entity,
-                    limit=50,
-                )
-                recalled_entity = [
-                    item
-                    for item in entity_candidates
-                    if self._memory_matches_any_mention(item, mentions)
-                ]
-
-            recalled_unique: dict[str, MemoryItem] = {}
-            for item in [*recalled_keyword, *recalled_entity]:
-                recalled_unique.setdefault(item.memory_id, item)
-
-            for item in recalled_unique.values():
-                await self.turn_context.memory_store.increment_access(item.memory_id)
-                context_manager.add(
-                    self.turn_context.scope_id,
-                    ContextItem(
-                        ctx_id=f"memory:{item.memory_id}",
-                        zone=ContextZone.memory,
-                        content=item.content,
-                        token_count=_counter.count(item.content),
-                        created_at=datetime.now(timezone.utc),
-                        turn_number=turn_number,
-                        source="memory:auto_retrieve",
-                        taint=item.taint,
-                        kind="memory",
-                    ),
-                )
-
-        # Step 4.5: Raw memory ingest
-        if self.turn_context.memory_store is not None:
-            await self.turn_context.memory_store.store_raw(
-                MemoryItem(
-                    memory_id=f"raw:{self.turn_context.scope_id}:{turn_number}:{uuid.uuid4().hex}",
-                    content=message.text,
-                    memory_type=MemoryType.episode,
-                    reingestion_tier=ReingestionTier.low_reingestion,
-                    taint=signed.taint,
-                    created_at=datetime.now(timezone.utc),
-                    updated_at=datetime.now(timezone.utc),
-                    session_id=session_id,
-                    source_kind="conversation_raw",
-                ),
-            )
+        # Step 4.5: persist raw conversation episode for future recall
+        await self._ingest_raw_memory(message.text, signed.taint, session_id, turn_number)
 
         await self._audit("phase1a_noop", step=5, note="budget enforcement deferred to post-response")
         available_skills = self._available_skill_names()
@@ -269,88 +195,19 @@ class Stream:
             context_manager.set_profile(self.turn_context.scope_id, routed.context_profile)
 
         response_text = self._route_response_text(routed)
-        plan_flow_payload = {
-            "actions_seen": 0,
-            "skills_executed": 0,
-            "skills_skipped": 0,
-            "approval_requested": 0,
-            "approval_approved": 0,
-            "approval_declined": 0,
-        }
-        if routed.route == "planner":
-            plan_actions = self._extract_plan_actions(routed)
-            plan_flow_payload["actions_seen"] = len(plan_actions)
-            if plan_actions:
-                work_exec_summary = await self._execute_plan_actions(
-                    plan_actions,
-                    turn_number=turn_number,
-                    continuation_of=routed.continuation_of,
-                )
-                if work_exec_summary is not None:
-                    response_text = work_exec_summary
-                else:
-                    response_text, plan_flow_payload = await self._execute_planner_skill_actions(
-                        plan_actions=plan_actions,
-                        connection_id=connection_id,
-                        turn_number=turn_number,
-                        fallback_response=response_text,
-                    )
-            else:
-                await self._audit("planner_stub_used", turn_number=turn_number, reason=routed.reason)
-        await self._audit(
-            "plan_approval_flow_checked",
-            step=12,
-            turn_number=turn_number,
-            **plan_flow_payload,
+        # Handle planner route: break into plan actions and execute
+        response_text = await self._handle_planner_route(
+            routed, response_text, connection_id, turn_number,
         )
         response_text = self._prepend_high_confidence_suggestions(
             response_text,
             high_confidence_suggestions,
         )
 
-        gate_results_payload: list[dict[str, object]] = []
-        warning_payload: list[dict[str, object]] = []
-        blocked_gate_names: list[str] = []
-        if self.output_gate_runner is not None:
-            response_text, gate_results = self.output_gate_runner.evaluate(
-                response_text=response_text,
-                response_taint=signed.taint,
-                sender_id=message.sender_id,
-            )
-            gate_results_payload = [
-                result.model_dump(mode="json")
-                for result in gate_results
-            ]
-            warning_payload = [
-                result.model_dump(mode="json")
-                for result in gate_results
-                if "warn" in result.flags
-            ]
-            blocked_gate_names = [
-                result.gate_name
-                for result in gate_results
-                if result.action == "block"
-            ]
-
-        await self._audit(
-            "output_gates_evaluated",
-            turn_number=turn_number,
-            results=gate_results_payload,
-            configured=self.output_gate_runner is not None,
+        # Evaluate output gates — may block or modify response
+        response_text, blocked_gate_names = await self._evaluate_output_gates(
+            response_text, signed.taint, message.sender_id, turn_number,
         )
-        if warning_payload:
-            await self._audit(
-                "output_gate_warnings",
-                turn_number=turn_number,
-                warnings=warning_payload,
-            )
-        if blocked_gate_names:
-            response_text = "I cannot share that"
-            await self._audit(
-                "output_gate_blocked",
-                turn_number=turn_number,
-                blocked_gates=blocked_gate_names,
-            )
 
         await self._audit("phase1a_noop", step=9, note="memory query processing skipped")
         await self._audit("phase1a_noop", step=10, note="memory op processing skipped")
@@ -400,6 +257,152 @@ class Stream:
         await self._audit("turn_processed", turn_number=turn_number, route=routed.route)
 
         return response_text
+
+    async def _handle_planner_route(
+        self,
+        routed: RouteDecision,
+        response_text: str,
+        connection_id: str,
+        turn_number: int,
+    ) -> str:
+        """If route is 'planner', execute plan actions and return updated response."""
+        plan_flow_payload: dict[str, object] = {
+            "actions_seen": 0, "skills_executed": 0, "skills_skipped": 0,
+            "approval_requested": 0, "approval_approved": 0, "approval_declined": 0,
+        }
+        if routed.route == "planner":
+            plan_actions = self._extract_plan_actions(routed)
+            plan_flow_payload["actions_seen"] = len(plan_actions)
+            if plan_actions:
+                work_exec_summary = await self._execute_plan_actions(
+                    plan_actions, turn_number=turn_number, continuation_of=routed.continuation_of,
+                )
+                if work_exec_summary is not None:
+                    response_text = work_exec_summary
+                else:
+                    response_text, plan_flow_payload = await self._execute_planner_skill_actions(
+                        plan_actions=plan_actions, connection_id=connection_id,
+                        turn_number=turn_number, fallback_response=response_text,
+                    )
+            else:
+                await self._audit("planner_stub_used", turn_number=turn_number, reason=routed.reason)
+        await self._audit("plan_approval_flow_checked", step=12, turn_number=turn_number, **plan_flow_payload)
+        return response_text
+
+    async def _evaluate_output_gates(
+        self,
+        response_text: str,
+        response_taint: TaintLevel,
+        sender_id: str,
+        turn_number: int,
+    ) -> tuple[str, list[str]]:
+        """Run output gates, returning (possibly modified) response and list of blocked gate names."""
+        blocked_gate_names: list[str] = []
+        if self.output_gate_runner is None:
+            await self._audit("output_gates_evaluated", turn_number=turn_number, results=[], configured=False)
+            return response_text, blocked_gate_names
+
+        response_text, gate_results = self.output_gate_runner.evaluate(
+            response_text=response_text, response_taint=response_taint, sender_id=sender_id,
+        )
+        results_payload = [r.model_dump(mode="json") for r in gate_results]
+        warnings = [r.model_dump(mode="json") for r in gate_results if "warn" in r.flags]
+        blocked_gate_names = [r.gate_name for r in gate_results if r.action == "block"]
+
+        await self._audit("output_gates_evaluated", turn_number=turn_number, results=results_payload, configured=True)
+        if warnings:
+            await self._audit("output_gate_warnings", turn_number=turn_number, warnings=warnings)
+        if blocked_gate_names:
+            response_text = "I cannot share that"
+            await self._audit("output_gate_blocked", turn_number=turn_number, blocked_gates=blocked_gate_names)
+
+        return response_text, blocked_gate_names
+
+    async def _collect_suggestions(self, connection_id: str) -> list[SuggestionProposal]:
+        """Gather idle suggestions: high-confidence ones go into response, low ones to side panel."""
+        suggestion_engine = self._suggestion_engine()
+        if suggestion_engine is None:
+            await self._audit("phase1a_noop", step=0.5, note="review/proactive queue skipped")
+            return []
+
+        idle_suggestions = await suggestion_engine.generate_idle(
+            self.turn_context.scope_id,
+            datetime.now(timezone.utc),
+        )
+        high = [s for s in idle_suggestions if s.confidence > 0.80]
+        low = [s for s in idle_suggestions if s.confidence <= 0.80]
+        for suggestion in low:
+            await self._push_suggestion_to_side_panel(connection_id, suggestion)
+        await self._audit(
+            "proactive_queue_reviewed",
+            step=0.5,
+            surfaced=len(idle_suggestions),
+            high_confidence=len(high),
+            side_panel=len(low),
+        )
+        return high
+
+    async def _auto_retrieve_memories(
+        self, text: str, context_manager: object | None, taint: TaintLevel, turn_number: int,
+    ) -> None:
+        """Search keyword + entity memories and inject matching ones into context."""
+        if self.turn_context.memory_store is None or context_manager is None:
+            return
+
+        recalled_keyword = await self.turn_context.memory_store.search_keyword(text, limit=3)
+
+        recalled_entity: list[MemoryItem] = []
+        mentions = self._extract_mentions(text)
+        if mentions:
+            entity_candidates = await self.turn_context.memory_store.search_by_type(
+                MemoryType.entity, limit=50,
+            )
+            recalled_entity = [
+                item for item in entity_candidates
+                if self._memory_matches_any_mention(item, mentions)
+            ]
+
+        # Deduplicate by memory_id, preserving first occurrence
+        recalled_unique: dict[str, MemoryItem] = {}
+        for item in [*recalled_keyword, *recalled_entity]:
+            recalled_unique.setdefault(item.memory_id, item)
+
+        for item in recalled_unique.values():
+            await self.turn_context.memory_store.increment_access(item.memory_id)
+            context_manager.add(
+                self.turn_context.scope_id,
+                ContextItem(
+                    ctx_id=f"memory:{item.memory_id}",
+                    zone=ContextZone.memory,
+                    content=item.content,
+                    token_count=_counter.count(item.content),
+                    created_at=datetime.now(timezone.utc),
+                    turn_number=turn_number,
+                    source="memory:auto_retrieve",
+                    taint=item.taint,
+                    kind="memory",
+                ),
+            )
+
+    async def _ingest_raw_memory(
+        self, text: str, taint: TaintLevel, session_id: str, turn_number: int,
+    ) -> None:
+        """Store raw conversation text as an episode memory for future retrieval."""
+        if self.turn_context.memory_store is None:
+            return
+        await self.turn_context.memory_store.store_raw(
+            MemoryItem(
+                memory_id=f"raw:{self.turn_context.scope_id}:{turn_number}:{uuid.uuid4().hex}",
+                content=text,
+                memory_type=MemoryType.episode,
+                reingestion_tier=ReingestionTier.low_reingestion,
+                taint=taint,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+                session_id=session_id,
+                source_kind="conversation_raw",
+            ),
+        )
 
     async def _audit(self, event: str, **data: object) -> None:
         if self.turn_context.audit is None:

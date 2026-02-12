@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import hmac
-from hashlib import sha256
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from hashlib import sha256
 from typing import AsyncIterator
 
 from silas.models.agents import AgentResponse, InteractionMode, InteractionRegister, RouteDecision
@@ -14,7 +14,13 @@ from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import ChannelMessage, TaintLevel
 from silas.models.personality import AxisProfile, MoodState, PersonaState, VoiceConfig
 from silas.models.proactivity import SuggestionProposal
-from silas.models.work import BudgetUsed, VerificationCheck, WorkItem, WorkItemResult, WorkItemStatus
+from silas.models.work import (
+    BudgetUsed,
+    VerificationCheck,
+    WorkItem,
+    WorkItemResult,
+    WorkItemStatus,
+)
 from silas.stubs import InMemoryAuditLog as InMemoryAuditLog  # noqa: PLC0414
 
 

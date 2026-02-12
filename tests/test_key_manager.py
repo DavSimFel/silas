@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from silas.core.key_manager import SilasKeyManager
 
 

@@ -91,54 +91,63 @@ class SilasVerificationRunner:
         output: str,
         exit_code: int | None,
     ) -> tuple[bool, str]:
+        """Evaluate output against expectation. Checks are tried in priority order."""
         normalized = output.strip()
 
         if expect.exit_code is not None:
-            passed = exit_code == expect.exit_code
-            return passed, self._reason(passed, f"expected exit_code={expect.exit_code}, got {exit_code}")
-
+            return self._eval_exit_code(expect.exit_code, exit_code)
         if expect.equals is not None:
-            passed = normalized == expect.equals
-            return passed, self._reason(passed, "output mismatch")
-
+            return self._eval_equals(expect.equals, normalized)
         if expect.contains is not None:
-            passed = expect.contains in normalized
-            return passed, self._reason(passed, f"output missing substring {expect.contains!r}")
-
+            return self._eval_contains(expect.contains, normalized)
         if expect.regex is not None:
-            try:
-                matched = re.search(expect.regex, normalized, flags=re.MULTILINE) is not None
-            except re.error as exc:
-                return False, f"invalid regex: {exc}"
-            return matched, self._reason(matched, f"output does not match regex {expect.regex!r}")
-
+            return self._eval_regex(expect.regex, normalized)
         if expect.output_lt is not None:
-            parsed = self._parse_float(normalized)
-            if parsed is None:
-                return False, "output is not numeric"
-            passed = parsed < expect.output_lt
-            return passed, self._reason(passed, f"expected output < {expect.output_lt}, got {parsed}")
-
+            return self._eval_numeric_bound(normalized, expect.output_lt, "<")
         if expect.output_gt is not None:
-            parsed = self._parse_float(normalized)
-            if parsed is None:
-                return False, "output is not numeric"
-            passed = parsed > expect.output_gt
-            return passed, self._reason(passed, f"expected output > {expect.output_gt}, got {parsed}")
-
+            return self._eval_numeric_bound(normalized, expect.output_gt, ">")
         if expect.file_exists is not None:
-            try:
-                path = self._resolve_permitted_path(expect.file_exists)
-            except ValueError as exc:
-                return False, str(exc)
-            passed = path.exists()
-            return passed, self._reason(passed, f"file does not exist: {path}")
-
+            return self._eval_file_exists(expect.file_exists)
         if expect.not_empty:
             passed = normalized != ""
             return passed, self._reason(passed, "output is empty")
 
         return False, "unsupported expectation"
+
+    def _eval_exit_code(self, expected: int, actual: int | None) -> tuple[bool, str]:
+        passed = actual == expected
+        return passed, self._reason(passed, f"expected exit_code={expected}, got {actual}")
+
+    def _eval_equals(self, expected: str, output: str) -> tuple[bool, str]:
+        passed = output == expected
+        return passed, self._reason(passed, "output mismatch")
+
+    def _eval_contains(self, substring: str, output: str) -> tuple[bool, str]:
+        passed = substring in output
+        return passed, self._reason(passed, f"output missing substring {substring!r}")
+
+    def _eval_regex(self, pattern: str, output: str) -> tuple[bool, str]:
+        try:
+            matched = re.search(pattern, output, flags=re.MULTILINE) is not None
+        except re.error as exc:
+            return False, f"invalid regex: {exc}"
+        return matched, self._reason(matched, f"output does not match regex {pattern!r}")
+
+    def _eval_numeric_bound(self, output: str, bound: float, op: str) -> tuple[bool, str]:
+        """Check output as a number against a < or > bound."""
+        parsed = self._parse_float(output)
+        if parsed is None:
+            return False, "output is not numeric"
+        passed = parsed < bound if op == "<" else parsed > bound
+        return passed, self._reason(passed, f"expected output {op} {bound}, got {parsed}")
+
+    def _eval_file_exists(self, raw_path: str) -> tuple[bool, str]:
+        try:
+            path = self._resolve_permitted_path(raw_path)
+        except ValueError as exc:
+            return False, str(exc)
+        passed = path.exists()
+        return passed, self._reason(passed, f"file does not exist: {path}")
 
     def _resolve_permitted_path(self, raw_path: str) -> Path:
         input_path = Path(raw_path)
