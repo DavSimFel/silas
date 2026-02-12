@@ -24,6 +24,7 @@ dependencies = [
   "pytest-asyncio>=0.24",
   "ruff>=0.6",
   "aiosqlite>=0.22.1",
+  "apscheduler>=3.11,<4",
 ]
 
 [project.scripts]
