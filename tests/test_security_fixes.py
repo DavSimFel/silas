@@ -66,9 +66,7 @@ def test_ws_rejects_without_valid_token_when_auth_token_configured(path: str) ->
 
 def test_ws_accepts_with_valid_token_when_auth_token_configured() -> None:
     channel = WebChannel(auth_token="expected-token")
-    with TestClient(channel.app) as client, client.websocket_connect(
-        "/ws?token=expected-token",
-    ) as websocket:
+    with TestClient(channel.app) as client, client.websocket_connect("/ws?token=expected-token") as websocket:
         websocket.send_text("hello")
 
 

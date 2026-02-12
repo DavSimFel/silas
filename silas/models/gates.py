@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from silas.models.work import Expectation
+from silas.models.expectation import Expectation
 
 
 class GateType(StrEnum):
