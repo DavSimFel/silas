@@ -5,6 +5,7 @@ from typing import Protocol
 from pydantic import ValidationError
 
 from silas.models.agents import AgentResponse, InteractionMode, InteractionRegister, RouteDecision
+from silas.models.scorer import ScorerOutput
 
 
 class StructuredRunnable(Protocol):
@@ -52,6 +53,8 @@ def structured_fallback(call_name: str, default_context_profile: str) -> object:
             plan_action=None,
             needs_approval=False,
         )
+    if call_name == "scorer":
+        return ScorerOutput()
     raise RuntimeError(f"No structured fallback configured for call_name={call_name!r}")
 
 

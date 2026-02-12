@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 
 from silas.agents.proxy import build_proxy_agent
+from silas.agents.scorer import build_scorer_agent
 from silas.approval import LiveApprovalManager
 from silas.audit.sqlite_audit import SQLiteAuditLog
 from silas.channels.web import WebChannel
@@ -50,6 +51,7 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
         model=settings.models.proxy,
         default_context_profile=settings.context.default_profile,
     )
+    scorer = build_scorer_agent(model=settings.models.scorer)
 
     memory_store = SQLiteMemoryStore(db)
     chronicle_store = SQLiteChronicleStore(db)
@@ -60,6 +62,7 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
     context_manager = LiveContextManager(
         token_budget=settings.context.as_token_budget(),
         token_counter=token_counter,
+        scorer_agent=scorer,
     )
     skill_registry = SkillRegistry()
     register_builtin_skills(skill_registry)

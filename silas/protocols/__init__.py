@@ -2,7 +2,7 @@ from silas.protocols.approval import ApprovalManager, ApprovalVerifier, NonceSto
 from silas.protocols.audit import AuditLog
 from silas.protocols.channels import ChannelAdapterCore, RichCardChannel
 from silas.protocols.connections import ConnectionManager
-from silas.protocols.context import ContextManager
+from silas.protocols.context import ContextManager, ContextScorer
 from silas.protocols.execution import EphemeralExecutor, SandboxManager
 from silas.protocols.gates import GateCheckProvider, GateRunner
 from silas.protocols.goals import GoalManager
@@ -26,6 +26,7 @@ __all__ = [
     "MemoryConsolidator",
     "MemoryPortability",
     "ContextManager",
+    "ContextScorer",
     "ConnectionManager",
     "ApprovalVerifier",
     "NonceStore",

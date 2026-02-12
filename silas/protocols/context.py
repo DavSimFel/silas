@@ -26,4 +26,9 @@ class ContextManager(Protocol):
     def token_usage(self, scope_id: str) -> dict[str, int]: ...
 
 
-__all__ = ["ContextManager"]
+@runtime_checkable
+class ContextScorer(Protocol):
+    async def run(self, prompt: str) -> object: ...
+
+
+__all__ = ["ContextManager", "ContextScorer"]

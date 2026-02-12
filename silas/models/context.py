@@ -7,6 +7,7 @@ from math import floor
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from silas.models.messages import TaintLevel, utc_now
+from silas.models.scorer import ScorerGroup, ScorerOutput
 
 
 class ContextZone(str, Enum):
@@ -123,5 +124,7 @@ __all__ = [
     "ContextProfile",
     "ContextItem",
     "ContextSubscription",
+    "ScorerGroup",
+    "ScorerOutput",
     "TokenBudget",
 ]

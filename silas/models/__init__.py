@@ -63,6 +63,7 @@ from silas.models.personality import (
 from silas.models.preferences import InferredPreference, PreferenceSignal
 from silas.models.proactivity import Suggestion, SuggestionProposal
 from silas.models.review import BatchActionDecision, BatchActionItem, BatchProposal
+from silas.models.scorer import ScorerGroup, ScorerOutput
 from silas.models.sessions import Session, SessionType
 from silas.models.skills import SkillDefinition, SkillMetadata, SkillRef, SkillResult
 from silas.models.undo import UndoEntry
@@ -104,6 +105,8 @@ __all__ = [
     "MemoryItem",
     "ContextZone",
     "ContextProfile",
+    "ScorerGroup",
+    "ScorerOutput",
     "ContextItem",
     "ContextSubscription",
     "TokenBudget",

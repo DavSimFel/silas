@@ -6,11 +6,17 @@ from datetime import datetime, timezone
 from typing import AsyncIterator
 
 from silas.models.agents import AgentResponse, InteractionMode, InteractionRegister, RouteDecision
-from silas.models.context import ContextItem, ContextProfile, ContextSubscription, ContextZone
+from silas.models.context import (
+    ContextItem,
+    ContextProfile,
+    ContextSubscription,
+    ContextZone,
+)
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import ChannelMessage, TaintLevel
 from silas.models.personality import AxisProfile, MoodState, PersonaState, VoiceConfig
 from silas.models.proactivity import SuggestionProposal
+from silas.models.scorer import ScorerOutput
 from silas.models.work import BudgetUsed, WorkItem, WorkItemResult, WorkItemStatus
 from silas.stubs import InMemoryAuditLog as InMemoryAuditLog  # noqa: PLC0414
 
@@ -21,7 +27,7 @@ def _utc_now() -> datetime:
 
 @dataclass(slots=True)
 class RunResult:
-    output: RouteDecision
+    output: object
 
 
 class TestModel:
@@ -48,6 +54,28 @@ class TestModel:
             context_profile="conversation",
         )
         return RunResult(output=decision)
+
+
+@dataclass(slots=True)
+class FakeContextScorer:
+    outputs: list[ScorerOutput] = field(default_factory=list)
+    errors: list[Exception] = field(default_factory=list)
+    delay_seconds: float = 0.0
+    prompts: list[str] = field(default_factory=list)
+    calls: int = 0
+
+    async def run(self, prompt: str) -> RunResult:
+        self.calls += 1
+        self.prompts.append(prompt)
+
+        if self.delay_seconds > 0:
+            await asyncio.sleep(self.delay_seconds)
+
+        if self.errors:
+            raise self.errors.pop(0)
+        if self.outputs:
+            return RunResult(output=self.outputs.pop(0))
+        return RunResult(output=ScorerOutput())
 
 
 class FakeTokenCounter:
@@ -419,6 +447,7 @@ def sample_context_profile(name: str = "conversation") -> ContextProfile:
 
 __all__ = [
     "FakeAutonomyCalibrator",
+    "FakeContextScorer",
     "FakeSuggestionEngine",
     "FakeTokenCounter",
     "FakePersonalityEngine",
