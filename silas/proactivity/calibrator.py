@@ -88,6 +88,37 @@ class SimpleAutonomyCalibrator:
 
         return proposals
 
+    async def apply(self, proposal: dict[str, object], decision: str) -> dict[str, object]:
+        """Finalize a proposal decision and optionally roll back rejected changes.
+
+        `evaluate()` already mutates thresholds optimistically, so `approved`
+        only acknowledges the change while `rejected` must restore the previous
+        threshold for the proposal's scope/family pair.
+        """
+        scope_id, action_family = self._extract_target_from_proposal(proposal)
+        normalized_decision = decision.strip().lower()
+
+        if normalized_decision == "approved":
+            return {
+                "proposal_id": proposal.get("proposal_id"),
+                "scope_id": scope_id,
+                "action_family": action_family,
+                "decision": "approved",
+                "rolled_back": False,
+            }
+
+        if normalized_decision == "rejected":
+            self.rollback(scope_id, action_family)
+            return {
+                "proposal_id": proposal.get("proposal_id"),
+                "scope_id": scope_id,
+                "action_family": action_family,
+                "decision": "rejected",
+                "rolled_back": True,
+            }
+
+        raise ValueError("decision must be 'approved' or 'rejected'")
+
     def rollback(self, scope_id: str, action_family: str) -> None:
         history = self._change_history_by_scope.get(scope_id, {}).get(action_family)
         if not history:
@@ -139,6 +170,15 @@ class SimpleAutonomyCalibrator:
         scope_history = self._change_history_by_scope.setdefault(scope_id, {})
         family_history = scope_history.setdefault(action_family, [])
         family_history.append(previous)
+
+    def _extract_target_from_proposal(self, proposal: dict[str, object]) -> tuple[str, str]:
+        scope_id = proposal.get("scope_id")
+        action_family = proposal.get("action_family")
+        if not isinstance(scope_id, str) or not scope_id.strip():
+            raise ValueError("proposal.scope_id must be a non-empty string")
+        if not isinstance(action_family, str) or not action_family.strip():
+            raise ValueError("proposal.action_family must be a non-empty string")
+        return scope_id.strip(), action_family.strip()
 
 
 __all__ = ["SimpleAutonomyCalibrator"]

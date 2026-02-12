@@ -117,6 +117,7 @@ let notificationPromptDismissed = false;
 let onboardingStep = 1;
 let onboardingBusy = false;
 let onboardingOpen = false;
+let onboardingInitialized = false;
 
 const LONG_MESSAGE_THRESHOLD = 300;
 const STREAM_CHUNK_TYPES = new Set(["stream_chunk", "message_chunk"]);
@@ -593,6 +594,12 @@ function connect(isReconnect = reconnectAttempt > 0) {
       reconnectTimer = null;
     }
     setConnectionStatus("connected");
+    // Onboarding posts to server endpoints, so initialize it only after we
+    // know the web channel is reachable and only once across reconnects.
+    if (!onboardingInitialized) {
+      onboardingInitialized = true;
+      initOnboarding();
+    }
   });
 
   ws.addEventListener("message", (event) => {

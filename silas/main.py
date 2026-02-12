@@ -57,6 +57,7 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
         web_dir=Path("web"),
         scope_id=settings.owner_id,
         auth_token=web_cfg.auth_token,
+        data_dir=settings.data_dir,
     )
 
     proxy = build_proxy_agent(

@@ -11,6 +11,49 @@
     <link rel="icon" href="/icons/icon-192.png" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
     <link rel="stylesheet" href="/style.css" />
+    <style>
+      /* Keep onboarding isolated and centered above the app shell while preserving
+         the existing glass visual language used by other overlay surfaces. */
+      .onboarding-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 120;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: clamp(1rem, 4vw, 2rem);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity var(--dur-fast, 0.2s) var(--ease-out, ease);
+      }
+
+      .onboarding-overlay.is-visible {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .onboarding-backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(5, 10, 18, 0.55);
+      }
+
+      .onboarding-card {
+        position: relative;
+        z-index: 1;
+        width: min(560px, 100%);
+        max-height: calc(100dvh - 2rem);
+        overflow-y: auto;
+        padding: clamp(1rem, 3vw, 1.5rem);
+      }
+
+      .glass-overlay {
+        background: rgba(18, 28, 47, 0.62);
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        backdrop-filter: blur(22px);
+        -webkit-backdrop-filter: blur(22px);
+      }
+    </style>
   </head>
   <body class="h-full overflow-hidden">
     <a href="#stream" class="skip-link">Skip to content</a>

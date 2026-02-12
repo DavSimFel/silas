@@ -319,6 +319,17 @@ class TestMemoryConsolidator:
         assert stats["promoted"] == 1
         assert store.items["m-frequent"].reingestion_tier == ReingestionTier.core
 
+    @pytest.mark.asyncio
+    async def test_run_once_wraps_legacy_consolidate_behavior(self) -> None:
+        frequent = self._memory("m-run-once", content="freq", access_count=11, last_accessed=_utc_now())
+        store = InMemoryMemoryStoreForConsolidator([frequent])
+        consolidator = SilasMemoryConsolidator(store)
+
+        stats = await consolidator.run_once()
+
+        assert stats["promoted"] == 1
+        assert store.items["m-run-once"].reingestion_tier == ReingestionTier.core
+
 
 class TestAutonomyCalibrator:
     @pytest.mark.asyncio

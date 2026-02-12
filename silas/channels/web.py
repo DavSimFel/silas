@@ -64,6 +64,7 @@ class WebChannel(ChannelAdapterCore):
         scope_id: str = "owner",
         auth_token: str | None = None,
         config_path: str | Path = "config/silas.yaml",
+        data_dir: str | Path | None = None,
     ) -> None:
         self.host = host
         self.port = port
@@ -71,6 +72,7 @@ class WebChannel(ChannelAdapterCore):
         self._auth_token = auth_token
         self.web_dir = Path(web_dir)
         self._config_path = Path(config_path)
+        self._data_dir = Path(data_dir) if data_dir is not None else None
         self._incoming: asyncio.Queue[tuple[ChannelMessage, str]] = asyncio.Queue()
         self._websocket: WebSocket | None = None
         self._websockets_by_session: dict[str, WebSocket] = {}
@@ -218,7 +220,9 @@ class WebChannel(ChannelAdapterCore):
         async def store_secret(ref_id: str, request: _SecretPayload) -> JSONResponse:
             from silas.secrets import SecretStore
 
-            data_dir = Path("./data")  # TODO: wire from settings
+            # Secrets must be stored in the configured runtime data directory so
+            # web onboarding and runtime secret resolution read the same store.
+            data_dir = self._secret_store_data_dir()
             store = SecretStore(data_dir)
             store.set(ref_id, request.value)
             return JSONResponse({"ref_id": ref_id, "success": True})
@@ -294,6 +298,29 @@ class WebChannel(ChannelAdapterCore):
         if not isinstance(loaded, dict):
             raise ValueError("config file must contain a top-level mapping")
         return loaded
+
+    def _secret_store_data_dir(self) -> Path:
+        """Resolve the data directory for secret storage.
+
+        Prefer explicit runtime settings when provided; otherwise fall back to
+        configured `silas.data_dir` so channel-only tests and local runs still
+        target the same secret store as the rest of the app.
+        """
+        if self._data_dir is not None:
+            return self._data_dir
+
+        try:
+            config_data = self._load_config_mapping()
+        except (OSError, ValueError, yaml.YAMLError):
+            logger.warning("Failed to read config for secrets data_dir; using default", exc_info=True)
+            return Path("./data")
+
+        silas_section = config_data.get("silas")
+        if isinstance(silas_section, dict):
+            data_dir = silas_section.get("data_dir")
+            if isinstance(data_dir, str) and data_dir.strip():
+                return Path(data_dir)
+        return Path("./data")
 
     async def _check_ws_auth(self, websocket: WebSocket) -> bool:
         """Reject WebSocket connections that fail token auth. Returns True if authorized."""
