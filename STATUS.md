@@ -66,6 +66,14 @@ Silas is a fully autonomous AI runtime — three pydantic-ai agent loops (proxy/
 
 The core gap: agents need tool loops and queue-based communication. ~1,650 LOC delta.
 
+### Code Quality Rules (ALL work items)
+- **Comments explaining WHY, not what.** A junior dev should be able to follow the code thanks to comments alone.
+- Every public class/method gets a docstring explaining purpose, not just signature.
+- Non-obvious decisions get inline `# Why:` comments.
+- No code smells, no shortcuts, no TODO-later.
+- All code must pass `uv run pytest` and `uv run ruff check silas tests` (strict, 10 rule categories, C901 max=12).
+- Type hints on everything. No `Any` unless truly unavoidable (with comment explaining why).
+
 ### WI-1: Durable Queue Store + Message Types
 **Status:** Not started  
 **Estimate:** ~400 LOC  
