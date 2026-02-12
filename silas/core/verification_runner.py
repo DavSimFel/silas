@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -45,15 +46,18 @@ class SilasVerificationRunner:
                 SandboxConfig(
                     work_dir=str(self._verify_dir),
                     network_access=check.network,
+                    env={},
+                    max_cpu_seconds=max(1, check.timeout),
                 )
             )
             sandbox_id = sandbox.sandbox_id
 
-            command = ["/bin/bash", "-lc", check.run]
+            command = self._parse_command(check.run)
             execution = await self._sandbox_manager.exec(
                 sandbox_id,
                 command,
                 timeout_seconds=check.timeout,
+                env={},
             )
             output = self._merge_output(execution.stdout, execution.stderr)
             output = self._truncate(output)
@@ -84,6 +88,12 @@ class SilasVerificationRunner:
         finally:
             if sandbox_id is not None:
                 await self._sandbox_manager.destroy(sandbox_id)
+
+    def _parse_command(self, run: str) -> list[str]:
+        parts = shlex.split(run)
+        if not parts:
+            raise ValueError("verification command must not be empty")
+        return parts
 
     def _evaluate(
         self,

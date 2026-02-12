@@ -59,7 +59,7 @@ class MarkdownPlanParser(PlanParser):
         scalar_fields = (
             "parent", "spawned_by", "follow_up_of", "domain",
             "agent", "needs_approval", "schedule", "on_stuck",
-            "on_failure", "failure_context",
+            "on_failure", "failure_context", "executor_type",
         )
         for field in scalar_fields:
             value = front_matter.get(field)

@@ -4,13 +4,19 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from silas.models.approval import ApprovalDecision, ApprovalScope, ApprovalToken, ApprovalVerdict
-from silas.models.execution import VerificationReport, VerificationResult
+from silas.models.execution import (
+    ExecutionEnvelope,
+    ExecutionResult,
+    VerificationReport,
+    VerificationResult,
+)
 from silas.models.skills import SkillDefinition
 from silas.models.work import (
     Budget,
     Expectation,
     VerificationCheck,
     WorkItem,
+    WorkItemExecutorType,
     WorkItemStatus,
     WorkItemType,
 )
@@ -40,7 +46,9 @@ def _work_item(
     item_id: str,
     *,
     title: str | None = None,
+    body: str | None = None,
     skills: list[str] | None = None,
+    executor_type: WorkItemExecutorType = WorkItemExecutorType.skill,
     depends_on: list[str] | None = None,
     verify: list[VerificationCheck] | None = None,
     status: WorkItemStatus = WorkItemStatus.pending,
@@ -51,8 +59,9 @@ def _work_item(
         id=item_id,
         type=WorkItemType.task,
         title=title or item_id,
-        body=f"Execute {item_id}",
+        body=body or f"Execute {item_id}",
         skills=skills or [],
+        executor_type=executor_type,
         depends_on=depends_on or [],
         verify=verify or [],
         status=status,
@@ -130,6 +139,24 @@ class _StubVerificationRunner:
             all_passed=not failed,
             results=results,
             failed=failed,
+        )
+
+
+class _StubEphemeralExecutor:
+    def __init__(self, *, success: bool = True, error: str | None = None) -> None:
+        self._success = success
+        self._error = error
+        self.calls: list[ExecutionEnvelope] = []
+
+    async def execute(self, envelope: ExecutionEnvelope) -> ExecutionResult:
+        self.calls.append(envelope.model_copy(deep=True))
+        return ExecutionResult(
+            execution_id=envelope.execution_id,
+            step_index=envelope.step_index,
+            success=self._success,
+            return_value="ok" if self._success else "",
+            error=self._error,
+            duration_seconds=0.05,
         )
 
 
@@ -437,6 +464,85 @@ async def test_failed_dependency_stops_downstream_execution(
     loaded_root = await work_store.get("task-b")
     assert loaded_root is not None
     assert loaded_root.status == WorkItemStatus.failed
+
+
+@pytest.mark.asyncio
+async def test_shell_executor_type_uses_registry_executor(
+    work_store: InMemoryWorkItemStore,
+    skill_executor: SkillExecutor,
+) -> None:
+    shell_executor = _StubEphemeralExecutor(success=True)
+    work_executor = LiveWorkItemExecutor(
+        skill_executor=skill_executor,
+        work_item_store=work_store,
+        approval_verifier=_StubApprovalVerifier(valid=True, reason="ok"),
+        executor_registry={WorkItemExecutorType.shell: shell_executor},
+    )
+    item = _work_item(
+        "task-shell-exec",
+        body='["echo", "hello"]',
+        executor_type=WorkItemExecutorType.shell,
+    )
+
+    result = await work_executor.execute(item)
+
+    assert result.status == WorkItemStatus.done
+    assert len(shell_executor.calls) == 1
+    call = shell_executor.calls[0]
+    assert call.action == "shell_exec"
+    assert call.args["command"] == ["echo", "hello"]
+
+
+@pytest.mark.asyncio
+async def test_python_executor_type_uses_registry_executor(
+    work_store: InMemoryWorkItemStore,
+    skill_executor: SkillExecutor,
+) -> None:
+    python_executor = _StubEphemeralExecutor(success=True)
+    work_executor = LiveWorkItemExecutor(
+        skill_executor=skill_executor,
+        work_item_store=work_store,
+        approval_verifier=_StubApprovalVerifier(valid=True, reason="ok"),
+        executor_registry={WorkItemExecutorType.python: python_executor},
+    )
+    item = _work_item(
+        "task-python-exec",
+        body="print('hello from python')",
+        executor_type=WorkItemExecutorType.python,
+    )
+
+    result = await work_executor.execute(item)
+
+    assert result.status == WorkItemStatus.done
+    assert len(python_executor.calls) == 1
+    call = python_executor.calls[0]
+    assert call.action == "python_exec"
+    assert call.args["script"] == "print('hello from python')"
+
+
+@pytest.mark.asyncio
+async def test_registry_executor_failure_marks_work_item_failed(
+    work_store: InMemoryWorkItemStore,
+    skill_executor: SkillExecutor,
+) -> None:
+    shell_executor = _StubEphemeralExecutor(success=False, error="nonzero exit")
+    work_executor = LiveWorkItemExecutor(
+        skill_executor=skill_executor,
+        work_item_store=work_store,
+        approval_verifier=_StubApprovalVerifier(valid=True, reason="ok"),
+        executor_registry={WorkItemExecutorType.shell: shell_executor},
+    )
+    item = _work_item(
+        "task-shell-fail",
+        body='["false"]',
+        executor_type=WorkItemExecutorType.shell,
+        budget=Budget(max_attempts=1),
+    )
+
+    result = await work_executor.execute(item)
+
+    assert result.status == WorkItemStatus.failed
+    assert result.last_error == "nonzero exit"
 
 
 @pytest.mark.asyncio

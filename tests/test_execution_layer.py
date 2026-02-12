@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
-from silas.execution.python import PythonExecutor
+from silas.execution.python_exec import PythonExecutor
 from silas.execution.sandbox import SubprocessSandboxManager
 from silas.execution.shell import ShellExecutor
 from silas.models.execution import ExecutionEnvelope, SandboxConfig
@@ -60,9 +61,19 @@ class TestSubprocessSandboxManager:
         mgr = SubprocessSandboxManager(base_dir=tmp_path)
         sandbox = await mgr.create(SandboxConfig(work_dir=str(tmp_path / "work")))
         result = await mgr.exec(
-            sandbox.sandbox_id, ["bash", "-c", "echo error >&2"], timeout_seconds=5,
+            sandbox.sandbox_id,
+            [sys.executable, "-c", "import sys; sys.stderr.write('error\\n')"],
+            timeout_seconds=5,
         )
         assert "error" in result.stderr
+        await mgr.destroy(sandbox.sandbox_id)
+
+    @pytest.mark.asyncio
+    async def test_exec_rejects_shell_string_command(self, tmp_path: Path) -> None:
+        mgr = SubprocessSandboxManager(base_dir=tmp_path)
+        sandbox = await mgr.create(SandboxConfig(work_dir=str(tmp_path / "work")))
+        with pytest.raises(ValueError, match="argument list"):
+            await mgr.exec(sandbox.sandbox_id, "echo hi", timeout_seconds=5)  # type: ignore[arg-type]
         await mgr.destroy(sandbox.sandbox_id)
 
     @pytest.mark.asyncio

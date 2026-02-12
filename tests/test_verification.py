@@ -41,7 +41,7 @@ def runner(tmp_path: Path, verify_dir: Path) -> SilasVerificationRunner:
 @pytest.mark.asyncio
 async def test_exit_code_predicate_passes(runner: SilasVerificationRunner) -> None:
     report = await runner.run_checks(
-        [_check("exit-ok", "exit 0", Expectation(exit_code=0))]
+        [_check("exit-ok", _python_cmd("import sys; sys.exit(0)"), Expectation(exit_code=0))]
     )
     assert report.all_passed is True
     assert report.results[0].passed is True
@@ -50,7 +50,7 @@ async def test_exit_code_predicate_passes(runner: SilasVerificationRunner) -> No
 @pytest.mark.asyncio
 async def test_exit_code_predicate_failure(runner: SilasVerificationRunner) -> None:
     report = await runner.run_checks(
-        [_check("exit-fail", "exit 2", Expectation(exit_code=0))]
+        [_check("exit-fail", _python_cmd("import sys; sys.exit(2)"), Expectation(exit_code=0))]
     )
     assert report.all_passed is False
     assert report.results[0].passed is False
