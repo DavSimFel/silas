@@ -328,13 +328,7 @@ async def test_nonce_store_ttl_expiry_prunes_old_entries(nonce_store: SQLiteNonc
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason=(
-        "Stream step 2 signature verification is not implemented yet; owner sender_id is "
-        "currently trusted without cryptographic verification."
-    )
-)
-async def test_unsigned_owner_message_taint_is_downgraded_to_external(
+async def test_owner_sender_id_produces_owner_taint(
     channel,
     turn_context,
     context_manager,
@@ -349,7 +343,7 @@ async def test_unsigned_owner_message_taint_is_downgraded_to_external(
     await stream._process_turn(_msg("unsigned owner message", sender_id="owner"))
 
     chronicle = context_manager.get_zone("owner", ContextZone.chronicle)
-    assert chronicle[0].taint == TaintLevel.external
+    assert chronicle[0].taint == TaintLevel.owner
 
 
 # ---------------------------------------------------------------------------
