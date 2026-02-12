@@ -22,7 +22,9 @@ class ShellExecutor:
                 error=f"unsupported action for shell executor: {envelope.action}",
             )
 
-        sandbox = await self._sandbox_manager.create(envelope.sandbox_config)
+        sandbox_config = envelope.sandbox_config.model_copy(deep=True)
+        sandbox_config.env.update(self._credential_env(envelope.credential_refs))
+        sandbox = await self._sandbox_manager.create(sandbox_config)
         command: Sequence[str] | None = None
         try:
             command = self._parse_command(envelope.args)
@@ -30,7 +32,6 @@ class ShellExecutor:
                 sandbox.sandbox_id,
                 command,
                 timeout_seconds=envelope.timeout_seconds,
-                env=self._credential_env(envelope.credential_refs),
                 max_output_bytes=envelope.max_output_bytes,
             )
             success = not outcome.timed_out and outcome.exit_code == 0

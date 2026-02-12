@@ -32,6 +32,12 @@ class WorkItemStatus(StrEnum):
     paused = "paused"
 
 
+class WorkItemExecutorType(StrEnum):
+    skill = "skill"
+    shell = "shell"
+    python = "python"
+
+
 class Budget(BaseModel):
     max_tokens: int = 200_000
     max_cost_usd: float = 2.0
@@ -99,6 +105,7 @@ class WorkItem(BaseModel):
     approval_token: ApprovalToken | None = None
 
     body: str
+    executor_type: WorkItemExecutorType = WorkItemExecutorType.skill
     interaction_mode: InteractionMode = InteractionMode.confirm_only_when_required
     input_artifacts_from: list[str] = Field(default_factory=list)
 
@@ -150,6 +157,7 @@ class WorkItem(BaseModel):
             "agent": self.agent,
             "budget": self.budget.model_dump(mode="json"),
             "body": self.body,
+            "executor_type": self.executor_type,
             "interaction_mode": self.interaction_mode,
             "input_artifacts_from": self.input_artifacts_from,
             "verify": [check.model_dump(mode="json") for check in self.verify],
@@ -196,6 +204,7 @@ __all__ = [
     "Expectation",
     "VerificationCheck",
     "WorkItem",
+    "WorkItemExecutorType",
     "WorkItemResult",
     "WorkItemStatus",
     "WorkItemType",

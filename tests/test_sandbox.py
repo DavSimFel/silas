@@ -127,12 +127,16 @@ async def test_exec_isolates_working_dirs_between_sandboxes(tmp_path: Path) -> N
 @pytest.mark.asyncio
 async def test_exec_injects_environment_variables(tmp_path: Path) -> None:
     manager = SubprocessSandboxManager(base_dir=tmp_path)
-    sandbox = await manager.create(SandboxConfig(work_dir=str(tmp_path / "work")))
+    sandbox = await manager.create(
+        SandboxConfig(
+            work_dir=str(tmp_path / "work"),
+            env={"HELLO": "world"},
+        )
+    )
     try:
         result = await manager.exec(
             sandbox.sandbox_id,
             [sys.executable, "-c", "import os; print(os.getenv('HELLO', 'missing'))"],
-            env={"HELLO": "world"},
             timeout_seconds=5,
         )
         assert result.exit_code == 0
@@ -149,7 +153,74 @@ async def test_exec_unknown_sandbox_raises_key_error(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_rejects_network_access(tmp_path: Path) -> None:
+async def test_create_allows_network_access_when_requested(tmp_path: Path) -> None:
     manager = SubprocessSandboxManager(base_dir=tmp_path)
-    with pytest.raises(ValueError):
-        await manager.create(SandboxConfig(work_dir=str(tmp_path / "work"), network_access=True))
+    sandbox = await manager.create(
+        SandboxConfig(work_dir=str(tmp_path / "work"), network_access=True)
+    )
+    try:
+        result = await manager.exec(
+            sandbox.sandbox_id,
+            [sys.executable, "-c", "print('ok')"],
+            timeout_seconds=5,
+        )
+        assert result.exit_code == 0
+        assert result.stdout.strip() == "ok"
+    finally:
+        await manager.destroy(sandbox.sandbox_id)
+
+
+@pytest.mark.asyncio
+async def test_create_fails_closed_when_network_isolation_unavailable(tmp_path: Path) -> None:
+    manager = SubprocessSandboxManager(base_dir=tmp_path)
+    manager._unshare_bin = None  # type: ignore[attr-defined]
+    manager._network_isolation_checked = False  # type: ignore[attr-defined]
+
+    with pytest.raises(RuntimeError, match="network isolation unavailable"):
+        await manager.create(SandboxConfig(work_dir=str(tmp_path / "work"), network_access=False))
+
+
+@pytest.mark.asyncio
+async def test_exec_rejects_shell_dash_c(tmp_path: Path) -> None:
+    manager = SubprocessSandboxManager(base_dir=tmp_path)
+    sandbox = await manager.create(SandboxConfig(work_dir=str(tmp_path / "work")))
+    try:
+        with pytest.raises(ValueError, match="shell '-c'"):
+            await manager.exec(
+                sandbox.sandbox_id,
+                ["bash", "-c", "echo hi"],
+                timeout_seconds=5,
+            )
+    finally:
+        await manager.destroy(sandbox.sandbox_id)
+
+
+@pytest.mark.asyncio
+async def test_exec_does_not_inherit_host_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SILAS_APPROVAL_KEY", "super-secret")
+    manager = SubprocessSandboxManager(base_dir=tmp_path)
+    sandbox = await manager.create(SandboxConfig(work_dir=str(tmp_path / "work")))
+    try:
+        result = await manager.exec(
+            sandbox.sandbox_id,
+            [
+                sys.executable,
+                "-c",
+                "import os; print(os.getenv('SILAS_APPROVAL_KEY', 'missing'))",
+            ],
+            timeout_seconds=5,
+        )
+        assert result.exit_code == 0
+        assert result.stdout.strip() == "missing"
+    finally:
+        await manager.destroy(sandbox.sandbox_id)
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_invalid_limits(tmp_path: Path) -> None:
+    manager = SubprocessSandboxManager(base_dir=tmp_path)
+    with pytest.raises(ValueError, match="max_memory_mb"):
+        await manager.create(SandboxConfig(work_dir=str(tmp_path / "work"), max_memory_mb=0))
+
+    with pytest.raises(ValueError, match="max_cpu_seconds"):
+        await manager.create(SandboxConfig(work_dir=str(tmp_path / "work"), max_cpu_seconds=0))

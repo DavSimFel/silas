@@ -1,16 +1,37 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 
-from silas.models.execution import VerificationReport
-from silas.models.work import BudgetUsed, WorkItem, WorkItemResult, WorkItemStatus
+from silas.execution.python_exec import PythonExecutor
+from silas.execution.sandbox import SubprocessSandboxManager
+from silas.execution.shell import ShellExecutor
+from silas.models.execution import (
+    ExecutionEnvelope,
+    ExecutionResult,
+    SandboxConfig,
+    VerificationReport,
+)
+from silas.models.work import (
+    BudgetUsed,
+    WorkItem,
+    WorkItemExecutorType,
+    WorkItemResult,
+    WorkItemStatus,
+)
 from silas.protocols.approval import ApprovalVerifier
 from silas.protocols.audit import AuditLog
+from silas.protocols.execution import EphemeralExecutor
 from silas.protocols.work import VerificationRunner, WorkItemStore
 from silas.skills.executor import SkillExecutor
 
 _CHARS_PER_TOKEN = 3.5
+
+_EXECUTION_ACTIONS: dict[WorkItemExecutorType, str] = {
+    WorkItemExecutorType.shell: "shell_exec",
+    WorkItemExecutorType.python: "python_exec",
+}
 
 
 class LiveWorkItemExecutor:
@@ -18,6 +39,10 @@ class LiveWorkItemExecutor:
         self,
         skill_executor: SkillExecutor,
         work_item_store: WorkItemStore,
+        *,
+        shell_executor: EphemeralExecutor | None = None,
+        python_executor: EphemeralExecutor | None = None,
+        executor_registry: Mapping[WorkItemExecutorType, EphemeralExecutor] | None = None,
         approval_verifier: ApprovalVerifier | None = None,
         verification_runner: VerificationRunner | None = None,
         audit: AuditLog | None = None,
@@ -27,6 +52,15 @@ class LiveWorkItemExecutor:
         self._approval_verifier = approval_verifier
         self._verification_runner = verification_runner
         self._audit = audit
+
+        sandbox_manager = SubprocessSandboxManager()
+        self._executor_registry: dict[WorkItemExecutorType, object] = {
+            WorkItemExecutorType.skill: skill_executor,
+            WorkItemExecutorType.shell: shell_executor or ShellExecutor(sandbox_manager),
+            WorkItemExecutorType.python: python_executor or PythonExecutor(sandbox_manager),
+        }
+        if executor_registry is not None:
+            self._executor_registry.update(executor_registry)
 
     async def execute(self, item: WorkItem) -> WorkItemResult:
         root_item = item.model_copy(deep=True)
@@ -111,14 +145,15 @@ class LiveWorkItemExecutor:
                 budget_used=used,
             )
 
-        self._skill_executor.set_work_item(work_item)
+        uses_skill_executor = work_item.executor_type == WorkItemExecutorType.skill
+        if uses_skill_executor:
+            self._skill_executor.set_work_item(work_item)
         try:
             for _ in range(max_attempts):
                 if used.exceeds(work_item.budget):
                     last_error = "budget exhausted before attempt"
                     break
 
-                attempt_started = datetime.now(UTC)
                 work_item.attempts += 1
                 used.attempts += 1
                 used.executor_runs += 1
@@ -127,33 +162,9 @@ class LiveWorkItemExecutor:
                 work_item.budget_used = used.model_copy(deep=True)
                 await self._persist(work_item)
 
-                attempt_ok = True
-                if not work_item.skills:
-                    used.tokens += self._estimate_tokens(work_item.body)
-
-                for skill_name in work_item.skills:
-                    skill_result = await self._skill_executor.execute(
-                        skill_name,
-                        {
-                            "work_item_id": work_item.id,
-                            "title": work_item.title,
-                            "body": work_item.body,
-                            "attempt": work_item.attempts,
-                            "depends_on": work_item.depends_on,
-                        },
-                    )
-                    used.tokens += self._estimate_tokens(skill_result.output, skill_result.error)
-                    used.wall_time_seconds += skill_result.duration_ms / 1000.0
-
-                    if not skill_result.success:
-                        attempt_ok = False
-                        last_error = skill_result.error or f"skill '{skill_name}' failed"
-                        break
-
-                if not work_item.skills:
-                    used.wall_time_seconds += (
-                        datetime.now(UTC) - attempt_started
-                    ).total_seconds()
+                attempt_ok, attempt_error = await self._execute_attempt(work_item, used)
+                if not attempt_ok:
+                    last_error = attempt_error or "execution attempt failed"
 
                 work_item.budget_used = used.model_copy(deep=True)
                 if attempt_ok:
@@ -195,7 +206,148 @@ class LiveWorkItemExecutor:
                 budget_used=used.model_copy(deep=True),
             )
         finally:
-            self._skill_executor.set_work_item(None)
+            if uses_skill_executor:
+                self._skill_executor.set_work_item(None)
+
+    async def _execute_attempt(
+        self,
+        work_item: WorkItem,
+        used: BudgetUsed,
+    ) -> tuple[bool, str | None]:
+        if work_item.executor_type == WorkItemExecutorType.skill:
+            return await self._execute_skill_attempt(work_item, used)
+        return await self._execute_registered_attempt(work_item, used)
+
+    async def _execute_skill_attempt(
+        self,
+        work_item: WorkItem,
+        used: BudgetUsed,
+    ) -> tuple[bool, str | None]:
+        if not work_item.skills:
+            attempt_started = datetime.now(UTC)
+            used.tokens += self._estimate_tokens(work_item.body)
+            used.wall_time_seconds += (datetime.now(UTC) - attempt_started).total_seconds()
+            return True, None
+
+        for skill_name in work_item.skills:
+            skill_result = await self._skill_executor.execute(
+                skill_name,
+                {
+                    "work_item_id": work_item.id,
+                    "title": work_item.title,
+                    "body": work_item.body,
+                    "attempt": work_item.attempts,
+                    "depends_on": work_item.depends_on,
+                },
+            )
+            used.tokens += self._estimate_tokens(skill_result.output, skill_result.error)
+            used.wall_time_seconds += skill_result.duration_ms / 1000.0
+            if not skill_result.success:
+                return False, skill_result.error or f"skill '{skill_name}' failed"
+
+        return True, None
+
+    async def _execute_registered_attempt(
+        self,
+        work_item: WorkItem,
+        used: BudgetUsed,
+    ) -> tuple[bool, str | None]:
+        executor = self._resolve_executor(work_item.executor_type)
+        if executor is None:
+            return False, f"executor '{work_item.executor_type.value}' is not registered"
+
+        envelope = self._build_execution_envelope(work_item)
+        try:
+            result = await executor.execute(envelope)
+        except (OSError, RuntimeError, ValueError, KeyError) as exc:
+            return False, f"{work_item.executor_type.value} executor error: {exc}"
+
+        self._merge_execution_budget(used, result)
+        if result.success:
+            return True, None
+
+        error = result.error or f"{work_item.executor_type.value} execution failed"
+        return False, error
+
+    def _resolve_executor(self, executor_type: WorkItemExecutorType) -> EphemeralExecutor | None:
+        if executor_type == WorkItemExecutorType.skill:
+            return None
+        executor = self._executor_registry.get(executor_type)
+        if isinstance(executor, SkillExecutor):
+            return None
+        if executor is None:
+            return None
+        if not callable(getattr(executor, "execute", None)):
+            return None
+        return executor
+
+    def _build_execution_envelope(self, work_item: WorkItem) -> ExecutionEnvelope:
+        action = _EXECUTION_ACTIONS.get(work_item.executor_type)
+        if action is None:
+            raise ValueError(f"unsupported executor_type: {work_item.executor_type.value}")
+
+        timeout_seconds = max(1, work_item.budget.max_wall_time_seconds)
+        args = self._resolve_execution_args(work_item)
+        return ExecutionEnvelope(
+            execution_id=f"{work_item.id}:{work_item.attempts}",
+            step_index=max(0, work_item.attempts - 1),
+            task_description=work_item.body,
+            action=action,
+            args=args,
+            timeout_seconds=timeout_seconds,
+            sandbox_config=SandboxConfig(
+                network_access=False,
+                max_cpu_seconds=timeout_seconds,
+            ),
+        )
+
+    def _resolve_execution_args(self, work_item: WorkItem) -> dict[str, object]:
+        if work_item.executor_type == WorkItemExecutorType.shell:
+            return {"command": self._resolve_shell_command(work_item.body)}
+
+        if work_item.executor_type == WorkItemExecutorType.python:
+            parsed = self._parse_json_body(work_item.body)
+            if isinstance(parsed, dict) and (
+                isinstance(parsed.get("script"), str)
+                or isinstance(parsed.get("script_path"), str)
+            ):
+                return dict(parsed)
+            script = work_item.body.strip()
+            if not script:
+                raise ValueError("python executor requires non-empty work item body")
+            return {"script": script}
+
+        raise ValueError(f"unsupported executor_type: {work_item.executor_type.value}")
+
+    def _resolve_shell_command(self, body: str) -> str | list[str]:
+        stripped = body.strip()
+        if not stripped:
+            raise ValueError("shell executor requires non-empty work item body")
+
+        parsed = self._parse_json_body(stripped)
+        if isinstance(parsed, dict):
+            command = parsed.get("command")
+            if isinstance(command, str):
+                return command
+            if isinstance(command, list):
+                return [str(value) for value in command]
+        if isinstance(parsed, list):
+            return [str(value) for value in parsed]
+        return stripped
+
+    def _parse_json_body(self, value: str) -> object | None:
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return None
+
+    def _merge_execution_budget(
+        self,
+        used: BudgetUsed,
+        result: ExecutionResult,
+    ) -> None:
+        used.tokens += self._estimate_tokens(result.return_value, result.error)
+        used.wall_time_seconds += max(0.0, result.duration_seconds)
 
     async def _run_external_verification(
         self,

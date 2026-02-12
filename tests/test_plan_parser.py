@@ -23,6 +23,7 @@ id: task-002
 type: task
 title: Build REST API
 interaction_mode: act_and_report
+executor_type: shell
 skills: [coding]
 budget:
   max_tokens: 100000
@@ -120,6 +121,11 @@ class TestMarkdownPlanParser:
         from silas.models.agents import InteractionMode
         wi = parser.parse(FULL_PLAN)
         assert wi.interaction_mode == InteractionMode.act_and_report
+
+    def test_full_plan_executor_type(self, parser) -> None:
+        from silas.models.work import WorkItemExecutorType
+        wi = parser.parse(FULL_PLAN)
+        assert wi.executor_type == WorkItemExecutorType.shell
 
     def test_goal_plan(self, parser) -> None:
         wi = parser.parse(GOAL_PLAN)
