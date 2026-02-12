@@ -18,6 +18,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -57,6 +58,9 @@ from silas.protocols.connections import ConnectionManager
 from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
 from silas.protocols.scheduler import TaskScheduler
 from silas.protocols.work import PlanParser, WorkItemStore
+
+if TYPE_CHECKING:
+    from silas.queue.bridge import QueueBridge
 
 _counter = HeuristicTokenCounter()
 _MENTION_PATTERN = re.compile(r"@([A-Za-z0-9_:-]+)")
@@ -115,6 +119,9 @@ class Stream:
     connection_manager: ConnectionManager | None = None
     suggestion_engine: SuggestionEngine | None = None
     autonomy_calibrator: AutonomyCalibrator | None = None
+    # Why optional: when None, Stream uses the legacy direct-call path.
+    # When set, dispatch_turn routes through the queue system instead.
+    queue_bridge: QueueBridge | None = None
     owner_id: str = "owner"
     default_context_profile: str = "conversation"
     output_gate_runner: OutputGateRunner | None = None
@@ -1024,15 +1031,7 @@ class Stream:
                     turn_number=turn_number,
                     current_goal=None,
                 )
-            if evicted_ctx_ids:
-                evicted_items = self._take_evicted_context_items(cm, scope_id)
-                await self._persist_evicted_context(evicted_items, session_id, turn_number)
-                await self._audit(
-                    "context_budget_enforced",
-                    step=5,
-                    turn_number=turn_number,
-                    evicted_ctx_ids=evicted_ctx_ids,
-                )
+            await self._handle_evicted_context(cm, scope_id, evicted_ctx_ids, session_id, turn_number)
             available_skills = self._available_skill_names()
             await self._audit(
                 "skill_availability_checked",
@@ -1045,6 +1044,14 @@ class Stream:
                 step=6.5,
                 note="skill-aware toolset preparation deferred",
             )
+
+            # Why check queue_bridge: if set, dispatch through queue system
+            # instead of direct agent calls. This is the WI-4 integration seam.
+            if self.queue_bridge is not None:
+                return await self._process_turn_via_queue(
+                    processed_message_text, turn_id, turn_number,
+                    scope_id, cm, tc, connection_id, message,
+                )
 
             if tc.proxy is None:
                 raise RuntimeError("turn_context.proxy is required")
@@ -1211,6 +1218,74 @@ class Stream:
         if is_verified and sender_id == self.owner_id:
             return TaintLevel.owner
         return TaintLevel.external
+
+    async def _handle_evicted_context(
+        self,
+        cm: LiveContextManager | None,
+        scope_id: str,
+        evicted_ctx_ids: list[str],
+        session_id: str,
+        turn_number: int,
+    ) -> None:
+        """Persist evicted context items and audit. Extracted for C901 budget."""
+        if evicted_ctx_ids:
+            evicted_items = self._take_evicted_context_items(cm, scope_id)
+            await self._persist_evicted_context(evicted_items, session_id, turn_number)
+            await self._audit(
+                "context_budget_enforced",
+                step=5,
+                turn_number=turn_number,
+                evicted_ctx_ids=evicted_ctx_ids,
+            )
+
+    async def _process_turn_via_queue(
+        self,
+        message_text: str,
+        turn_id: str,
+        turn_number: int,
+        scope_id: str,
+        cm: LiveContextManager | None,
+        tc: TurnContext,
+        connection_id: str,
+        message: ChannelMessage,
+    ) -> str:
+        """Dispatch a turn through the queue bridge instead of direct agent calls.
+
+        Why a separate method: keeps _process_turn_with_active_context under
+        C901 complexity limit while isolating the queue integration path.
+        """
+        assert self.queue_bridge is not None  # caller guarantees this
+        await self.queue_bridge.dispatch_turn(
+            user_message=message_text, trace_id=turn_id,
+        )
+        queue_response = await self.queue_bridge.collect_response(
+            trace_id=turn_id, timeout_s=30.0,
+        )
+        queue_text = ""
+        if queue_response is not None:
+            queue_text = str(queue_response.payload.get("text", ""))
+        if not queue_text:
+            queue_text = "Processing your request through the queue system."
+
+        response_item = ContextItem(
+            ctx_id=f"chronicle:{turn_number}:resp:{uuid.uuid4().hex}",
+            zone=ContextZone.chronicle,
+            content=f"Silas: {queue_text}",
+            token_count=_counter.count(queue_text),
+            created_at=datetime.now(UTC),
+            turn_number=turn_number,
+            source="agent:queue_bridge",
+            taint=TaintLevel.owner,
+            kind="message",
+        )
+        if cm is not None:
+            cm.add(scope_id, response_item)
+        if tc.chronicle_store is not None:
+            await tc.chronicle_store.append(scope_id, response_item)
+
+        await self.channel.send(connection_id, queue_text, reply_to=message.reply_to)
+        await self._audit("turn_processed", turn_number=turn_number, route="queue_bridge")
+        return queue_text
 
     # ── Planner Route Handling ─────────────────────────────────────────
 
