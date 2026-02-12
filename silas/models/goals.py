@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from silas.models.approval import ApprovalToken
+
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
@@ -121,6 +123,7 @@ class StandingApproval(BaseModel):
     expires_at: datetime | None = None
     max_uses: int | None = None
     uses_remaining: int | None = None
+    approval_token: ApprovalToken | None = None
 
     @field_validator("granted_at", "expires_at")
     @classmethod

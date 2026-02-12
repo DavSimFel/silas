@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from silas.models.execution import VerificationReport
 from silas.models.work import (
     BudgetUsed,
     VerificationCheck,
@@ -18,7 +19,7 @@ class WorkItemExecutor(Protocol):
 
 @runtime_checkable
 class VerificationRunner(Protocol):
-    async def run_checks(self, checks: list[VerificationCheck]) -> object: ...
+    async def run_checks(self, checks: list[VerificationCheck]) -> VerificationReport: ...
 
 
 @runtime_checkable

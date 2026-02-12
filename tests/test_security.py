@@ -15,6 +15,7 @@ from silas.approval.manager import LiveApprovalManager
 from silas.core.stream import Stream
 from silas.goals.manager import SilasGoalManager
 from silas.models.approval import (
+    ApprovalDecision,
     ApprovalScope,
     ApprovalToken,
     ApprovalVerdict,
@@ -116,6 +117,58 @@ class _CollectingWorkItemStore:
 
     async def save(self, item: WorkItem) -> None:
         self.saved.append(item.model_copy(deep=True))
+
+
+class _StubStandingApprovalEngine:
+    def __init__(self) -> None:
+        self._counter = 0
+
+    async def issue_token(
+        self,
+        work_item: WorkItem,
+        decision: ApprovalDecision,
+        scope: ApprovalScope = ApprovalScope.full_plan,
+    ) -> ApprovalToken:
+        self._counter += 1
+        raw_limit = decision.conditions.get("max_executions")
+        max_executions = raw_limit if isinstance(raw_limit, int) and raw_limit > 0 else 1
+        now = _utc_now()
+        return ApprovalToken(
+            token_id=f"standing:{self._counter}",
+            plan_hash=work_item.plan_hash(),
+            work_item_id=work_item.id,
+            scope=scope,
+            verdict=decision.verdict,
+            signature=b"stub-signature",
+            issued_at=now,
+            expires_at=now + timedelta(hours=1),
+            nonce=f"nonce:{self._counter}",
+            conditions=dict(decision.conditions),
+            max_executions=max_executions,
+        )
+
+    async def verify(
+        self,
+        token: ApprovalToken,
+        work_item: WorkItem,
+        spawned_task: WorkItem | None = None,
+    ) -> tuple[bool, str]:
+        if token.scope != ApprovalScope.standing:
+            return False, "wrong_scope"
+        if spawned_task is None:
+            return False, "standing_requires_spawned_task"
+        if spawned_task.parent != token.work_item_id:
+            return False, "standing_parent_mismatch"
+        if token.plan_hash != work_item.plan_hash():
+            return False, "plan_hash_mismatch"
+        if token.executions_used >= token.max_executions:
+            return False, "execution_limit_reached"
+        token.executions_used += 1
+        return True, "ok"
+
+    async def check(self, token: ApprovalToken, work_item: WorkItem) -> tuple[bool, str]:
+        del token, work_item
+        return True, "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -354,7 +407,11 @@ async def test_owner_sender_id_produces_owner_taint(
 class TestStandingApprovalVerification:
     def test_standing_approval_allows_multiple_executions_until_max_uses(self) -> None:
         store = _CollectingWorkItemStore()
-        manager = SilasGoalManager(goals_config=[_goal("goal-multi")], work_item_store=store)
+        manager = SilasGoalManager(
+            goals_config=[_goal("goal-multi")],
+            work_item_store=store,
+            approval_engine=_StubStandingApprovalEngine(),
+        )
         goal = manager.load_goals()[0]
         assert goal.spawn_policy_hash is not None
 
@@ -396,6 +453,7 @@ class TestStandingApprovalVerification:
         manager = SilasGoalManager(
             goals_config=[_goal("goal-case-canonicalization")],
             work_item_store=store,
+            approval_engine=_StubStandingApprovalEngine(),
         )
         goal = manager.load_goals()[0]
         assert goal.spawn_policy_hash is not None
