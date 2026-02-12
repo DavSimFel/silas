@@ -75,7 +75,7 @@ The core gap: agents need tool loops and queue-based communication. ~1,650 LOC d
 - Type hints on everything. No `Any` unless truly unavoidable (with comment explaining why).
 
 ### WI-1: Durable Queue Store + Message Types
-**Status:** Not started  
+**Status:** ✅ Done  
 **Estimate:** ~400 LOC  
 **Scope:**
 - `silas/queue/store.py`: `DurableQueueStore` — SQLite-backed, `enqueue()`, `lease()`, `ack()`, `nack()`, `dead_letter()`, `heartbeat()`
@@ -92,7 +92,7 @@ The core gap: agents need tool loops and queue-based communication. ~1,650 LOC d
 ---
 
 ### WI-2: Wire pydantic-ai Tool Loops on All Agents
-**Status:** Not started  
+**Status:** ✅ Done  
 **Estimate:** ~500 LOC  
 **Scope:**
 - Add `pydantic-ai-backend[console]` dependency
@@ -108,7 +108,7 @@ The core gap: agents need tool loops and queue-based communication. ~1,650 LOC d
 ---
 
 ### WI-3: Queue-Based Agent Communication + Execution
-**Status:** Not started  
+**Status:** ✅ Done  
 **Estimate:** ~450 LOC  
 **Scope:**
 - Replace procedural calls in `Stream._process_turn` with queue dispatch: proxy enqueues to planner_queue/executor_queue, receives results via proxy_queue
@@ -125,7 +125,7 @@ The core gap: agents need tool loops and queue-based communication. ~1,650 LOC d
 ---
 
 ### WI-4: Integration + Migration
-**Status:** Not started  
+**Status:** ✅ Done  
 **Estimate:** ~300 LOC  
 **Scope:**
 - Parity test suite: queue-based behavior matches procedural for all existing test scenarios
