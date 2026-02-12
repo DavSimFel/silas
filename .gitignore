@@ -29,3 +29,5 @@ Thumbs.db
 
 # Custom skills (user-installed, promote to shipped/ to version)
 silas/skills/custom/*/
+data/.secrets.enc
+*.secrets.enc

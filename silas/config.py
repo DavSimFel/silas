@@ -18,18 +18,32 @@ class ModelsConfig(BaseModel):
     executor: str = "openrouter:anthropic/claude-haiku-4-5"
     scorer: str = "openrouter:anthropic/claude-haiku-4-5"
     api_key: str | None = None
-    """LLM provider API key. If set, injected as the appropriate env var
-    (e.g. OPENROUTER_API_KEY) based on the provider prefix of the model strings.
-    Can also be set directly via SILAS_MODELS__API_KEY or the provider-native
-    env var (OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY)."""
+    """Direct API key (legacy/testing). Prefer api_key_ref for production."""
+    api_key_ref: str | None = None
+    """Opaque ref_id pointing to the API key in SecretStore (§0.5).
+    Resolved at startup via SecretStore.get(). Takes precedence over api_key."""
 
-    def inject_api_key_env(self) -> None:
+    def resolve_api_key(self, data_dir: Path | None = None) -> str | None:
+        """Resolve the effective API key: ref_id → SecretStore, else direct."""
+        if self.api_key_ref and data_dir:
+            from silas.secrets import SecretStore
+
+            store = SecretStore(data_dir)
+            secret = store.get(self.api_key_ref)
+            if secret:
+                return secret
+
+        return self.api_key
+
+    def inject_api_key_env(self, data_dir: Path | None = None) -> None:
         """Push api_key into the process environment for PydanticAI to pick up.
 
-        Only sets the env var if api_key is configured and the corresponding
+        Resolves from SecretStore if api_key_ref is set, else falls back to
+        the direct api_key field. Only sets the env var if the corresponding
         env var isn't already set (explicit env vars take precedence).
         """
-        if not self.api_key:
+        effective_key = self.resolve_api_key(data_dir)
+        if not effective_key:
             return
 
         # Detect provider from any model string
@@ -44,7 +58,7 @@ class ModelsConfig(BaseModel):
         for provider in providers:
             env_var = env_map.get(provider)
             if env_var and not os.environ.get(env_var):
-                os.environ[env_var] = self.api_key
+                os.environ[env_var] = effective_key
 
 
 class WebChannelConfig(BaseModel):
@@ -175,7 +189,7 @@ def load_config(path: str | Path = "config/silas.yaml") -> SilasSettings:
 
     merged = _apply_env_overrides(raw)
     settings = SilasSettings.model_validate(merged)
-    settings.models.inject_api_key_env()
+    settings.models.inject_api_key_env(data_dir=settings.data_dir)
     RouteDecision.configure_profiles(set(settings.context.profiles.keys()))
     return settings
 
