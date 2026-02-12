@@ -41,6 +41,7 @@ class Gate(BaseModel):
     name: str
     on: GateTrigger
     after_step: int | None = None
+    lane: GateLane | None = None
     provider: GateProvider = GateProvider.predicate
     type: GateType = GateType.string_match
     check: str | None = None
@@ -56,18 +57,21 @@ class Gate(BaseModel):
     check_expect: Expectation | None = None
     promote_to_policy: bool = False
 
-    @property
-    def lane(self) -> GateLane:
-        if self.provider == GateProvider.llm and not self.promote_to_policy:
-            return GateLane.quality
-        return GateLane.policy
-
     @model_validator(mode="after")
     def _validate_after_step_trigger(self) -> Gate:
         if self.on == GateTrigger.after_step and self.after_step is None:
             raise ValueError("after_step is required when on='after_step'")
         if self.on != GateTrigger.after_step and self.after_step is not None:
             raise ValueError("after_step must be None unless on='after_step'")
+        if self.lane is None:
+            if self.provider == GateProvider.llm and not self.promote_to_policy:
+                self.lane = GateLane.quality
+            else:
+                self.lane = GateLane.policy
+        if self.provider == GateProvider.llm and self.lane == GateLane.policy:
+            self.promote_to_policy = True
+        if self.provider == GateProvider.llm and self.lane == GateLane.quality and self.promote_to_policy:
+            raise ValueError("llm gates in quality lane cannot set promote_to_policy=true")
         return self
 
 
