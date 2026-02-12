@@ -46,7 +46,7 @@ class ExecutorAgent:
                 system_prompt=self.system_prompt,
             )
         except Exception:
-            logger.warning("Failed to initialize Executor Agent; using deterministic fallback")
+            logger.warning("Failed to initialize Executor Agent; using deterministic fallback", exc_info=True)
             self.agent = None
             self._llm_available = False
 
@@ -69,7 +69,7 @@ class ExecutorAgent:
                 output = self._coerce_output(raw)
                 return self._materialize_tool_calls(output)
             except Exception:
-                logger.warning("Executor LLM call failed; using deterministic fallback")
+                logger.warning("Executor LLM call failed; using deterministic fallback", exc_info=True)
 
         fallback = ExecutorAgentOutput(
             summary="Executor fallback: unable to obtain structured model output.",

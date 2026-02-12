@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import mimetypes
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -25,6 +26,8 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 type ApprovalResponseHandler = Callable[[str, ApprovalVerdict, str], Awaitable[None] | None]
+
+logger = logging.getLogger(__name__)
 
 
 class WebChannel(ChannelAdapterCore):
@@ -250,6 +253,7 @@ class WebChannel(ChannelAdapterCore):
                 if status_code in {404, 410}:
                     stale_endpoints.append(endpoint)
             except Exception:
+                logger.warning("Push notification failed for endpoint", exc_info=True)
                 failed += 1
 
         for endpoint in stale_endpoints:
