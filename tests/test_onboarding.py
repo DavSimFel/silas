@@ -192,8 +192,8 @@ def test_secret_store_persists_across_instances(tmp_path: Path) -> None:
     assert store2.get("persistent") == "stays"
 
 
-def test_secrets_endpoint(web_channel) -> None:
-    """POST /secrets/{ref_id} stores secret in SecretStore."""
+def test_secrets_endpoint(web_channel, web_config_file: Path) -> None:
+    """POST /secrets/{ref_id} stores secret in the configured data directory."""
     from fastapi.testclient import TestClient
 
     client = TestClient(web_channel.app)
@@ -202,6 +202,9 @@ def test_secrets_endpoint(web_channel) -> None:
     data = resp.json()
     assert data["ref_id"] == "my-ref"
     assert data["success"] is True
+    loaded = yaml.safe_load(web_config_file.read_text())
+    data_dir = Path(loaded["silas"]["data_dir"])
+    assert SecretStore(data_dir).get("my-ref") == "my-secret"
 
 
 def test_api_key_ref_resolution(tmp_path: Path) -> None:

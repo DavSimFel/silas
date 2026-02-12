@@ -169,6 +169,57 @@ async def test_simple_autonomy_calibrator_emits_widen_and_tighten() -> None:
 
 
 @pytest.mark.asyncio
+async def test_simple_autonomy_calibrator_apply_approved_keeps_threshold() -> None:
+    calibrator = SimpleAutonomyCalibrator(
+        window_size=8,
+        min_sample_size=5,
+        widen_threshold=0.2,
+        tighten_threshold=0.8,
+        threshold_step=0.1,
+    )
+    for _ in range(5):
+        await calibrator.record_outcome("owner", "direct", "approved")
+
+    proposal = (await calibrator.evaluate("owner", datetime.now(UTC)))[0]
+    result = await calibrator.apply(proposal, "approved")
+
+    metrics = calibrator.get_metrics("owner")
+    assert result["decision"] == "approved"
+    assert result["rolled_back"] is False
+    assert metrics["families"]["direct"]["threshold"] == 0.6
+
+
+@pytest.mark.asyncio
+async def test_simple_autonomy_calibrator_apply_rejected_rolls_back_threshold() -> None:
+    calibrator = SimpleAutonomyCalibrator(
+        window_size=8,
+        min_sample_size=5,
+        widen_threshold=0.2,
+        tighten_threshold=0.8,
+        threshold_step=0.1,
+    )
+    for _ in range(5):
+        await calibrator.record_outcome("owner", "direct", "approved")
+
+    proposal = (await calibrator.evaluate("owner", datetime.now(UTC)))[0]
+    result = await calibrator.apply(proposal, "rejected")
+
+    metrics = calibrator.get_metrics("owner")
+    assert result["decision"] == "rejected"
+    assert result["rolled_back"] is True
+    assert metrics["families"]["direct"]["threshold"] == 0.5
+
+
+@pytest.mark.asyncio
+async def test_simple_autonomy_calibrator_apply_rejects_unknown_decision() -> None:
+    calibrator = SimpleAutonomyCalibrator()
+    proposal = {"scope_id": "owner", "action_family": "direct"}
+
+    with pytest.raises(ValueError, match="approved"):
+        await calibrator.apply(proposal, "later")
+
+
+@pytest.mark.asyncio
 async def test_stream_high_confidence_suggestion_prepended(
     channel: InMemoryChannel,
     turn_context,

@@ -232,7 +232,7 @@ class SecretStore:
 
     Usage::
 
-        store = SecretStore(data_dir=Path("./data"))
+        store = SecretStore(data_dir=settings.data_dir)
         store.set("openrouter-api-key", "sk-or-...")
         key = store.get("openrouter-api-key")
     """

@@ -89,6 +89,12 @@ class TestQuietStructure:
         """Stream content constrained to 760px per spec."""
         assert "760px" in (await client.get("/")).text
 
+    async def test_onboarding_overlay_styles_present(self, client: AsyncClient) -> None:
+        html = (await client.get("/")).text
+        assert ".onboarding-overlay {" in html
+        assert ".onboarding-card {" in html
+        assert ".glass-overlay {" in html
+
 
 # ── Manifest ──
 
@@ -247,6 +253,11 @@ class TestAppJsFeatures:
         text = (await client.get("/app.js")).text
         assert "animateStreamingChunk" in text
         assert "prose.animate" in text
+
+    async def test_onboarding_init_runs_after_ws_connect(self, client: AsyncClient) -> None:
+        text = (await client.get("/app.js")).text
+        assert "onboardingInitialized" in text
+        assert "initOnboarding();" in text
 
 
 # ── CSS Design Tokens ──

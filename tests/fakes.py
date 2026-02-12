@@ -288,6 +288,8 @@ class FakeAutonomyCalibrator:
     proposals_by_scope: dict[str, list[dict[str, object]]] = field(default_factory=dict)
     evaluate_calls: list[tuple[str, datetime]] = field(default_factory=list)
     record_calls: list[tuple[str, str, str]] = field(default_factory=list)
+    apply_calls: list[tuple[dict[str, object], str]] = field(default_factory=list)
+    rollback_calls: list[tuple[str, str]] = field(default_factory=list)
 
     async def record_outcome(self, scope_id: str, action_family: str, outcome: str) -> None:
         self.record_calls.append((scope_id, action_family, outcome))
@@ -295,6 +297,16 @@ class FakeAutonomyCalibrator:
     async def evaluate(self, scope_id: str, now: datetime) -> list[dict[str, object]]:
         self.evaluate_calls.append((scope_id, now))
         return list(self.proposals_by_scope.get(scope_id, []))
+
+    async def apply(self, proposal: dict[str, object], decision: str) -> dict[str, object]:
+        self.apply_calls.append((proposal, decision))
+        return {"proposal": proposal, "decision": decision}
+
+    def rollback(self, scope_id: str, action_family: str) -> None:
+        self.rollback_calls.append((scope_id, action_family))
+
+    def get_metrics(self, scope_id: str) -> dict[str, object]:
+        return {"scope_id": scope_id, "total_events": len(self.record_calls), "families": {}}
 
 
 def _neutral_axes() -> AxisProfile:

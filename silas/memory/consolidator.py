@@ -14,6 +14,15 @@ class SilasMemoryConsolidator:
     def __init__(self, memory_store: MemoryStore):
         self._memory_store = memory_store
 
+    async def run_once(self) -> dict[str, int]:
+        """Provide the protocol entrypoint while preserving legacy consolidate callers.
+
+        We execute `consolidate("")` in a worker thread so the sync compatibility
+        path can safely use its internal await bridge without tripping on an
+        already-running event loop.
+        """
+        return await asyncio.to_thread(self.consolidate, "")
+
     def consolidate(self, scope_id: str) -> dict[str, int]:
         now = datetime.now(UTC)
         stale_cutoff = now - timedelta(days=30)
