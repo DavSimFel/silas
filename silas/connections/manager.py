@@ -78,12 +78,8 @@ class SilasConnectionManager:
                 continue
 
             event_type = str(event.get("type", ""))
-            if event_type == "setup_step":
-                step_payload = event.get("step")
-                if isinstance(step_payload, dict):
-                    setup_steps.append(SetupStep.model_validate(step_payload))
-                continue
 
+            # Dispatch each NDJSON event type to its handler
             if event_type == "await_input":
                 step_id = str(event.get("step_id", ""))
                 response = (
@@ -101,42 +97,10 @@ class SilasConnectionManager:
                 )
                 continue
 
-            if event_type == "completion":
-                step_payload = event.get("step")
-                if isinstance(step_payload, dict):
-                    setup_steps.append(SetupStep.model_validate(step_payload))
-                else:
-                    summary = event.get("summary")
-                    setup_steps.append(
-                        SetupStep(
-                            type="completion",
-                            success=bool(event.get("success", True)),
-                            summary=str(summary) if summary is not None else "Setup completed",
-                            permissions_granted=_as_str_list(event.get("permissions_granted")),
-                        )
-                    )
-                continue
-
-            if event_type == "failure":
-                setup_steps.append(
-                    SetupStep(
-                        type="failure",
-                        failure=self._parse_failure(event.get("failure"), skill_name),
-                    )
-                )
-                continue
-
-            if event_type == "progress":
-                progress_pct = event.get("progress_pct")
-                setup_steps.append(
-                    SetupStep(
-                        type="progress",
-                        message=str(event.get("message")) if event.get("message") is not None else None,
-                        progress_pct=float(progress_pct)
-                        if isinstance(progress_pct, int | float)
-                        else None,
-                    )
-                )
+            # All other event types produce a SetupStep
+            step = self._parse_setup_event(event_type, event, skill_name)
+            if step is not None:
+                setup_steps.append(step)
                 continue
 
             try:
@@ -436,6 +400,44 @@ class SilasConnectionManager:
         line = f"{json.dumps(payload, separators=(',', ':'))}\n"
         stream.write(line.encode("utf-8"))
         await stream.drain()
+
+    def _parse_setup_event(
+        self, event_type: str, event: dict[str, object], skill_name: str,
+    ) -> SetupStep | None:
+        """Convert a single NDJSON setup event into a SetupStep, or None if unrecognized."""
+        if event_type == "setup_step":
+            step_payload = event.get("step")
+            if isinstance(step_payload, dict):
+                return SetupStep.model_validate(step_payload)
+            return None
+
+        if event_type == "completion":
+            step_payload = event.get("step")
+            if isinstance(step_payload, dict):
+                return SetupStep.model_validate(step_payload)
+            summary = event.get("summary")
+            return SetupStep(
+                type="completion",
+                success=bool(event.get("success", True)),
+                summary=str(summary) if summary is not None else "Setup completed",
+                permissions_granted=_as_str_list(event.get("permissions_granted")),
+            )
+
+        if event_type == "failure":
+            return SetupStep(
+                type="failure",
+                failure=self._parse_failure(event.get("failure"), skill_name),
+            )
+
+        if event_type == "progress":
+            progress_pct = event.get("progress_pct")
+            return SetupStep(
+                type="progress",
+                message=str(event.get("message")) if event.get("message") is not None else None,
+                progress_pct=float(progress_pct) if isinstance(progress_pct, int | float) else None,
+            )
+
+        return None
 
     def _parse_failure(self, payload: object, service: str) -> ConnectionFailure:
         if isinstance(payload, dict):

@@ -40,8 +40,11 @@ line-length = 100
 src = ["silas", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "N"]
+select = ["E", "F", "I", "B", "N", "C901"]
 ignore = ["E501"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
 
 [tool.pytest.ini_options]
 addopts = "-q"

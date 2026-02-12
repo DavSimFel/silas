@@ -55,17 +55,11 @@ class MarkdownPlanParser(PlanParser):
         payload: dict[str, object],
         front_matter: Mapping[object, object],
     ) -> None:
+        # Pass-through scalar fields that need no transformation
         scalar_fields = (
-            "parent",
-            "spawned_by",
-            "follow_up_of",
-            "domain",
-            "agent",
-            "needs_approval",
-            "schedule",
-            "on_stuck",
-            "on_failure",
-            "failure_context",
+            "parent", "spawned_by", "follow_up_of", "domain",
+            "agent", "needs_approval", "schedule", "on_stuck",
+            "on_failure", "failure_context",
         )
         for field in scalar_fields:
             value = front_matter.get(field)
@@ -76,25 +70,21 @@ class MarkdownPlanParser(PlanParser):
         if interaction_mode is not None:
             payload["interaction_mode"] = InteractionMode(interaction_mode)
 
-        skills = front_matter.get("skills")
-        if skills is not None:
-            payload["skills"] = self._parse_string_list("skills", skills)
+        # String list fields share the same parsing logic
+        for list_field in ("skills", "input_artifacts_from", "tasks", "depends_on"):
+            value = front_matter.get(list_field)
+            if value is not None:
+                payload[list_field] = self._parse_string_list(list_field, value)
 
-        input_artifacts_from = front_matter.get("input_artifacts_from")
-        if input_artifacts_from is not None:
-            payload["input_artifacts_from"] = self._parse_string_list(
-                "input_artifacts_from",
-                input_artifacts_from,
-            )
+        # Complex validated fields each have their own schema
+        self._populate_validated_fields(payload, front_matter)
 
-        tasks = front_matter.get("tasks")
-        if tasks is not None:
-            payload["tasks"] = self._parse_string_list("tasks", tasks)
-
-        depends_on = front_matter.get("depends_on")
-        if depends_on is not None:
-            payload["depends_on"] = self._parse_string_list("depends_on", depends_on)
-
+    def _populate_validated_fields(
+        self,
+        payload: dict[str, object],
+        front_matter: Mapping[object, object],
+    ) -> None:
+        """Parse and validate structured fields (budget, verify, gates, etc.)."""
         budget = front_matter.get("budget")
         if budget is not None:
             if not isinstance(budget, Mapping):
