@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +31,8 @@ from silas.persistence.work_item_store import SQLiteWorkItemStore
 from silas.proactivity import SimpleAutonomyCalibrator, SimpleSuggestionEngine
 from silas.skills.executor import SkillExecutor, register_builtin_skills
 from silas.skills.registry import SkillRegistry
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_OWNER_ID = "owner"
 _DEFAULT_AGENT_NAME = "Silas"
@@ -214,6 +218,24 @@ def _run_onboarding(config_path: Path) -> None:
     )
 
 
+def _init_signing_key(data_dir: Path) -> None:
+    """Generate an Ed25519 signing keypair in the Tier 2 store during onboarding."""
+    from silas.secrets import SigningKeyStore
+
+    passphrase = click.prompt(
+        "Choose a signing passphrase (protects your approval keys)",
+        type=str,
+        hide_input=True,
+        confirmation_prompt=True,
+    )
+    store = SigningKeyStore(data_dir, passphrase)
+    if store.has_keypair():
+        click.echo("Signing keypair already exists — skipping generation.")
+        return
+    pub_hex = store.generate_keypair()
+    click.echo(f"Ed25519 signing key generated. Public key: {pub_hex[:16]}...")
+
+
 @cli.command("init")
 @click.option("--config", "config_path", default="config/silas.yaml", show_default=True)
 def init_command(config_path: str) -> None:
@@ -223,15 +245,37 @@ def init_command(config_path: str) -> None:
     settings = load_config(config_path)
     db = _db_path(settings)
 
+    # Generate Tier 2 signing keypair
+    _init_signing_key(settings.data_dir)
+
     # Run migrations synchronously
     asyncio.run(run_migrations(db))
     click.echo(f"{settings.agent_name} is ready. Run `silas start` to begin.")
 
 
-async def _start_runtime(settings: SilasSettings) -> None:
+def _resolve_signing_passphrase() -> str:
+    """Get signing passphrase from env or interactive prompt."""
+    env_passphrase = os.environ.get("SILAS_SIGNING_PASSPHRASE")
+    if env_passphrase:
+        return env_passphrase
+    return click.prompt("Signing passphrase", type=str, hide_input=True)
+
+
+async def _start_runtime(settings: SilasSettings, passphrase: str) -> None:
     # Run migrations before starting
     db = _db_path(settings)
     await run_migrations(db)
+
+    # Load Tier 2 signing key for approval verification
+    from silas.secrets import SigningKeyStore
+
+    signing_store = SigningKeyStore(settings.data_dir, passphrase)
+    if not signing_store.has_keypair():
+        logger.warning("No signing keypair found — approvals will not be cryptographically bound")
+        _signing_key = None
+    else:
+        _signing_key = signing_store.load_private_key()
+        logger.info("Tier 2 signing key loaded")
 
     stream, web_channel = build_stream(settings)
     await asyncio.gather(web_channel.serve(), stream.start())
@@ -245,8 +289,10 @@ def start_command(config_path: str) -> None:
     if not settings.channels.web.enabled:
         raise click.ClickException("Phase 1a requires channels.web.enabled=true")
 
+    passphrase = _resolve_signing_passphrase()
+
     try:
-        asyncio.run(_start_runtime(settings))
+        asyncio.run(_start_runtime(settings, passphrase))
     except KeyboardInterrupt:
         click.echo("Shutting down.")
 

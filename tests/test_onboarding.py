@@ -49,10 +49,11 @@ def test_init_writes_config_and_secret(config_file: Path, tmp_path: Path) -> Non
     """Onboarding writes agent_name/owner_name to YAML and API key to SecretStore."""
     runner = CliRunner()
     with patch("silas.main._validate_openrouter_api_key", return_value=True):
+        # Input: agent_name, owner_name, api_key, passphrase, passphrase_confirm
         result = runner.invoke(
             cli,
             ["init", "--config", str(config_file)],
-            input="TestBot\nAlice\nsk-fake-key\n",
+            input="TestBot\nAlice\nsk-fake-key\ntestpass\ntestpass\n",
         )
 
     assert result.exit_code == 0, result.output
@@ -76,7 +77,7 @@ def test_init_retries_invalid_key(config_file: Path) -> None:
         result = runner.invoke(
             cli,
             ["init", "--config", str(config_file)],
-            input="Bot\nBob\nbad-key\ngood-key\n",
+            input="Bot\nBob\nbad-key\ngood-key\ntestpass\ntestpass\n",
         )
 
     assert result.exit_code == 0, result.output
@@ -220,3 +221,98 @@ def test_api_key_ref_fallback_to_direct(tmp_path: Path) -> None:
 
     config = ModelsConfig(api_key="sk-direct", api_key_ref="missing-ref")
     assert config.resolve_api_key(data_dir=tmp_path) == "sk-direct"
+
+
+# ---------------------------------------------------------------------------
+# Tier 2 — SigningKeyStore tests
+# ---------------------------------------------------------------------------
+
+
+def test_signing_key_store_roundtrip(tmp_path: Path) -> None:
+    """Generate, store, and reload Ed25519 keypair with passphrase."""
+    from silas.secrets import SigningKeyStore
+
+    store = SigningKeyStore(tmp_path, "test-passphrase")
+    assert not store.has_keypair()
+
+    pub_hex = store.generate_keypair()
+    assert len(pub_hex) == 64  # 32 bytes hex
+    assert store.has_keypair()
+
+    pk = store.load_private_key()
+    # Verify the loaded key can sign
+    sig = pk.sign(b"hello")
+    pk.public_key().verify(sig, b"hello")  # no exception = valid
+
+
+def test_signing_key_store_wrong_passphrase(tmp_path: Path) -> None:
+    """Wrong passphrase cannot read back the key."""
+    from silas.secrets import SigningKeyStore
+
+    store1 = SigningKeyStore(tmp_path, "correct-passphrase")
+    store1.generate_keypair()
+
+    store2 = SigningKeyStore(tmp_path, "wrong-passphrase")
+    assert not store2.has_keypair()  # can't decrypt → no key found
+
+
+def test_signing_key_store_persists(tmp_path: Path) -> None:
+    """Same passphrase across instances recovers the key."""
+    from silas.secrets import SigningKeyStore
+
+    store1 = SigningKeyStore(tmp_path, "my-pass")
+    pub1 = store1.generate_keypair()
+
+    store2 = SigningKeyStore(tmp_path, "my-pass")
+    pub2 = store2.get_public_key_hex()
+    assert pub1 == pub2
+
+
+def test_signing_key_store_encrypted_on_disk(tmp_path: Path) -> None:
+    """Signing key file must not contain plaintext key material."""
+    from silas.secrets import SigningKeyStore
+
+    store = SigningKeyStore(tmp_path, "p")
+    store.generate_keypair()
+
+    enc_file = tmp_path / ".signing.enc"
+    assert enc_file.exists()
+    raw = enc_file.read_bytes()
+    # The Ed25519 private key is 32 bytes — shouldn't appear in plaintext
+    assert b"ed25519" not in raw.lower()
+
+
+@pytest.mark.anyio
+async def test_signing_key_integrated_with_verifier(tmp_path: Path) -> None:
+    """Tier 2 key works with SilasApprovalVerifier end-to-end."""
+    from silas.approval.verifier import SilasApprovalVerifier
+    from silas.models.approval import ApprovalDecision, ApprovalVerdict
+    from silas.models.work import WorkItem
+    from silas.secrets import SigningKeyStore
+
+    # In-memory nonce store
+    class _Nonces:
+        def __init__(self) -> None:
+            self._k: set[str] = set()
+
+        async def is_used(self, d: str, n: str) -> bool:
+            return f"{d}:{n}" in self._k
+
+        async def record(self, d: str, n: str) -> None:
+            self._k.add(f"{d}:{n}")
+
+        async def prune_expired(self, older_than: object) -> int:
+            return 0
+
+    store = SigningKeyStore(tmp_path, "secure")
+    store.generate_keypair()
+    pk = store.load_private_key()
+
+    verifier = SilasApprovalVerifier(signing_key=pk, nonce_store=_Nonces())
+    wi = WorkItem(id="t1", type="task", title="Test", body="body")
+    decision = ApprovalDecision(verdict=ApprovalVerdict.approved)
+
+    token = await verifier.issue_token(wi, decision)
+    valid, reason = await verifier.verify(token, wi)
+    assert valid is True
+    assert reason == "ok"
