@@ -1,4 +1,9 @@
-"""Planner Agent — generates executable markdown plans for complex requests."""
+"""Planner Agent — generates executable markdown plans for complex requests.
+
+WI-2 enhancement: optional tool loop. When use_tools=True, the planner can
+call tools (memory_search, request_research, validate_plan) before producing
+its final AgentResponse. Includes research state tracking per spec §4.8.
+"""
 
 from __future__ import annotations
 
@@ -6,11 +11,16 @@ import logging
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic_ai import Agent
 
 from silas.agents.structured import run_structured_agent
 from silas.models.agents import AgentResponse, InteractionMode, PlanAction, PlanActionType
+
+if TYPE_CHECKING:
+    from silas.tools.common import AgentDeps
+    from silas.tools.toolsets import AgentToolBundle
 
 logger = logging.getLogger(__name__)
 
@@ -33,28 +43,66 @@ class PlannerRunResult:
 
 
 class PlannerAgent:
-    def __init__(self, model: str, default_context_profile: str = "planning") -> None:
+    """Planner agent with optional tool loop and research state tracking.
+
+    When use_tools=True, the planner can call tools during its run to gather
+    context before writing the plan. Research requests are tracked with a
+    simple in-flight counter capped at max_in_flight_research (spec §4.8).
+    """
+
+    # Why class-level cap: spec §4.8 mandates at most 3 in-flight research
+    # requests per task_id. This is enforced at the agent level as a simple
+    # counter until the full state machine is built.
+    MAX_IN_FLIGHT_RESEARCH: int = 3
+
+    def __init__(
+        self,
+        model: str,
+        default_context_profile: str = "planning",
+        *,
+        use_tools: bool = False,
+        tool_bundle: AgentToolBundle | None = None,
+    ) -> None:
         self.model = model
         self.default_context_profile = default_context_profile
         self.system_prompt = _load_planner_system_prompt()
         self._llm_available = True
+        self._use_tools = use_tools and tool_bundle is not None
+        self._tool_bundle = tool_bundle
+        # Why a simple counter: full state machine (spec §4.8) comes in a
+        # later WI. For now, we track in-flight count to enforce the cap.
+        self._in_flight_research: int = 0
 
         try:
             self.agent = Agent(
                 model=model,
                 output_type=AgentResponse,
                 system_prompt=self.system_prompt,
+                tools=tool_bundle.custom_tools if self._use_tools and tool_bundle else [],
+                toolsets=[tool_bundle.console_toolset] if self._use_tools and tool_bundle else [],
             )
         except (ImportError, ValueError, TypeError, RuntimeError) as exc:
             logger.warning("Failed to initialize Planner Agent; falling back to deterministic planner: %s", exc)
             self.agent = None
             self._llm_available = False
 
-    async def run(self, prompt: str) -> PlannerRunResult:
-        response = await self.plan(prompt)
+    async def run(self, prompt: str, deps: AgentDeps | None = None) -> PlannerRunResult:
+        """Run the planner, optionally with tool-loop deps."""
+        response = await self.plan(prompt, deps=deps)
         return PlannerRunResult(output=response)
 
-    async def plan(self, user_request: str, rendered_context: str = "") -> AgentResponse:
+    async def plan(
+        self,
+        user_request: str,
+        rendered_context: str = "",
+        *,
+        deps: AgentDeps | None = None,
+    ) -> AgentResponse:
+        """Generate a plan for the user request.
+
+        When deps is provided and tools are registered, the agent can use
+        tools (memory_search, request_research) during its run.
+        """
         prompt = self._build_prompt(user_request, rendered_context)
 
         if self.agent is not None and self._llm_available:
@@ -70,6 +118,27 @@ class PlannerAgent:
                 logger.warning("Planner LLM call failed; using deterministic fallback", exc_info=True)
 
         return self._fallback_response(user_request)
+
+    @property
+    def in_flight_research(self) -> int:
+        """Current count of in-flight research requests."""
+        return self._in_flight_research
+
+    def track_research_dispatched(self) -> bool:
+        """Increment in-flight counter. Returns False if cap reached.
+
+        Why a method not automatic: the tool function calls this before
+        enqueueing, so the planner can decide to proceed without research
+        if the cap is hit.
+        """
+        if self._in_flight_research >= self.MAX_IN_FLIGHT_RESEARCH:
+            return False
+        self._in_flight_research += 1
+        return True
+
+    def track_research_completed(self) -> None:
+        """Decrement in-flight counter when a research result arrives."""
+        self._in_flight_research = max(0, self._in_flight_research - 1)
 
     def _coerce_response(self, raw: object, user_request: str) -> AgentResponse:
         response = raw if isinstance(raw, AgentResponse) else AgentResponse.model_validate(raw)
@@ -151,8 +220,20 @@ def _load_planner_system_prompt() -> str:
     return DEFAULT_PLANNER_SYSTEM_PROMPT
 
 
-def build_planner_agent(model: str, default_context_profile: str = "planning") -> PlannerAgent:
-    return PlannerAgent(model=model, default_context_profile=default_context_profile)
+def build_planner_agent(
+    model: str,
+    default_context_profile: str = "planning",
+    *,
+    use_tools: bool = False,
+    tool_bundle: AgentToolBundle | None = None,
+) -> PlannerAgent:
+    """Factory for PlannerAgent with optional tool loop support."""
+    return PlannerAgent(
+        model=model,
+        default_context_profile=default_context_profile,
+        use_tools=use_tools,
+        tool_bundle=tool_bundle,
+    )
 
 
 __all__ = ["PlannerAgent", "PlannerRunResult", "build_planner_agent"]
