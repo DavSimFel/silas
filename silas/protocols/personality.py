@@ -48,4 +48,4 @@ class PersonaStore(Protocol):
     async def list_events(self, scope_id: str, limit: int = 100) -> list[PersonaEvent]: ...
 
 
-__all__ = ["PersonalityEngine", "PersonaStore"]
+__all__ = ["PersonaStore", "PersonalityEngine"]

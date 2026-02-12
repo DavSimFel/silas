@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import aiosqlite
 
@@ -16,7 +16,7 @@ class SQLiteAuditLog:
 
     async def log(self, event: str, **data: object) -> str:
         entry_id = uuid.uuid4().hex
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         data_json = json.dumps(data, default=str, sort_keys=True)
 
         async with aiosqlite.connect(self.db_path) as db:
@@ -80,7 +80,7 @@ class SQLiteAuditLog:
 
     async def write_checkpoint(self) -> str:
         checkpoint_id = uuid.uuid4().hex
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(

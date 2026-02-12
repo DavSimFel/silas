@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
 
 from silas.models.messages import TaintLevel, utc_now
 
 
-class MemoryType(str, Enum):
+class MemoryType(StrEnum):
     episode = "episode"
     fact = "fact"
     preference = "preference"
@@ -17,14 +17,14 @@ class MemoryType(str, Enum):
     profile = "profile"
 
 
-class ReingestionTier(str, Enum):
+class ReingestionTier(StrEnum):
     active = "active"
     low_reingestion = "low_reingestion"
     core = "core"
     dormant = "dormant"
 
 
-class TrustLevel(str, Enum):
+class TrustLevel(StrEnum):
     working = "working"
     verified = "verified"
     constitutional = "constitutional"
@@ -63,8 +63,8 @@ class MemoryItem(BaseModel):
 
 
 __all__ = [
+    "MemoryItem",
     "MemoryType",
     "ReingestionTier",
     "TrustLevel",
-    "MemoryItem",
 ]

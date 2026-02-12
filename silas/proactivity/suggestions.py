@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from silas.models.proactivity import SuggestionProposal
 from silas.models.work import WorkItemResult, WorkItemStatus
@@ -32,7 +32,7 @@ class SimpleSuggestionEngine:
         scope_id: str,
         result: WorkItemResult,
     ) -> list[SuggestionProposal]:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         confidence = 0.75 if result.status == WorkItemStatus.done else 0.55
         expires_at = now + timedelta(hours=12)
 
@@ -52,7 +52,7 @@ class SimpleSuggestionEngine:
 
     async def mark_handled(self, scope_id: str, suggestion_id: str, outcome: str) -> None:
         del outcome
-        self._handled_at.setdefault(scope_id, {})[suggestion_id] = datetime.now(timezone.utc)
+        self._handled_at.setdefault(scope_id, {})[suggestion_id] = datetime.now(UTC)
 
     def _prune_expired(self, scope_id: str, now: datetime) -> None:
         suggestions = self._idle_by_scope.get(scope_id, [])

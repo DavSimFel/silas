@@ -142,7 +142,7 @@ def start_command(config_path: str) -> None:
         click.echo("Shutting down.")
 
 
-__all__ = ["cli", "build_stream"]
+__all__ = ["build_stream", "cli"]
 
 
 if __name__ == "__main__":

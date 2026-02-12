@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
@@ -18,7 +18,7 @@ def _msg(text: str, sender_id: str = "owner") -> ChannelMessage:
         channel="web",
         sender_id=sender_id,
         text=text,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
     )
 
 
@@ -30,7 +30,7 @@ def _proposal(
     source: str = "idle_heartbeat",
     category: str = "next_step",
 ) -> SuggestionProposal:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return SuggestionProposal(
         id=suggestion_id,
         text=text,
@@ -63,7 +63,7 @@ def test_suggestion_confidence_range() -> None:
 
 
 def test_suggestion_proposal_expiry_validation() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with pytest.raises(ValidationError):
         SuggestionProposal(
             id="sp1",
@@ -80,7 +80,7 @@ def test_suggestion_proposal_expiry_validation() -> None:
 @pytest.mark.asyncio
 async def test_simple_suggestion_engine_idle_filters_expired_and_handled() -> None:
     engine = SimpleSuggestionEngine(cooldown=timedelta(minutes=30))
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     active = SuggestionProposal(
         id="active",
         text="active",
@@ -139,7 +139,7 @@ async def test_simple_suggestion_engine_generate_post_execution() -> None:
 
 @pytest.mark.asyncio
 async def test_simple_autonomy_calibrator_emits_widen_and_tighten() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     widen_calibrator = SimpleAutonomyCalibrator(
         window_size=6,
@@ -150,7 +150,8 @@ async def test_simple_autonomy_calibrator_emits_widen_and_tighten() -> None:
     for _ in range(5):
         await widen_calibrator.record_outcome("owner", "direct", "approved")
     widen = await widen_calibrator.evaluate("owner", now)
-    assert widen and widen[0]["direction"] == "widen"
+    assert widen
+    assert widen[0]["direction"] == "widen"
 
     tighten_calibrator = SimpleAutonomyCalibrator(
         window_size=6,
@@ -163,7 +164,8 @@ async def test_simple_autonomy_calibrator_emits_widen_and_tighten() -> None:
     for _ in range(2):
         await tighten_calibrator.record_outcome("owner", "direct", "approved")
     tighten = await tighten_calibrator.evaluate("owner", now)
-    assert tighten and tighten[0]["direction"] == "tighten"
+    assert tighten
+    assert tighten[0]["direction"] == "tighten"
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,7 @@ for all Pydantic models per specs.md Section 3.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
@@ -68,7 +68,7 @@ class TestChannelMessage:
                 channel="web",
                 sender_id="u",
                 text="hi",
-                timestamp=datetime(2026, 1, 1),  # noqa: DTZ001 - intentionally naive
+                timestamp=datetime(2026, 1, 1),
             )
 
     def test_default_attachments_empty(self) -> None:
@@ -88,7 +88,7 @@ class TestSignedMessage:
             channel="web",
             sender_id="u",
             text="hello",
-            timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
         )
         b1 = signed_message_canonical_bytes(msg, "nonce1")
         b2 = signed_message_canonical_bytes(msg, "nonce1")
@@ -100,7 +100,7 @@ class TestSignedMessage:
             channel="web",
             sender_id="u",
             text="test",
-            timestamp=datetime(2026, 6, 15, 12, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC),
         )
         raw = signed_message_canonical_bytes(msg, "n1")
         import json
@@ -116,7 +116,7 @@ class TestSignedMessage:
             channel="web",
             sender_id="u",
             text="hello",
-            timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
         )
         b1 = signed_message_canonical_bytes(msg, "nonce1")
         b2 = signed_message_canonical_bytes(msg, "nonce2")
@@ -318,7 +318,7 @@ class TestContextItem:
                 zone=ContextZone.chronicle,
                 content="text",
                 token_count=10,
-                created_at=datetime(2026, 1, 1),  # noqa: DTZ001
+                created_at=datetime(2026, 1, 1),
                 turn_number=1,
                 source="test",
                 kind="message",
@@ -480,7 +480,7 @@ class TestWorkItem:
 
     def test_naive_created_at_rejected(self) -> None:
         with pytest.raises(ValidationError, match="timezone-aware"):
-            self._make_work_item(created_at=datetime(2026, 1, 1))  # noqa: DTZ001
+            self._make_work_item(created_at=datetime(2026, 1, 1))
 
     def test_default_status_is_pending(self) -> None:
         wi = self._make_work_item()
@@ -541,7 +541,7 @@ class TestApprovalToken:
 
     def test_naive_datetime_rejected(self) -> None:
         with pytest.raises(ValidationError, match="timezone-aware"):
-            _make_token(expires_at=datetime(2099, 1, 1))  # noqa: DTZ001
+            _make_token(expires_at=datetime(2099, 1, 1))
 
 
 class TestApprovalDecision:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable, Mapping
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
@@ -52,7 +52,7 @@ class LLMChecker:
         self._timeout_seconds = timeout_seconds
         self._failure_threshold = failure_threshold
         self._cooldown_seconds = cooldown_seconds
-        self._now_fn = now_fn or (lambda: datetime.now(timezone.utc))
+        self._now_fn = now_fn or (lambda: datetime.now(UTC))
 
         self._consecutive_failures = 0
         self._breaker_open_until: datetime | None = None

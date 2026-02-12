@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from silas.models.memory import MemoryItem, ReingestionTier
@@ -15,7 +15,7 @@ class SilasMemoryConsolidator:
         self._memory_store = memory_store
 
     def consolidate(self, scope_id: str) -> dict[str, int]:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         stale_cutoff = now - timedelta(days=30)
         stats = {"merged": 0, "archived": 0, "promoted": 0}
 

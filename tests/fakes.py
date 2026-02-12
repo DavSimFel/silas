@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import sha256
-from typing import AsyncIterator
 
 from silas.models.agents import AgentResponse, InteractionMode, InteractionRegister, RouteDecision
 from silas.models.context import ContextItem, ContextProfile, ContextSubscription, ContextZone
@@ -21,11 +21,11 @@ from silas.models.work import (
     WorkItemResult,
     WorkItemStatus,
 )
-from silas.stubs import InMemoryAuditLog as InMemoryAuditLog  # noqa: PLC0414
+from silas.stubs import InMemoryAuditLog as InMemoryAuditLog
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass(slots=True)
@@ -167,7 +167,7 @@ class InMemoryMemoryStore:
         item = self.items.get(memory_id)
         if item is None:
             return
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         payload = item.model_dump(mode="python")
         payload["access_count"] = item.access_count + 1
         payload["last_accessed"] = now
@@ -473,10 +473,10 @@ def sample_context_profile(name: str = "conversation") -> ContextProfile:
 __all__ = [
     "FakeAutonomyCalibrator",
     "FakeKeyManager",
-    "FakeVerificationRunner",
+    "FakePersonalityEngine",
     "FakeSuggestionEngine",
     "FakeTokenCounter",
-    "FakePersonalityEngine",
+    "FakeVerificationRunner",
     "InMemoryAuditLog",
     "InMemoryChannel",
     "InMemoryContextManager",

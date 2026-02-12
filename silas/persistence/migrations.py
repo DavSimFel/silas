@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "memory" / "migrations"
@@ -51,7 +51,7 @@ def _run_migrations_sync(db_path: str, migrations_dir: Path) -> None:
             sql = sql_file.read_text(encoding="utf-8")
             conn.executescript(sql)
 
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             conn.execute(
                 "INSERT OR IGNORE INTO _migrations (name, checksum, applied_at) VALUES (?, ?, ?)",
                 (name, checksum, now),

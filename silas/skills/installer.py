@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from silas.models.skills import SkillMetadata
@@ -60,7 +60,7 @@ class SkillInstaller:
             "validation_report": validation_report,
             "indexed_count": len(indexed),
             "destination": str(destination),
-            "installed_at": datetime.now(timezone.utc).isoformat(),
+            "installed_at": datetime.now(UTC).isoformat(),
         }
 
     def uninstall(self, skill_name: str) -> bool:

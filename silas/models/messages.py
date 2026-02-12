@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
-class TaintLevel(str, Enum):
+class TaintLevel(StrEnum):
     owner = "owner"
     auth = "auth"
     external = "external"
@@ -50,9 +50,9 @@ def signed_message_canonical_bytes(message: ChannelMessage, nonce: str) -> bytes
 
 
 __all__ = [
-    "TaintLevel",
     "ChannelMessage",
     "SignedMessage",
+    "TaintLevel",
     "signed_message_canonical_bytes",
     "utc_now",
 ]

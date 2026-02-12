@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from silas.models.preferences import InferredPreference, PreferenceSignal
 
@@ -38,7 +38,7 @@ class PreferenceInferenceEngine:
             grouped.setdefault(key, []).append(signal)
 
         inferred: list[InferredPreference] = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for (category, signal_type, _context_key), signals in sorted(grouped.items()):
             if len(signals) < min_signals:
                 continue

@@ -72,10 +72,7 @@ class PlannerAgent:
         return self._fallback_response(user_request)
 
     def _coerce_response(self, raw: object, user_request: str) -> AgentResponse:
-        if isinstance(raw, AgentResponse):
-            response = raw
-        else:
-            response = AgentResponse.model_validate(raw)
+        response = raw if isinstance(raw, AgentResponse) else AgentResponse.model_validate(raw)
         return self._ensure_plan_markdown(response, user_request)
 
     def _ensure_plan_markdown(self, response: AgentResponse, user_request: str) -> AgentResponse:

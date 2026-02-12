@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from silas.models.approval import (
     ApprovalDecision,
@@ -20,7 +20,7 @@ class LiveApprovalManager:
 
     def request_approval(self, work_item: WorkItem, scope: ApprovalScope) -> ApprovalToken:
         self._prune_expired()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         token = ApprovalToken(
             token_id=uuid.uuid4().hex,
             plan_hash=work_item.plan_hash(),
@@ -62,7 +62,7 @@ class LiveApprovalManager:
         self._pending[token_id] = pending.model_copy(
             update={
                 "decision": decision,
-                "resolved_at": datetime.now(timezone.utc),
+                "resolved_at": datetime.now(UTC),
                 "resolved_by": resolved_by,
             }
         )
@@ -73,7 +73,7 @@ class LiveApprovalManager:
         return [item for item in self._pending.values() if item.decision is None]
 
     def _prune_expired(self) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         expired = [
             token_id
             for token_id, item in self._pending.items()

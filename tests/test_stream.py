@@ -6,7 +6,7 @@ memory retrieval, context profile setting, and edge cases.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from silas.approval import LiveApprovalManager
@@ -39,7 +39,7 @@ def _msg(text: str, sender_id: str = "owner") -> ChannelMessage:
         channel="web",
         sender_id=sender_id,
         text=text,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
     )
 
 
@@ -451,8 +451,10 @@ async def test_planner_route_executes_plan_actions_and_returns_summary(
     assert execution_order == ["plan-a", "plan-b"]
     plan_a = await work_store.get("plan-a")
     plan_b = await work_store.get("plan-b")
-    assert plan_a is not None and plan_a.status == WorkItemStatus.done
-    assert plan_b is not None and plan_b.status == WorkItemStatus.done
+    assert plan_a is not None
+    assert plan_a.status == WorkItemStatus.done
+    assert plan_b is not None
+    assert plan_b.status == WorkItemStatus.done
 
 
 @pytest.mark.asyncio

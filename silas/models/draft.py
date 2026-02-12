@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
-class DraftVerdict(str, Enum):
+class DraftVerdict(StrEnum):
     approve = "approve"
     edit = "edit"
     rephrase = "rephrase"
@@ -51,4 +51,4 @@ class DraftReview(BaseModel):
         return self
 
 
-__all__ = ["DraftVerdict", "DraftReview"]
+__all__ = ["DraftReview", "DraftVerdict"]

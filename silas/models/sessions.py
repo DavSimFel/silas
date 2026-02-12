@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
 
 from silas.models.messages import utc_now
 
 
-class SessionType(str, Enum):
+class SessionType(StrEnum):
     stream = "stream"
     side = "side"
 

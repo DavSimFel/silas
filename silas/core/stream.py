@@ -7,7 +7,7 @@ import re
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from silas.agents.structured import run_structured_agent
 from silas.core.context_manager import LiveContextManager
@@ -90,7 +90,7 @@ class Stream:
                         zone=ContextZone.memory,
                         content=item.content,
                         token_count=_counter.count(item.content),
-                        created_at=datetime.now(timezone.utc),
+                        created_at=datetime.now(UTC),
                         turn_number=tc.turn_number,
                         source="memory:profile",
                         taint=item.taint,
@@ -110,7 +110,7 @@ class Stream:
                         zone=ContextZone.memory,
                         content=item.content,
                         token_count=_counter.count(item.content),
-                        created_at=datetime.now(timezone.utc),
+                        created_at=datetime.now(UTC),
                         turn_number=tc.turn_number,
                         source="memory:session_rehydrate",
                         taint=item.taint,
@@ -147,7 +147,7 @@ class Stream:
             zone=ContextZone.chronicle,
             content=f"[{signed.taint.value}] {message.sender_id}: {message.text}",
             token_count=_counter.count(message.text),
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             turn_number=turn_number,
             source=f"channel:{message.channel}",
             taint=signed.taint,
@@ -218,7 +218,7 @@ class Stream:
             zone=ContextZone.chronicle,
             content=f"Silas: {response_text}",
             token_count=_counter.count(response_text),
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             turn_number=turn_number,
             source="agent:proxy",
             taint=TaintLevel.owner,
@@ -327,7 +327,7 @@ class Stream:
 
         idle_suggestions = await suggestion_engine.generate_idle(
             self.turn_context.scope_id,
-            datetime.now(timezone.utc),
+            datetime.now(UTC),
         )
         high = [s for s in idle_suggestions if s.confidence > 0.80]
         low = [s for s in idle_suggestions if s.confidence <= 0.80]
@@ -376,7 +376,7 @@ class Stream:
                     zone=ContextZone.memory,
                     content=item.content,
                     token_count=_counter.count(item.content),
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                     turn_number=turn_number,
                     source="memory:auto_retrieve",
                     taint=item.taint,
@@ -397,8 +397,8 @@ class Stream:
                 memory_type=MemoryType.episode,
                 reingestion_tier=ReingestionTier.low_reingestion,
                 taint=taint,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
                 session_id=session_id,
                 source_kind="conversation_raw",
             ),
@@ -884,9 +884,9 @@ class Stream:
 
         deadline = min(
             token.expires_at,
-            datetime.now(timezone.utc) + _APPROVAL_WAIT_LIMIT,
+            datetime.now(UTC) + _APPROVAL_WAIT_LIMIT,
         )
-        while datetime.now(timezone.utc) < deadline:
+        while datetime.now(UTC) < deadline:
             decision = approval_manager.check_approval(token.token_id)
             if decision is not None:
                 return decision

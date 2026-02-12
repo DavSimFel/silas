@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import aiosqlite
 
@@ -63,12 +63,12 @@ class SQLiteChronicleStore:
             return cursor.rowcount
 
 
-def _parse_dt(val: str):  # noqa: ANN202
-    from datetime import datetime, timezone
+def _parse_dt(val: str):
+    from datetime import datetime
 
     dt = datetime.fromisoformat(val)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt
 
 

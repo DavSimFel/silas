@@ -1,44 +1,78 @@
-# AGENTS.md — Codex Instructions
+# AGENTS.md — Coding Agent Instructions
 
-## Current Task: LiveContextManager
+## Project: Silas AI Runtime
 
-Build `silas/core/context_manager.py` implementing the `ContextManager` protocol from `silas/protocols/context.py`.
+Python 3.12+ project using `uv` for package management. Strict linting enforced.
 
-Read specs.md Section 3.5 (Context models) and Section 4.3 (ContextManager protocol) and Section 5.7 (eviction — stub for now).
+## Before You Start
 
-### What to Build
+1. Read the relevant section of `specs.md` for what you're building
+2. Check existing code in the target module — don't duplicate
+3. Look at `silas/protocols/` for the interface you need to implement
+4. Look at `silas/models/` for the data types you'll work with
 
-`LiveContextManager` class:
-- Stores context items per scope in memory (dict[str, list[ContextItem]])
-- Zone management: add, drop, get_zone
-- Subscription tracking: subscribe, unsubscribe (basic — no materialization yet)
-- Profile management: set_profile per scope, track active profile name
-- `render(scope_id, turn_number)` — render all zones as metadata-tagged string per spec format:
-  ```
-  --- zone | turn N | source ---
-  content
-  --- end ---
-  ```
-  Rendering order: system → chronicle → memory → workspace
-- Observation masking: tool_result items older than `observation_mask_after_turns` get content replaced with placeholder
-- `enforce_budget(scope_id, turn_number, current_goal)` — Phase 1c: heuristic eviction only (no scorer). Drop lowest-relevance items from over-budget zones. Return list of evicted ctx_ids.
-- `token_usage(scope_id)` — return dict of zone → total tokens
+## Code Standards
 
-### Constructor
-```python
-def __init__(self, token_budget: TokenBudget, token_counter: HeuristicTokenCounter):
+### Must Follow
+- **Type hints on everything** — all function signatures, all variables where not obvious
+- **Docstrings on all public methods** — explain *why*, not just *what*
+- **Inline comments for non-obvious logic** — if you had to think about it, comment it
+- **No bare `except`** — always catch specific exceptions (use `BLE001` noqa only when intentional)
+- **No `print()`** — use `logging.getLogger(__name__)` instead
+- **Timezone-aware datetimes** — always `datetime.now(datetime.UTC)`, never naive
+- **Cyclomatic complexity < 12** — extract helpers if a function gets complex
+
+### Lint Check (run before finishing)
+```bash
+uv run ruff check silas tests
 ```
 
-### Dependencies
-- `silas.models.context`: ContextItem, ContextZone, ContextProfile, ContextSubscription, TokenBudget
-- `silas.core.token_counter`: HeuristicTokenCounter
+Must pass with zero errors. Rules enforced: E, F, I, B, N, C901, UP, SIM, RUF, PT, S, DTZ, PIE, T20.
 
-### Rules
-- No async needed — protocol methods are sync
-- Use `datetime.now(timezone.utc)` for all timestamps
-- Observation masking: replace content with `[Result of {source} — {token_count} tokens — see memory for details]`
-- Budget enforcement: heuristic only (evict lowest relevance first, oldest first as tiebreaker)
-- Run `ruff check` and `pytest` before finishing
+### Tests (run before finishing)
+```bash
+uv run pytest
+```
 
-When completely finished, run:
-openclaw gateway wake --text "Done: LiveContextManager built" --mode now
+All tests must pass. Write tests for new code in `tests/test_<module>.py`.
+
+## Architecture Patterns
+
+### Protocols over inheritance
+All major components have a Protocol in `silas/protocols/`. Implement the protocol, don't subclass.
+
+### Models are Pydantic
+All data types are Pydantic BaseModels in `silas/models/`. Use `model_validate()` for parsing.
+
+### Agents use pydantic-ai
+LLM agents use `pydantic_ai.Agent` with structured output. Wrap calls in `run_structured_agent()` from `silas/agents/structured.py`. Always provide a deterministic fallback when LLM fails.
+
+### Execution is sandboxed
+Code execution goes through `silas/execution/sandbox.py`. Never run user code in the main process.
+
+### Gates are fail-safe
+Quality gates fail-open (degrade gracefully). Policy gates fail-closed (block on error). See `silas/gates/`.
+
+## Key Files
+
+| What | Where |
+|------|-------|
+| Full spec | `specs.md` |
+| All protocols | `silas/protocols/` |
+| All models | `silas/models/` |
+| Test helpers/fakes | `tests/fakes.py` |
+| Lint config | `pyproject.toml` [tool.ruff] |
+
+## Git Rules
+
+- Work on a feature branch (`feat/*`, `fix/*`, `refactor/*`)
+- Commit messages: `feat:`, `fix:`, `chore:`, `refactor:` prefix
+- Never commit to `main` or `dev` directly
+- Never suppress lint errors — fix the code
+
+## When Done
+
+Run both lint and tests to confirm clean:
+```bash
+uv run ruff check silas tests && uv run pytest
+```

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import shlex
-from typing import Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 from silas.execution.sandbox import SubprocessSandboxManager
 from silas.models.execution import ExecutionEnvelope, ExecutionResult

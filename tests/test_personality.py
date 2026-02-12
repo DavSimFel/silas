@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -21,7 +21,7 @@ from silas.personality.engine import SilasPersonalityEngine
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _axis_profile(
@@ -133,7 +133,7 @@ class TestPersonalityModels:
                 event_type="feedback",
                 trusted=True,
                 source="runtime",
-                created_at=datetime(2026, 1, 1, 12, 0, 0),  # noqa: DTZ001
+                created_at=datetime(2026, 1, 1, 12, 0, 0),
             )
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -39,7 +39,7 @@ Base64Bytes = Annotated[
 ]
 
 
-class ApprovalScope(str, Enum):
+class ApprovalScope(StrEnum):
     full_plan = "full_plan"
     single_step = "single_step"
     step_range = "step_range"
@@ -54,7 +54,7 @@ class ApprovalScope(str, Enum):
     standing = "standing"
 
 
-class ApprovalVerdict(str, Enum):
+class ApprovalVerdict(StrEnum):
     approved = "approved"
     declined = "declined"
     edit_requested = "edit_requested"
@@ -131,10 +131,10 @@ class PendingApproval(BaseModel):
 
 
 __all__ = [
-    "ApprovalScope",
-    "ApprovalVerdict",
     "ApprovalDecision",
-    "Base64Bytes",
+    "ApprovalScope",
     "ApprovalToken",
+    "ApprovalVerdict",
+    "Base64Bytes",
     "PendingApproval",
 ]

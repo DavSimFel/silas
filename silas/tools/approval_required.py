@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from silas.tools.skill_toolset import (
     ApprovalRequest,
@@ -39,7 +39,7 @@ class ApprovalRequiredToolset:
             return self.inner.call(tool_name, arguments)
 
         request_id = uuid.uuid4().hex
-        created_at = datetime.now(timezone.utc)
+        created_at = datetime.now(UTC)
         pending = PendingApprovalCall(
             request_id=request_id,
             tool_name=tool_name,

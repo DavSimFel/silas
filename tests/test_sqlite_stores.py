@@ -6,7 +6,7 @@ work item store, audit log, and nonce store.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -22,7 +22,7 @@ pytestmark = pytest.mark.asyncio
 # ---------------------------------------------------------------------------
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _utc(minutes_ago: int = 0) -> datetime:

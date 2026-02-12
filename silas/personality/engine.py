@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Mapping
+from collections.abc import Mapping
+from datetime import UTC, datetime
 
 from silas.models.messages import ChannelMessage
 from silas.models.personality import (
@@ -30,7 +30,7 @@ _MOOD_FIELDS: tuple[str, ...] = ("energy", "patience", "curiosity", "frustration
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _clamp01(value: float) -> float:
@@ -321,9 +321,9 @@ class SilasPersonalityEngine:
         if not isinstance(created_at, datetime):
             created_at = now
         elif created_at.tzinfo is None or created_at.tzinfo.utcoffset(created_at) is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
+            created_at = created_at.replace(tzinfo=UTC)
         else:
-            created_at = created_at.astimezone(timezone.utc)
+            created_at = created_at.astimezone(UTC)
 
         event_id = metadata.get("event_id")
         if not isinstance(event_id, str) or not event_id:
@@ -348,7 +348,7 @@ class SilasPersonalityEngine:
 
         if now.tzinfo is None or now.tzinfo.utcoffset(now) is None:
             raise ValueError("now must be timezone-aware")
-        now_utc = now.astimezone(timezone.utc)
+        now_utc = now.astimezone(UTC)
         elapsed_minutes = max((now_utc - state.updated_at).total_seconds() / 60.0, 0.0)
         step = self._decay_rate * elapsed_minutes
 

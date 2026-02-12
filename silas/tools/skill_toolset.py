@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Callable, Literal, Protocol
+from datetime import UTC, datetime
+from typing import Literal, Protocol
 
 from silas.models.skills import SkillMetadata
 
@@ -47,7 +48,7 @@ class ToolDefinition:
             return {
                 "tool": self.name,
                 "arguments": dict(arguments),
-                "invoked_at": datetime.now(timezone.utc).isoformat(),
+                "invoked_at": datetime.now(UTC).isoformat(),
             }
         return self.handler(dict(arguments))
 
@@ -79,7 +80,7 @@ class FunctionToolset:
 
         try:
             output = tool.call(arguments)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return ToolCallResult(status="error", error=str(exc))
         return ToolCallResult(status="ok", output=output)
 
@@ -132,7 +133,7 @@ class SkillToolset:
         if skill_tool is not None:
             try:
                 output = skill_tool.call(arguments)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 return ToolCallResult(status="error", error=str(exc))
             return ToolCallResult(status="ok", output=output)
 

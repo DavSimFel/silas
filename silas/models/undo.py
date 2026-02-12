@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class UndoEntry(BaseModel):
@@ -43,7 +43,7 @@ class UndoEntry(BaseModel):
     def can_undo(self, now: datetime | None = None) -> bool:
         if self.undone_at is not None:
             return False
-        now_utc = now if now is not None else datetime.now(timezone.utc)
+        now_utc = now if now is not None else datetime.now(UTC)
         return now_utc <= self.expires_at
 
 

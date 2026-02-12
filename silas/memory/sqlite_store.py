@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import aiosqlite
 
@@ -116,7 +116,7 @@ class SQLiteMemoryStore:
             return [_row_to_item(r) for r in rows]
 
     async def increment_access(self, memory_id: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 """UPDATE memories
@@ -159,14 +159,14 @@ class SQLiteMemoryStore:
             return [_row_to_item(r) for r in rows]
 
 
-def _parse_dt(val: str | None):  # noqa: ANN202
+def _parse_dt(val: str | None):
     if val is None:
         return None
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     dt = datetime.fromisoformat(val)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt
 
 

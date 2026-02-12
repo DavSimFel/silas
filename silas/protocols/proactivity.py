@@ -31,4 +31,4 @@ class AutonomyCalibrator(Protocol):
     def get_metrics(self, scope_id: str) -> dict[str, object]: ...
 
 
-__all__ = ["SuggestionEngine", "AutonomyCalibrator"]
+__all__ = ["AutonomyCalibrator", "SuggestionEngine"]

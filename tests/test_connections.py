@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -22,7 +22,7 @@ from silas.persistence.migrations import run_migrations
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _touch_script(skills_dir: Path, skill_name: str, script_name: str) -> Path:
@@ -240,7 +240,7 @@ class TestConnectionManager:
             ]
         )
 
-        async def _fake_create_subprocess_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        async def _fake_create_subprocess_exec(*args, **kwargs):
             del args, kwargs
             return fake_process
 
@@ -288,7 +288,7 @@ class TestConnectionManager:
             ]
         )
 
-        async def _fake_create_subprocess_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        async def _fake_create_subprocess_exec(*args, **kwargs):
             del args, kwargs
             return fake_process
 
@@ -362,7 +362,7 @@ class TestConnectionManager:
             ]
         )
 
-        async def _fake_create_subprocess_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        async def _fake_create_subprocess_exec(*args, **kwargs):
             del args, kwargs
             return fake_process
 
@@ -393,7 +393,7 @@ class TestConnectionManager:
             stdout_lines=[json.dumps({"success": True, "new_expires_at": new_expiry})]
         )
 
-        async def _fake_create_subprocess_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        async def _fake_create_subprocess_exec(*args, **kwargs):
             del args, kwargs
             return fake_process
 
@@ -420,7 +420,7 @@ class TestConnectionManager:
 
         fake_process = _FakeProcess(stdout_lines=[json.dumps({"success": True, "message": "Recovered"})])
 
-        async def _fake_create_subprocess_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        async def _fake_create_subprocess_exec(*args, **kwargs):
             del args, kwargs
             return fake_process
 
@@ -449,7 +449,7 @@ class TestConnectionManager:
             auth_payload={},
         )
 
-        async def _fake_create_subprocess_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        async def _fake_create_subprocess_exec(*args, **kwargs):
             script_path = str(args[1])
             del kwargs
             if script_path.endswith("health_check.py"):

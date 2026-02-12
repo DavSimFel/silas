@@ -5,7 +5,7 @@ import json
 import sys
 import uuid
 from collections import deque
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -127,7 +127,7 @@ class SilasConnectionManager:
         approval: ApprovalToken | None = None,
     ) -> str:
         del approval
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         raw_connection_id = auth_payload.get("connection_id")
         if isinstance(raw_connection_id, str) and raw_connection_id.strip():
@@ -173,7 +173,7 @@ class SilasConnectionManager:
         merged_permissions = list(
             dict.fromkeys([*connection.permissions_granted, *_as_str_list(requested_permissions)])
         )
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self._connections[connection_id] = connection.model_copy(
             update={
                 "permissions_granted": merged_permissions,
@@ -189,7 +189,7 @@ class SilasConnectionManager:
             if connection.status != "active":
                 continue
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             try:
                 script_path = self._resolve_script(connection.skill_name, "health_check.py")
                 response = await self._run_request_response(
@@ -232,7 +232,7 @@ class SilasConnectionManager:
             self._scheduled_refresh.discard(connection_id)
             return
 
-        if expires_at - datetime.now(timezone.utc) <= timedelta(minutes=10):
+        if expires_at - datetime.now(UTC) <= timedelta(minutes=10):
             self._scheduled_refresh.add(connection_id)
         else:
             self._scheduled_refresh.discard(connection_id)
@@ -242,7 +242,7 @@ class SilasConnectionManager:
         if connection is None:
             return False
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         try:
             script_path = self._resolve_script(connection.skill_name, "refresh_token.py")
             response = await self._run_request_response(
@@ -283,7 +283,7 @@ class SilasConnectionManager:
         if connection is None:
             return False, "connection not found"
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         try:
             script_path = self._resolve_script(connection.skill_name, "recover.py")
             response = await self._run_request_response(
@@ -373,7 +373,7 @@ class SilasConnectionManager:
         request_payload: dict[str, object],
     ) -> dict[str, object]:
         process = await self._spawn_script(script_path)
-        request_line = f"{json.dumps(request_payload, separators=(',', ':'))}\n".encode("utf-8")
+        request_line = f"{json.dumps(request_payload, separators=(',', ':'))}\n".encode()
         stdout, stderr = await process.communicate(request_line)
         if process.returncode != 0:
             details = stderr.decode("utf-8", errors="replace").strip()
@@ -481,8 +481,8 @@ def _to_datetime(value: object) -> datetime | None:
         return None
 
     if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def _as_str_list(value: object) -> list[str]:

@@ -5,9 +5,9 @@ from silas.proactivity.suggestions import SimpleSuggestionEngine
 from silas.proactivity.ux_metrics import UXMetricsCollector
 
 __all__ = [
-    "SimpleSuggestionEngine",
-    "SimpleAutonomyCalibrator",
-    "PreferenceInferenceEngine",
     "ApprovalFatigueTracker",
+    "PreferenceInferenceEngine",
+    "SimpleAutonomyCalibrator",
+    "SimpleSuggestionEngine",
     "UXMetricsCollector",
 ]

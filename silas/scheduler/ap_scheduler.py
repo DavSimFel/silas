@@ -139,7 +139,7 @@ class SilasScheduler:
 
         try:
             self._scheduler.remove_job(schedule_id)
-        except Exception:  # noqa: BLE001
+        except Exception:
             # Job might already have been removed by APScheduler (one-shot, etc.)
             logger.debug("Job %s already removed from APScheduler", schedule_id)
 

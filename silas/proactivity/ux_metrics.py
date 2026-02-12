@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from statistics import mean, median
 
 _DECISION_VERDICTS = {"approved", "declined"}
@@ -101,7 +101,7 @@ class UXMetricsCollector:
             "free_text_usage_rate": (free_text_count / total_selection_events)
             if total_selection_events
             else 0.0,
-            "checked_at": datetime.now(timezone.utc),
+            "checked_at": datetime.now(UTC),
         }
 
     def _trim_window(self, values: list[float] | list[int] | list[str] | list[bool]) -> None:
