@@ -99,5 +99,25 @@
 - **`FakeSuggestionEngine`**: Deterministic suggestion outputs for idle/post-execution tests, including cooldown behavior.
 - **`FakeAutonomyCalibrator`**: Deterministic correction-rate windows and threshold proposals for widen/tighten tests.
 
----
+### Manual Acceptance Harness
 
+For post-implementation validation against the spec, run the interactive harness:
+
+```bash
+uv run silas manual-harness --profile core
+```
+
+Run the full matrix (core + extended):
+
+```bash
+uv run silas manual-harness --profile full
+```
+
+Optional flags:
+
+- `--base-url` to target a non-default web runtime endpoint
+- `--output-dir` to store reports outside `reports/manual-harness`
+
+Each run writes both JSON and Markdown reports with per-scenario pass/fail/skip outcomes.
+
+---

@@ -7,10 +7,12 @@ import pytest
 from pydantic import ValidationError
 from silas.goals.manager import SilasGoalManager
 from silas.memory.consolidator import SilasMemoryConsolidator
+from silas.models.approval import ApprovalDecision, ApprovalScope, ApprovalToken
 from silas.models.context import ContextSubscription, ContextZone
 from silas.models.goals import Goal, GoalRun, GoalSchedule, StandingApproval
 from silas.models.memory import MemoryItem, MemoryType, ReingestionTier
 from silas.models.messages import TaintLevel
+from silas.models.work import WorkItem
 from silas.proactivity.calibrator import SimpleAutonomyCalibrator
 
 
@@ -43,6 +45,65 @@ class AsyncCollectingWorkItemStore:
 
     async def save(self, item: object) -> None:
         self.saved.append(item)
+
+
+class _StubStandingApprovalEngine:
+    def __init__(self) -> None:
+        self._counter = 0
+        self.verify_calls: list[tuple[str, str, str | None]] = []
+
+    async def issue_token(
+        self,
+        work_item: WorkItem,
+        decision: ApprovalDecision,
+        scope: ApprovalScope = ApprovalScope.full_plan,
+    ) -> ApprovalToken:
+        self._counter += 1
+        max_executions = 1
+        raw_limit = decision.conditions.get("max_executions")
+        if isinstance(raw_limit, int) and raw_limit > 0:
+            max_executions = raw_limit
+
+        now = _utc_now()
+        return ApprovalToken(
+            token_id=f"standing:{self._counter}",
+            plan_hash=work_item.plan_hash(),
+            work_item_id=work_item.id,
+            scope=scope,
+            verdict=decision.verdict,
+            signature=b"stub-signature",
+            issued_at=now,
+            expires_at=now + timedelta(hours=1),
+            nonce=f"nonce:{self._counter}",
+            conditions=dict(decision.conditions),
+            max_executions=max_executions,
+        )
+
+    async def verify(
+        self,
+        token: ApprovalToken,
+        work_item: WorkItem,
+        spawned_task: WorkItem | None = None,
+    ) -> tuple[bool, str]:
+        self.verify_calls.append(
+            (token.token_id, work_item.id, spawned_task.id if spawned_task is not None else None)
+        )
+        if token.scope != ApprovalScope.standing:
+            return False, "wrong_scope"
+        if spawned_task is None:
+            return False, "standing_requires_spawned_task"
+        if spawned_task.parent != token.work_item_id:
+            return False, "standing_parent_mismatch"
+        if token.plan_hash != work_item.plan_hash():
+            return False, "plan_hash_mismatch"
+        if token.executions_used >= token.max_executions:
+            return False, "execution_limit_reached"
+        token.executions_used += 1
+        return True, "ok"
+
+    async def check(self, token: ApprovalToken, work_item: WorkItem) -> tuple[bool, str]:
+        del token, work_item
+        return True, "ok"
 
 
 class InMemoryMemoryStoreForConsolidator:
@@ -193,7 +254,11 @@ class TestGoalManager:
 
     def test_standing_approval_max_uses_countdown(self) -> None:
         store = AsyncCollectingWorkItemStore()
-        manager = SilasGoalManager(goals_config=[_goal(goal_id="g-uses")], work_item_store=store)
+        manager = SilasGoalManager(
+            goals_config=[_goal(goal_id="g-uses")],
+            work_item_store=store,
+            approval_engine=_StubStandingApprovalEngine(),
+        )
         goal = manager.load_goals()[0]
         assert goal.spawn_policy_hash is not None
 
@@ -216,6 +281,9 @@ class TestGoalManager:
         assert store.saved[0].needs_approval is False
         assert store.saved[1].needs_approval is False
         assert store.saved[2].needs_approval is True
+        assert store.saved[0].approval_token is not None
+        assert store.saved[1].approval_token is not None
+        assert store.saved[2].approval_token is None
 
     def test_standing_approval_expiry_check(self) -> None:
         store = AsyncCollectingWorkItemStore()
@@ -239,7 +307,7 @@ class TestGoalManager:
         loaded = manager.get_standing_approval("g-exp", goal.spawn_policy_hash)
         assert loaded is None
 
-    def test_goal_with_standing_approval_flag_auto_approves(self) -> None:
+    def test_goal_with_standing_approval_flag_requires_verified_token(self) -> None:
         store = AsyncCollectingWorkItemStore()
         manager = SilasGoalManager(
             goals_config=[_goal(goal_id="g-auto", standing_approval=True)],
@@ -250,7 +318,7 @@ class TestGoalManager:
 
         assert run.status == "completed"
         assert len(store.saved) == 1
-        assert store.saved[0].needs_approval is False
+        assert store.saved[0].needs_approval is True
 
     def test_empty_goals_list(self) -> None:
         manager = SilasGoalManager(goals_config=[], work_item_store=AsyncCollectingWorkItemStore())

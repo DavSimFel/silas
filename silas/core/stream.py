@@ -14,6 +14,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from pydantic import ValidationError
+
 from silas.agents.structured import run_structured_agent
 from silas.core.approval_flow import ApprovalFlow
 from silas.core.context_manager import LiveContextManager
@@ -27,12 +29,14 @@ from silas.core.plan_executor import (
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
 from silas.gates import OutputGateRunner
-from silas.models.agents import PlanAction, RouteDecision
+from silas.models.agents import AgentResponse, PlanAction, RouteDecision
 from silas.models.approval import ApprovalScope, ApprovalVerdict
 from silas.models.context import ContextItem, ContextZone
+from silas.models.gates import Gate, GateResult, GateTrigger
 from silas.models.memory import MemoryItem, MemoryType, ReingestionTier
 from silas.models.messages import ChannelMessage, SignedMessage, TaintLevel
 from silas.models.proactivity import SuggestionProposal
+from silas.models.work import WorkItem, WorkItemType
 from silas.protocols.channels import ChannelAdapterCore
 from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
 
@@ -154,29 +158,47 @@ class Stream:
     async def _process_turn(self, message: ChannelMessage, connection_id: str = "owner") -> str:
         session_id = self._ensure_session_id()
         scope_id = self.turn_context.scope_id
-        next_turn_number = self.turn_context.turn_number + 1
-        turn_id = f"{scope_id}:{next_turn_number}"
+        self.turn_context.turn_number += 1
+        turn_number = self.turn_context.turn_number
+        turn_id = f"{scope_id}:{turn_number}"
 
         with correlation_scope(turn_id=turn_id, scope_id=scope_id):
-            await self._audit("phase1a_noop", step=0, note="active gates precompile skipped")
+            active_gates = self._precompile_active_gates()
+            await self._audit(
+                "active_gates_precompiled",
+                step=0,
+                turn_number=turn_number,
+                active_gate_count=len(active_gates),
+            )
             high_confidence_suggestions = await self._collect_suggestions(connection_id)
-            await self._audit("phase1a_noop", step=1, note="input gates skipped")
+            processed_message_text, blocked_response = await self._run_input_gates(
+                active_gates=active_gates,
+                message=message,
+                connection_id=connection_id,
+                turn_number=turn_number,
+            )
+            if blocked_response is not None:
+                await self.channel.send(connection_id, blocked_response, reply_to=message.reply_to)
+                await self._audit(
+                    "turn_processed",
+                    turn_number=turn_number,
+                    route="blocked_input_gate",
+                )
+                return blocked_response
 
             taint = TaintLevel.owner if message.sender_id == self.owner_id else TaintLevel.external
             nonce = uuid.uuid4().hex
             # HMAC signature binds message content to nonce, preventing replay/forgery.
-            sig_payload = f"{message.sender_id}:{message.text}:{nonce}".encode()
+            sig_payload = f"{message.sender_id}:{processed_message_text}:{nonce}".encode()
             signature = hmac.new(self._signing_key, sig_payload, hashlib.sha256).digest()
             signed = SignedMessage(message=message, signature=signature, nonce=nonce, taint=taint)
             cm = self._get_context_manager()
 
-            self.turn_context.turn_number += 1
-            turn_number = self.turn_context.turn_number
             chronicle_item = ContextItem(
                 ctx_id=f"chronicle:{turn_number}:{uuid.uuid4().hex}",
                 zone=ContextZone.chronicle,
-                content=f"[{signed.taint.value}] {message.sender_id}: {message.text}",
-                token_count=_counter.count(message.text),
+                content=f"[{signed.taint.value}] {message.sender_id}: {processed_message_text}",
+                token_count=_counter.count(processed_message_text),
                 created_at=datetime.now(UTC),
                 turn_number=turn_number,
                 source=f"channel:{message.channel}",
@@ -188,12 +210,25 @@ class Stream:
             if self.turn_context.chronicle_store is not None:
                 await self.turn_context.chronicle_store.append(scope_id, chronicle_item)
 
-            await self._auto_retrieve_memories(message.text, cm, signed.taint, turn_number)
-            await self._ingest_raw_memory(message.text, signed.taint, session_id, turn_number)
+            await self._auto_retrieve_memories(processed_message_text, cm, signed.taint, turn_number)
+            await self._ingest_raw_memory(processed_message_text, signed.taint, session_id, turn_number)
 
-            await self._audit(
-                "phase1a_noop", step=5, note="budget enforcement deferred to post-response",
-            )
+            evicted_ctx_ids: list[str] = []
+            if cm is not None:
+                evicted_ctx_ids = cm.enforce_budget(
+                    scope_id,
+                    turn_number=turn_number,
+                    current_goal=None,
+                )
+            if evicted_ctx_ids:
+                evicted_items = self._take_evicted_context_items(cm, scope_id)
+                await self._persist_evicted_context(evicted_items, session_id, turn_number)
+                await self._audit(
+                    "context_budget_enforced",
+                    step=5,
+                    turn_number=turn_number,
+                    evicted_ctx_ids=evicted_ctx_ids,
+                )
             available_skills = self._available_skill_names()
             await self._audit(
                 "skill_availability_checked",
@@ -214,7 +249,7 @@ class Stream:
 
             routed = await run_structured_agent(
                 agent=self.turn_context.proxy,
-                prompt=self._build_proxy_prompt(message.text, rendered_context),
+                prompt=self._build_proxy_prompt(processed_message_text, rendered_context),
                 call_name="proxy",
                 default_context_profile=self.default_context_profile,
             )
@@ -226,7 +261,12 @@ class Stream:
 
             response_text = self._route_response_text(routed)
             response_text = await self._handle_planner_route(
-                routed, response_text, connection_id, turn_number,
+                routed,
+                response_text,
+                connection_id,
+                turn_number,
+                message.text,
+                rendered_context,
             )
             response_text = self._prepend_high_confidence_suggestions(
                 response_text, high_confidence_suggestions,
@@ -254,18 +294,6 @@ class Stream:
             if self.turn_context.chronicle_store is not None:
                 await self.turn_context.chronicle_store.append(scope_id, response_item)
 
-            evicted_ctx_ids: list[str] = []
-            if cm is not None:
-                evicted_ctx_ids = cm.enforce_budget(
-                    scope_id, turn_number=turn_number, current_goal=None,
-                )
-            if evicted_ctx_ids:
-                await self._audit(
-                    "context_budget_enforced",
-                    turn_number=turn_number,
-                    evicted_ctx_ids=evicted_ctx_ids,
-                )
-
             await self._audit("phase1a_noop", step=11.5, note="raw output ingest skipped")
             await self.channel.send(connection_id, response_text, reply_to=message.reply_to)
             await self._audit("phase1a_noop", step=14, note="access state updates skipped")
@@ -279,17 +307,38 @@ class Stream:
     # ── Planner Route Handling ─────────────────────────────────────────
 
     async def _handle_planner_route(
-        self, routed: RouteDecision, response_text: str, connection_id: str, turn_number: int,
+        self,
+        routed: RouteDecision,
+        response_text: str,
+        connection_id: str,
+        turn_number: int,
+        message_text: str,
+        rendered_context: str,
     ) -> str:
         plan_flow_payload: dict[str, object] = {
             "actions_seen": 0, "skills_executed": 0, "skills_skipped": 0,
             "approval_requested": 0, "approval_approved": 0, "approval_declined": 0,
         }
         if routed.route == "planner":
-            plan_actions = self._extract_plan_actions(routed)
+            plan_actions, planner_message = await self._resolve_plan_actions(
+                routed=routed,
+                message_text=message_text,
+                rendered_context=rendered_context,
+                turn_number=turn_number,
+            )
             plan_flow_payload["actions_seen"] = len(plan_actions)
             if plan_actions:
-                work_exec_summary = await self._try_work_execution(plan_actions, turn_number, routed.continuation_of)
+                continuation_of = routed.continuation_of
+                for action in plan_actions:
+                    raw = action.get("continuation_of")
+                    if isinstance(raw, str) and raw.strip():
+                        continuation_of = raw
+                        break
+                work_exec_summary = await self._try_work_execution(
+                    plan_actions,
+                    turn_number,
+                    continuation_of,
+                )
                 if work_exec_summary is not None:
                     response_text = work_exec_summary
                 else:
@@ -298,9 +347,260 @@ class Stream:
                         turn_number=turn_number, fallback_response=response_text,
                     )
             else:
-                await self._audit("planner_stub_used", turn_number=turn_number, reason=routed.reason)
+                if planner_message:
+                    response_text = planner_message
+                await self._audit(
+                    "planner_stub_used",
+                    turn_number=turn_number,
+                    reason=routed.reason,
+                )
         await self._audit("plan_approval_flow_checked", step=12, turn_number=turn_number, **plan_flow_payload)
         return response_text
+
+    def _precompile_active_gates(self) -> tuple[Gate, ...]:
+        system_gates = self._load_system_gates()
+        gate_runner = self.turn_context.gate_runner
+        if gate_runner is None:
+            return tuple(system_gates)
+
+        precompile = getattr(gate_runner, "precompile_turn_gates", None)
+        if not callable(precompile):
+            return tuple(system_gates)
+
+        compiled = precompile(system_gates=system_gates)
+        return tuple(compiled)
+
+    def _load_system_gates(self) -> list[Gate]:
+        config = self.turn_context.config
+        if config is None:
+            return []
+
+        # Current runtime config shape uses top-level output_gates; if
+        # config.gates.system is introduced, it is merged below.
+        raw_from_output = getattr(config, "output_gates", None)
+        output_gates: list[Gate] = []
+        if isinstance(raw_from_output, list):
+            for gate in raw_from_output:
+                if isinstance(gate, Gate):
+                    output_gates.append(gate.model_copy(deep=True))
+
+        raw_gates = getattr(config, "gates", None)
+        if raw_gates is None:
+            return output_gates
+
+        raw_system = getattr(raw_gates, "system", None)
+        if not isinstance(raw_system, list):
+            return output_gates
+
+        merged = list(output_gates)
+        for gate in raw_system:
+            if isinstance(gate, Gate):
+                merged.append(gate.model_copy(deep=True))
+        return merged
+
+    async def _run_input_gates(
+        self,
+        *,
+        active_gates: tuple[Gate, ...],
+        message: ChannelMessage,
+        connection_id: str,
+        turn_number: int,
+    ) -> tuple[str, str | None]:
+        gate_runner = self.turn_context.gate_runner
+        if gate_runner is None or not active_gates:
+            await self._audit(
+                "input_gates_evaluated",
+                step=1,
+                turn_number=turn_number,
+                policy_results=[],
+                quality_results=[],
+                configured=bool(active_gates),
+            )
+            return message.text, None
+
+        policy_results, quality_results, merged_context = await gate_runner.check_gates(
+            gates=list(active_gates),
+            trigger=GateTrigger.every_user_message,
+            context={
+                "message": message.text,
+                "sender_id": message.sender_id,
+            },
+        )
+        policy_payload = [result.model_dump(mode="json") for result in policy_results]
+        quality_payload = [result.model_dump(mode="json") for result in quality_results]
+        await self._audit(
+            "input_gates_evaluated",
+            step=1,
+            turn_number=turn_number,
+            policy_results=policy_payload,
+            quality_results=quality_payload,
+            configured=True,
+        )
+        if quality_payload:
+            await self._audit(
+                "quality_gate_input",
+                turn_number=turn_number,
+                results=quality_payload,
+            )
+
+        for result in policy_results:
+            if result.action == "continue":
+                continue
+
+            if result.action == "require_approval":
+                approved = await self._request_input_gate_approval(
+                    result=result,
+                    message=message,
+                    connection_id=connection_id,
+                    turn_number=turn_number,
+                )
+                if approved:
+                    await self._audit(
+                        "input_gate_approval_granted",
+                        turn_number=turn_number,
+                        gate_name=result.gate_name,
+                    )
+                    continue
+                await self._audit(
+                    "input_gate_approval_declined",
+                    turn_number=turn_number,
+                    gate_name=result.gate_name,
+                    reason=result.reason,
+                )
+                blocked = self._input_gate_block_response(merged_context, result)
+                return message.text, blocked
+
+            if result.action == "block":
+                await self._audit(
+                    "input_gate_blocked",
+                    turn_number=turn_number,
+                    gate_name=result.gate_name,
+                    reason=result.reason,
+                )
+                blocked = self._input_gate_block_response(merged_context, result)
+                return message.text, blocked
+
+        rewritten = merged_context.get("message")
+        if isinstance(rewritten, str) and rewritten.strip():
+            return rewritten, None
+        return message.text, None
+
+    def _input_gate_block_response(
+        self,
+        merged_context: dict[str, object],
+        result: GateResult,
+    ) -> str:
+        response = merged_context.get("response")
+        if isinstance(response, str) and response.strip():
+            return response
+        return f"Request blocked by gate '{result.gate_name}': {result.reason}"
+
+    async def _request_input_gate_approval(
+        self,
+        *,
+        result: GateResult,
+        message: ChannelMessage,
+        connection_id: str,
+        turn_number: int,
+    ) -> bool:
+        approval_flow = self._approval_flow
+        if approval_flow is None:
+            return False
+
+        work_item = WorkItem(
+            id=f"input-gate:{turn_number}:{uuid.uuid4().hex}",
+            type=WorkItemType.task,
+            title=f"Input gate approval for {result.gate_name}",
+            body=message.text,
+        )
+        decision, token = await approval_flow.request_skill_approval(
+            work_item=work_item,
+            scope=ApprovalScope.full_plan,
+            skill_name=result.gate_name,
+            connection_id=connection_id,
+        )
+        if decision is None or token is None:
+            return False
+        return decision.verdict == ApprovalVerdict.approved
+
+    async def _resolve_plan_actions(
+        self,
+        *,
+        routed: RouteDecision,
+        message_text: str,
+        rendered_context: str,
+        turn_number: int,
+    ) -> tuple[list[dict[str, object]], str | None]:
+        planner = self.turn_context.planner
+        if planner is None:
+            await self._audit("planner_handoff_missing", turn_number=turn_number)
+            return [], None
+
+        planner_output = await run_structured_agent(
+            agent=planner,
+            prompt=self._build_planner_prompt(message_text, rendered_context),
+            call_name="planner",
+            default_context_profile="planning",
+        )
+        actions, planner_message = self._extract_plan_actions_from_planner_output(
+            planner_output
+        )
+        await self._audit(
+            "planner_handoff_invoked",
+            turn_number=turn_number,
+            output_type=type(planner_output).__name__,
+            actions=len(actions),
+        )
+        if actions:
+            return actions, planner_message
+
+        # Legacy fallback for compatibility while planner output contracts converge.
+        fallback_actions = self._extract_plan_actions(routed)
+        if fallback_actions:
+            await self._audit(
+                "planner_handoff_fallback_proxy_actions",
+                turn_number=turn_number,
+                actions=len(fallback_actions),
+            )
+        return fallback_actions, planner_message
+
+    def _extract_plan_actions_from_planner_output(
+        self, planner_output: object,
+    ) -> tuple[list[dict[str, object]], str | None]:
+        if isinstance(planner_output, RouteDecision):
+            planner_message = None
+            if planner_output.response is not None:
+                planner_message = planner_output.response.message
+            return self._extract_plan_actions(planner_output), planner_message
+
+        if isinstance(planner_output, AgentResponse):
+            return self._extract_plan_actions_from_agent_response(planner_output), planner_output.message
+
+        try:
+            response = AgentResponse.model_validate(planner_output)
+        except ValidationError:
+            return [], None
+        return self._extract_plan_actions_from_agent_response(response), response.message
+
+    def _extract_plan_actions_from_agent_response(
+        self, response: AgentResponse,
+    ) -> list[dict[str, object]]:
+        plan_action = response.plan_action
+        if plan_action is None:
+            return []
+
+        action_payload: dict[str, object] = {
+            "action": plan_action.action.value,
+        }
+        if plan_action.plan_markdown:
+            action_payload["plan_markdown"] = plan_action.plan_markdown
+        if plan_action.continuation_of:
+            action_payload["continuation_of"] = plan_action.continuation_of
+        if plan_action.interaction_mode_override is not None:
+            action_payload["interaction_mode_override"] = (
+                plan_action.interaction_mode_override.value
+            )
+        return [action_payload]
 
     async def _try_work_execution(
         self, plan_actions: list[dict[str, object]], turn_number: int, continuation_of: str | None,
@@ -516,6 +816,46 @@ class Stream:
             ),
         )
 
+    def _take_evicted_context_items(
+        self,
+        context_manager: LiveContextManager | None,
+        scope_id: str,
+    ) -> list[ContextItem]:
+        if context_manager is None:
+            return []
+        take_last_evicted = getattr(context_manager, "take_last_evicted", None)
+        if not callable(take_last_evicted):
+            return []
+        raw_items = take_last_evicted(scope_id)
+        if not isinstance(raw_items, list):
+            return []
+        return [item for item in raw_items if isinstance(item, ContextItem)]
+
+    async def _persist_evicted_context(
+        self,
+        evicted_items: list[ContextItem],
+        session_id: str,
+        turn_number: int,
+    ) -> None:
+        memory_store = self.turn_context.memory_store
+        if memory_store is None or not evicted_items:
+            return
+
+        for item in evicted_items:
+            await memory_store.store(
+                MemoryItem(
+                    memory_id=f"evicted:{self.turn_context.scope_id}:{turn_number}:{uuid.uuid4().hex}",
+                    content=item.content,
+                    memory_type=MemoryType.episode,
+                    reingestion_tier=ReingestionTier.low_reingestion,
+                    taint=item.taint,
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
+                    session_id=session_id,
+                    source_kind="context_eviction",
+                )
+            )
+
     # ── Helpers ────────────────────────────────────────────────────────
 
     def _prepend_high_confidence_suggestions(self, response_text: str, suggestions: list[SuggestionProposal]) -> str:
@@ -528,6 +868,11 @@ class Stream:
         if not rendered_context.strip():
             return message_text
         return f"[CONTEXT]\n{rendered_context}\n\n[USER MESSAGE]\n{message_text}"
+
+    def _build_planner_prompt(self, message_text: str, rendered_context: str) -> str:
+        if not rendered_context.strip():
+            return message_text
+        return f"[CONTEXT]\n{rendered_context}\n\n[USER REQUEST]\n{message_text}"
 
     def _route_response_text(self, routed: RouteDecision) -> str:
         if routed.route == "planner":

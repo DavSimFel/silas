@@ -6,15 +6,16 @@ memory retrieval, context profile setting, and edge cases.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from silas.approval import LiveApprovalManager
 from silas.core.stream import Stream
-from silas.models.agents import InteractionMode, InteractionRegister, RouteDecision
-from silas.models.approval import ApprovalVerdict
+from silas.models.agents import AgentResponse, InteractionMode, InteractionRegister, RouteDecision
+from silas.models.approval import ApprovalScope, ApprovalToken, ApprovalVerdict
 from silas.models.context import ContextZone
-from silas.models.gates import GateLane, GateResult
+from silas.models.gates import Gate, GateLane, GateResult, GateTrigger
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import ChannelMessage, TaintLevel
 from silas.models.skills import SkillDefinition
@@ -76,6 +77,109 @@ class BlockingOutputGateRunner:
         ]
 
 
+class CountingProxyModel:
+    def __init__(self, *, prefix: str = "proxy") -> None:
+        self.calls: list[str] = []
+        self._prefix = prefix
+
+    async def run(self, prompt: str) -> RunResult:
+        self.calls.append(prompt)
+        return RunResult(
+            output=RouteDecision(
+                route="direct",
+                reason="counting-proxy",
+                response=AgentResponse(
+                    message=f"{self._prefix}: {prompt}",
+                    needs_approval=False,
+                ),
+                interaction_register=InteractionRegister.status,
+                interaction_mode=InteractionMode.default_and_offer,
+                context_profile="conversation",
+            )
+        )
+
+
+class BlockingInputGateRunner:
+    def __init__(self) -> None:
+        self.precompile_calls = 0
+        self.check_calls: list[tuple[GateTrigger, dict[str, object]]] = []
+
+    def precompile_turn_gates(self, system_gates: list[Gate] | None = None) -> tuple[Gate, ...]:
+        self.precompile_calls += 1
+        return tuple(system_gates or [])
+
+    async def check_gates(
+        self,
+        gates: list[Gate],
+        trigger: GateTrigger,
+        context: dict[str, object],
+    ) -> tuple[list[GateResult], list[GateResult], dict[str, object]]:
+        del gates
+        self.check_calls.append((trigger, dict(context)))
+        return (
+            [
+                GateResult(
+                    gate_name="input_block",
+                    lane=GateLane.policy,
+                    action="block",
+                    reason="input blocked by test",
+                )
+            ],
+            [],
+            {"response": "Input blocked by policy gate"},
+        )
+
+    async def check_gate(self, gate: Gate, context: dict[str, object]) -> GateResult:
+        del gate, context
+        return GateResult(
+            gate_name="input_block",
+            lane=GateLane.policy,
+            action="block",
+            reason="input blocked by test",
+        )
+
+
+class RewritingInputGateRunner:
+    def __init__(self, rewritten_message: str) -> None:
+        self.rewritten_message = rewritten_message
+        self.check_calls: list[dict[str, object]] = []
+
+    def precompile_turn_gates(self, system_gates: list[Gate] | None = None) -> tuple[Gate, ...]:
+        return tuple(system_gates or [])
+
+    async def check_gates(
+        self,
+        gates: list[Gate],
+        trigger: GateTrigger,
+        context: dict[str, object],
+    ) -> tuple[list[GateResult], list[GateResult], dict[str, object]]:
+        del gates, trigger
+        self.check_calls.append(dict(context))
+        return (
+            [
+                GateResult(
+                    gate_name="rewrite_input",
+                    lane=GateLane.policy,
+                    action="continue",
+                    reason="rewritten",
+                    modified_context={"message": self.rewritten_message},
+                )
+            ],
+            [],
+            {"message": self.rewritten_message},
+        )
+
+    async def check_gate(self, gate: Gate, context: dict[str, object]) -> GateResult:
+        del gate, context
+        return GateResult(
+            gate_name="rewrite_input",
+            lane=GateLane.policy,
+            action="continue",
+            reason="rewritten",
+            modified_context={"message": self.rewritten_message},
+        )
+
+
 class PlannerRouteModel:
     async def run(self, prompt: str) -> RunResult:
         del prompt
@@ -110,6 +214,30 @@ class PlannerSkillModel:
                 ],
             )
         )
+
+
+def _approval_token_payload(work_item_id: str) -> dict[str, object]:
+    now = datetime.now(UTC)
+    token = ApprovalToken(
+        token_id=f"tok:{work_item_id}",
+        plan_hash=f"hash:{work_item_id}",
+        work_item_id=work_item_id,
+        scope=ApprovalScope.full_plan,
+        verdict=ApprovalVerdict.approved,
+        signature=b"test-signature",
+        issued_at=now - timedelta(minutes=1),
+        expires_at=now + timedelta(minutes=30),
+        nonce=f"nonce:{work_item_id}",
+        executions_used=1,
+        max_executions=1,
+    )
+    return token.model_dump(mode="python")
+
+
+class _StreamAllowAllApprovalVerifier:
+    async def check(self, token: ApprovalToken, work_item) -> tuple[bool, str]:
+        del token, work_item
+        return True, "ok"
 
 
 class ApprovalDecisionChannel(InMemoryChannel):
@@ -396,9 +524,76 @@ async def test_planner_route_response_runs_through_output_gates(
     assert channel.outgoing[0]["text"] == "I cannot share that"
 
 
+@pytest.mark.asyncio
+async def test_input_gate_block_stops_turn_before_proxy(
+    channel: InMemoryChannel,
+    turn_context,
+    context_manager: InMemoryContextManager,
+) -> None:
+    proxy = CountingProxyModel(prefix="should-not-run")
+    gate_runner = BlockingInputGateRunner()
+    turn_context.proxy = proxy
+    turn_context.gate_runner = gate_runner
+    turn_context.config = SimpleNamespace(
+        output_gates=[
+            Gate(
+                name="block_input",
+                on=GateTrigger.every_user_message,
+                type="string_match",
+                check="forbidden",
+            )
+        ]
+    )
+
+    stream = _stream(channel, turn_context)
+    result = await stream._process_turn(_msg("forbidden request"))
+
+    assert result == "Input blocked by policy gate"
+    assert channel.outgoing[0]["text"] == "Input blocked by policy gate"
+    assert proxy.calls == []
+    assert gate_runner.precompile_calls == 1
+    assert gate_runner.check_calls
+    assert context_manager.get_zone("owner", ContextZone.chronicle) == []
+
+
+@pytest.mark.asyncio
+async def test_input_gate_rewrite_updates_prompt_before_proxy(
+    channel: InMemoryChannel,
+    turn_context,
+) -> None:
+    proxy = CountingProxyModel(prefix="processed")
+    gate_runner = RewritingInputGateRunner("rewritten input")
+    turn_context.proxy = proxy
+    turn_context.gate_runner = gate_runner
+    turn_context.config = SimpleNamespace(
+        output_gates=[
+            Gate(
+                name="rewrite_input",
+                on=GateTrigger.every_user_message,
+                type="custom_check",
+                check="rewrite",
+            )
+        ]
+    )
+
+    stream = _stream(channel, turn_context)
+    result = await stream._process_turn(_msg("original input"))
+
+    assert len(proxy.calls) == 1
+    assert "rewritten input" in proxy.calls[0]
+    assert "original input" not in proxy.calls[0]
+    assert "rewritten input" in result
+    assert "original input" not in result
+    assert "rewritten input" in channel.outgoing[0]["text"]
+    assert gate_runner.check_calls[0]["message"] == "original input"
+
+
 class PlannerRouteWithPlanActionsModel:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
     async def run(self, prompt: str) -> RunResult:
-        del prompt
+        self.calls.append(prompt)
         routed = RouteDecision(
             route="planner",
             reason="execute plan actions",
@@ -412,9 +607,18 @@ class PlannerRouteWithPlanActionsModel:
             "plan_actions",
             [
                 {"id": "plan-a", "type": "task", "title": "Run first action", "body": "Execute first planner action.", "skills": ["skill_a"]},
-                {"id": "plan-b", "type": "task", "title": "Run second action", "body": "Execute second planner action.", "skills": ["skill_b"], "depends_on": ["plan-a"]},
+                {
+                    "id": "plan-b",
+                    "type": "task",
+                    "title": "Run second action",
+                    "body": "Execute second planner action.",
+                    "skills": ["skill_b"],
+                    "depends_on": ["plan-a"],
+                },
             ],
         )
+        routed.plan_actions[0]["approval_token"] = _approval_token_payload("plan-a")
+        routed.plan_actions[1]["approval_token"] = _approval_token_payload("plan-b")
         return RunResult(output=routed)
 
 
@@ -423,7 +627,9 @@ async def test_planner_route_executes_plan_actions_and_returns_summary(
     channel: InMemoryChannel,
     turn_context,
 ) -> None:
-    turn_context.proxy = PlannerRouteWithPlanActionsModel()
+    planner_model = PlannerRouteWithPlanActionsModel()
+    turn_context.proxy = PlannerRouteModel()
+    turn_context.planner = planner_model
     skill_registry = SkillRegistry()
     for name in ("skill_a", "skill_b"):
         skill_registry.register(SkillDefinition(name=name, description=f"test {name}", version="1.0.0", input_schema={"type": "object"}, output_schema={"type": "object"}, requires_approval=False, timeout_seconds=5))
@@ -443,11 +649,16 @@ async def test_planner_route_executes_plan_actions_and_returns_summary(
     work_store = InMemoryWorkItemStore()
     turn_context.skill_registry = skill_registry
     turn_context.skill_executor = skill_executor
-    turn_context.work_executor = LiveWorkItemExecutor(skill_executor=skill_executor, work_item_store=work_store)
+    turn_context.work_executor = LiveWorkItemExecutor(
+        skill_executor=skill_executor,
+        work_item_store=work_store,
+        approval_verifier=_StreamAllowAllApprovalVerifier(),
+    )
 
     stream = _stream(channel, turn_context)
     result = await stream._process_turn(_msg("build and run a plan"))
     assert result == "Plan execution summary: 2 done, 0 failed."
+    assert len(planner_model.calls) == 1
     assert execution_order == ["plan-a", "plan-b"]
     plan_a = await work_store.get("plan-a")
     plan_b = await work_store.get("plan-b")
@@ -476,7 +687,8 @@ async def test_planner_skill_requires_approval_and_executes_on_approve(
     audit_log: InMemoryAuditLog,
 ) -> None:
     channel = ApprovalDecisionChannel(ApprovalVerdict.approved)
-    turn_context.proxy = PlannerSkillModel()
+    turn_context.proxy = PlannerRouteModel()
+    turn_context.planner = PlannerSkillModel()
     turn_context.approval_manager = LiveApprovalManager()
 
     skill_registry = SkillRegistry()
@@ -504,7 +716,8 @@ async def test_planner_skill_skips_execution_when_declined(
     audit_log: InMemoryAuditLog,
 ) -> None:
     channel = ApprovalDecisionChannel(ApprovalVerdict.declined)
-    turn_context.proxy = PlannerSkillModel()
+    turn_context.proxy = PlannerRouteModel()
+    turn_context.planner = PlannerSkillModel()
     turn_context.approval_manager = LiveApprovalManager()
 
     skill_registry = SkillRegistry()

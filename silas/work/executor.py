@@ -3,17 +3,30 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
+from silas.models.execution import VerificationReport
 from silas.models.work import BudgetUsed, WorkItem, WorkItemResult, WorkItemStatus
-from silas.protocols.work import WorkItemStore
+from silas.protocols.approval import ApprovalVerifier
+from silas.protocols.audit import AuditLog
+from silas.protocols.work import VerificationRunner, WorkItemStore
 from silas.skills.executor import SkillExecutor
 
 _CHARS_PER_TOKEN = 3.5
 
 
 class LiveWorkItemExecutor:
-    def __init__(self, skill_executor: SkillExecutor, work_item_store: WorkItemStore) -> None:
+    def __init__(
+        self,
+        skill_executor: SkillExecutor,
+        work_item_store: WorkItemStore,
+        approval_verifier: ApprovalVerifier | None = None,
+        verification_runner: VerificationRunner | None = None,
+        audit: AuditLog | None = None,
+    ) -> None:
         self._skill_executor = skill_executor
         self._work_item_store = work_item_store
+        self._approval_verifier = approval_verifier
+        self._verification_runner = verification_runner
+        self._audit = audit
 
     async def execute(self, item: WorkItem) -> WorkItemResult:
         root_item = item.model_copy(deep=True)
@@ -67,6 +80,15 @@ class LiveWorkItemExecutor:
                     budget_used=aggregate_budget,
                 )
 
+        root_result = execution_results.get(root_item.id)
+        if root_result is not None:
+            return root_result.model_copy(
+                update={
+                    "summary": f"Executed {len(ordered_ids)} work item(s) successfully.",
+                    "budget_used": aggregate_budget.model_copy(deep=True),
+                }
+            )
+
         return WorkItemResult(
             work_item_id=root_item.id,
             status=WorkItemStatus.done,
@@ -79,6 +101,15 @@ class LiveWorkItemExecutor:
         used = work_item.budget_used.model_copy(deep=True)
         max_attempts = max(1, work_item.budget.max_attempts)
         last_error: str | None = None
+
+        approved, approval_reason = await self._check_execution_approval(work_item)
+        if not approved:
+            await self._audit_execution_blocked(work_item, approval_reason)
+            return await self._mark_blocked(
+                work_item,
+                f"execution_blocked_no_approval: {approval_reason}",
+                budget_used=used,
+            )
 
         self._skill_executor.set_work_item(work_item)
         try:
@@ -126,12 +157,25 @@ class LiveWorkItemExecutor:
 
                 work_item.budget_used = used.model_copy(deep=True)
                 if attempt_ok:
+                    verification_ok, verification_results, verification_error = (
+                        await self._run_external_verification(work_item)
+                    )
+                    work_item.verification_results = [
+                        dict(result) for result in verification_results
+                    ]
+                    if not verification_ok:
+                        last_error = verification_error or "verification failed"
+                        if used.exceeds(work_item.budget):
+                            break
+                        continue
+
                     work_item.status = WorkItemStatus.done
                     await self._persist(work_item)
                     return WorkItemResult(
                         work_item_id=work_item.id,
                         status=WorkItemStatus.done,
                         summary=f"Work item {work_item.id} completed.",
+                        verification_results=work_item.verification_results,
                         budget_used=used.model_copy(deep=True),
                     )
 
@@ -147,10 +191,89 @@ class LiveWorkItemExecutor:
                 status=WorkItemStatus.failed,
                 summary=f"Work item {work_item.id} failed.",
                 last_error=last_error,
+                verification_results=work_item.verification_results,
                 budget_used=used.model_copy(deep=True),
             )
         finally:
             self._skill_executor.set_work_item(None)
+
+    async def _run_external_verification(
+        self,
+        work_item: WorkItem,
+    ) -> tuple[bool, list[dict[str, object]], str | None]:
+        checks = list(work_item.verify)
+        if not checks:
+            return True, [], None
+
+        runner = self._verification_runner
+        if runner is None:
+            return False, [], "verification runner unavailable"
+
+        try:
+            report = await runner.run_checks(checks)
+        except (RuntimeError, ValueError, OSError, KeyError) as exc:
+            return False, [], f"verification runner error: {exc}"
+
+        if not isinstance(report, VerificationReport):
+            return False, [], "verification runner returned invalid report"
+
+        results = [
+            result.model_dump(mode="json")
+            for result in report.results
+        ]
+        if report.all_passed:
+            return True, results, None
+
+        failure_detail = self._format_verification_failures(report)
+        return False, results, f"verification failed: {failure_detail}"
+
+    def _format_verification_failures(self, report: VerificationReport) -> str:
+        failures = report.failed or [result for result in report.results if not result.passed]
+        if not failures:
+            return "unknown verification failure"
+        parts = [f"{failure.name}: {failure.reason}" for failure in failures]
+        return "; ".join(parts)
+
+    async def _check_execution_approval(self, work_item: WorkItem) -> tuple[bool, str]:
+        token = work_item.approval_token
+        if token is None:
+            return False, "missing approval token"
+
+        verifier = self._approval_verifier
+        if verifier is None:
+            return False, "approval verifier unavailable"
+
+        valid, reason = await verifier.check(token, work_item)
+        if not valid:
+            return False, reason
+        return True, "ok"
+
+    async def _audit_execution_blocked(self, work_item: WorkItem, reason: str) -> None:
+        if self._audit is None:
+            return
+        await self._audit.log(
+            "execution_blocked_no_approval",
+            work_item_id=work_item.id,
+            reason=reason,
+        )
+
+    async def _mark_blocked(
+        self,
+        root_item: WorkItem,
+        error: str,
+        budget_used: BudgetUsed | None = None,
+    ) -> WorkItemResult:
+        used = budget_used.model_copy(deep=True) if budget_used is not None else root_item.budget_used
+        root_item.status = WorkItemStatus.blocked
+        root_item.budget_used = used.model_copy(deep=True)
+        await self._persist(root_item)
+        return WorkItemResult(
+            work_item_id=root_item.id,
+            status=WorkItemStatus.blocked,
+            summary=f"Work item {root_item.id} blocked.",
+            last_error=error,
+            budget_used=used.model_copy(deep=True),
+        )
 
     async def _persist(self, item: WorkItem) -> None:
         await self._work_item_store.save(item)

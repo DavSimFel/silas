@@ -22,7 +22,8 @@ from silas.core.logging import setup_logging
 from silas.core.stream import Stream
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
-from silas.gates import OutputGateRunner
+from silas.gates import OutputGateRunner, SilasGateRunner
+from silas.manual_harness import run_manual_harness
 from silas.memory.sqlite_store import SQLiteMemoryStore
 from silas.persistence.chronicle_store import SQLiteChronicleStore
 from silas.persistence.migrations import run_migrations
@@ -81,6 +82,7 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
     approval_manager = LiveApprovalManager()
     suggestion_engine = SimpleSuggestionEngine()
     autonomy_calibrator = SimpleAutonomyCalibrator()
+    gate_runner = SilasGateRunner()
     output_gate_runner = (
         OutputGateRunner(settings.output_gates, token_counter=token_counter)
         if settings.output_gates
@@ -94,6 +96,7 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
         memory_store=memory_store,
         chronicle_store=chronicle_store,
         proxy=proxy,
+        gate_runner=gate_runner,
         skill_registry=skill_registry,
         skill_executor=skill_executor,
         approval_manager=approval_manager,
@@ -298,6 +301,34 @@ def start_command(config_path: str) -> None:
         asyncio.run(_start_runtime(settings, passphrase))
     except KeyboardInterrupt:
         click.echo("Shutting down.")
+
+
+@cli.command("manual-harness")
+@click.option(
+    "--profile",
+    type=click.Choice(["core", "full"], case_sensitive=False),
+    default="core",
+    show_default=True,
+)
+@click.option(
+    "--base-url",
+    default="http://127.0.0.1:8420",
+    show_default=True,
+)
+@click.option(
+    "--output-dir",
+    type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
+    default=Path("reports/manual-harness"),
+    show_default=True,
+)
+def manual_harness_command(profile: str, base_url: str, output_dir: Path) -> None:
+    """Run the interactive manual acceptance harness and save reports."""
+    normalized_profile = profile.lower()
+    run_manual_harness(
+        profile=normalized_profile,
+        base_url=base_url,
+        output_dir=output_dir,
+    )
 
 
 __all__ = ["build_stream", "cli"]

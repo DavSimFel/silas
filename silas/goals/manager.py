@@ -10,14 +10,21 @@ from collections.abc import Awaitable
 from datetime import UTC, datetime
 from typing import Any
 
+from silas.models.approval import ApprovalDecision, ApprovalScope, ApprovalToken, ApprovalVerdict
 from silas.models.goals import Goal, GoalRun, StandingApproval
 from silas.models.work import WorkItem, WorkItemType
+from silas.protocols.approval import ApprovalVerifier
 
 logger = logging.getLogger(__name__)
 
 
 class SilasGoalManager:
-    def __init__(self, goals_config: list[Goal], work_item_store: object, approval_engine: object | None = None):
+    def __init__(
+        self,
+        goals_config: list[Goal],
+        work_item_store: object,
+        approval_engine: ApprovalVerifier | None = None,
+    ) -> None:
         self._work_item_store = work_item_store
         self._approval_engine = approval_engine
 
@@ -108,6 +115,13 @@ class SilasGoalManager:
             max_uses=max_uses,
             uses_remaining=max_uses,
         )
+        approval_token = self._issue_standing_token(
+            goal_id=goal_id,
+            policy_hash=canonical_hash,
+            max_uses=max_uses,
+        )
+        if approval_token is not None:
+            approval = approval.model_copy(update={"approval_token": approval_token})
 
         self._standing_approvals_by_id[approval.approval_id] = approval
         self._approval_ids_by_goal_and_policy.setdefault((goal_id, canonical_hash), []).append(
@@ -143,22 +157,44 @@ class SilasGoalManager:
         payload.setdefault("type", WorkItemType.task.value)
         payload.setdefault("title", goal.name)
         payload.setdefault("body", goal.description)
+        payload.setdefault("parent", goal.goal_id)
         payload.setdefault("spawned_by", goal.goal_id)
+        payload.setdefault("needs_approval", True)
 
         combined_skills = list(dict.fromkeys([*goal.skills, *list(payload.get("skills", []))]))
         payload["skills"] = combined_skills
 
-        approval = None
-        if goal.spawn_policy_hash:
-            approval = self._resolve_active_approval(goal.goal_id, goal.spawn_policy_hash)
-
-        if goal.standing_approval or approval is not None:
-            payload["needs_approval"] = False
-
         work_item = WorkItem.model_validate(payload)
 
-        if approval is not None:
-            self._consume_approval_use(approval.approval_id)
+        approved_with_standing_token = False
+        if goal.spawn_policy_hash:
+            approval = self._resolve_active_approval(goal.goal_id, goal.spawn_policy_hash)
+            if approval is not None:
+                approved_with_standing_token, reason = self._verify_standing_approval(
+                    goal=goal,
+                    spawned_task=work_item,
+                    approval=approval,
+                )
+                if approved_with_standing_token:
+                    work_item = work_item.model_copy(
+                        update={
+                            "needs_approval": False,
+                            "approval_token": approval.approval_token.model_copy(deep=True),
+                        }
+                    )
+                    self._consume_approval_use(approval.approval_id)
+                else:
+                    logger.warning(
+                        "Standing approval verification failed for goal %s: %s",
+                        goal.goal_id,
+                        reason,
+                    )
+        if goal.standing_approval and not approved_with_standing_token:
+            logger.warning(
+                "Goal %s has standing_approval enabled but no verified standing token; "
+                "spawned task will require interactive approval",
+                goal.goal_id,
+            )
 
         return work_item
 
@@ -218,7 +254,115 @@ class SilasGoalManager:
         now = datetime.now(UTC)
         if approval.expires_at is not None and approval.expires_at <= now:
             return False
+        if approval.approval_token is not None:
+            token = approval.approval_token
+            if token.expires_at <= now:
+                return False
+            if token.executions_used >= token.max_executions:
+                return False
         return not (approval.uses_remaining is not None and approval.uses_remaining <= 0)
+
+    def _issue_standing_token(
+        self,
+        *,
+        goal_id: str,
+        policy_hash: str,
+        max_uses: int | None,
+    ) -> ApprovalToken | None:
+        approval_engine = self._approval_engine
+        if approval_engine is None:
+            return None
+
+        goal = self._goals.get(goal_id)
+        if goal is None:
+            return None
+
+        goal_work_item = self._goal_as_work_item(goal)
+        conditions: dict[str, object] = {"spawn_policy_hash": policy_hash}
+        if max_uses is not None:
+            conditions["max_executions"] = max_uses
+
+        decision = ApprovalDecision(
+            verdict=ApprovalVerdict.approved,
+            conditions=conditions,
+        )
+        try:
+            token = self._run_coroutine(
+                approval_engine.issue_token(
+                    goal_work_item,
+                    decision,
+                    scope=ApprovalScope.standing,
+                )
+            )
+        except (RuntimeError, ValueError, OSError, KeyError) as exc:
+            logger.warning(
+                "Failed to issue standing approval token for goal %s: %s",
+                goal_id,
+                exc,
+            )
+            return None
+        if not isinstance(token, ApprovalToken):
+            logger.warning("Standing approval issuer returned non-token payload for goal %s", goal_id)
+            return None
+        return token
+
+    def _verify_standing_approval(
+        self,
+        *,
+        goal: Goal,
+        spawned_task: WorkItem,
+        approval: StandingApproval,
+    ) -> tuple[bool, str]:
+        approval_engine = self._approval_engine
+        token = approval.approval_token
+        if approval_engine is None:
+            return False, "approval_engine_unavailable"
+        if token is None:
+            return False, "standing_token_missing"
+
+        goal_work_item = self._goal_as_work_item(goal)
+        try:
+            result = self._run_coroutine(
+                approval_engine.verify(
+                    token=token,
+                    work_item=goal_work_item,
+                    spawned_task=spawned_task,
+                )
+            )
+        except (RuntimeError, ValueError, OSError, KeyError) as exc:
+            return False, str(exc)
+
+        if not isinstance(result, tuple) or len(result) != 2:
+            return False, "invalid_verify_result"
+
+        valid, reason = result
+        if not isinstance(valid, bool):
+            return False, "invalid_verify_result"
+        if not isinstance(reason, str):
+            return False, "invalid_verify_result"
+        return valid, reason
+
+    def _goal_as_work_item(self, goal: Goal) -> WorkItem:
+        payload = json.loads(json.dumps(self._json_safe(goal.work_template)))
+        if not isinstance(payload, dict):
+            raise ValueError("goal work_template must serialize to a JSON object")
+        payload["id"] = goal.goal_id
+        payload["type"] = WorkItemType.goal.value
+        payload.setdefault("title", goal.name)
+        payload.setdefault("body", goal.description)
+        payload.setdefault("schedule", "always_on")
+        payload["skills"] = list(dict.fromkeys([*goal.skills, *list(payload.get("skills", []))]))
+        return WorkItem.model_validate(payload)
+
+    def _run_coroutine(self, awaitable: Awaitable[Any]) -> Any:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(awaitable)
+        raise RuntimeError(
+            "Cannot run goal approval operations from an active event loop; "
+            "run_goal() must be called from synchronous scheduler context"
+        )
 
     def _canonical_policy_hash(self, policy_hash: str) -> str:
         normalized = policy_hash.strip().lower()
