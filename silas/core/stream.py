@@ -7,12 +7,16 @@ to keep this file focused on orchestration.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
+import json
 import re
 import uuid
-from dataclasses import dataclass
+from collections.abc import Awaitable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -33,7 +37,8 @@ from silas.core.turn_context import TurnContext
 from silas.gates import OutputGateRunner
 from silas.models.agents import AgentResponse, PlanAction, RouteDecision
 from silas.models.approval import ApprovalScope, ApprovalVerdict
-from silas.models.context import ContextItem, ContextZone
+from silas.models.connections import ConnectionFailure
+from silas.models.context import ContextItem, ContextSubscription, ContextZone
 from silas.models.gates import Gate, GateResult, GateTrigger
 from silas.models.memory import MemoryItem, MemoryType, ReingestionTier
 from silas.models.messages import (
@@ -43,13 +48,23 @@ from silas.models.messages import (
     signed_message_canonical_bytes,
 )
 from silas.models.proactivity import SuggestionProposal
-from silas.models.work import WorkItem, WorkItemType
+from silas.models.work import WorkItem, WorkItemStatus, WorkItemType
 from silas.protocols.approval import NonceStore
 from silas.protocols.channels import ChannelAdapterCore
+from silas.protocols.connections import ConnectionManager
 from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
+from silas.protocols.scheduler import TaskScheduler
+from silas.protocols.work import PlanParser, WorkItemStore
 
 _counter = HeuristicTokenCounter()
 _MENTION_PATTERN = re.compile(r"@([A-Za-z0-9_:-]+)")
+_IN_PROGRESS_STATUSES: tuple[WorkItemStatus, ...] = (
+    WorkItemStatus.pending,
+    WorkItemStatus.running,
+    WorkItemStatus.healthy,
+    WorkItemStatus.stuck,
+    WorkItemStatus.paused,
+)
 
 
 class _InMemoryNonceStore:
@@ -78,6 +93,11 @@ class Stream:
     channel: ChannelAdapterCore
     turn_context: TurnContext
     context_manager: LiveContextManager | None = None
+    channels: tuple[ChannelAdapterCore, ...] | list[ChannelAdapterCore] | None = None
+    scheduler: TaskScheduler | None = None
+    plan_parser: PlanParser | None = None
+    work_item_store: WorkItemStore | None = None
+    connection_manager: ConnectionManager | None = None
     suggestion_engine: SuggestionEngine | None = None
     autonomy_calibrator: AutonomyCalibrator | None = None
     owner_id: str = "owner"
@@ -85,6 +105,7 @@ class Stream:
     output_gate_runner: OutputGateRunner | None = None
     session_id: str | None = None
     _approval_flow: ApprovalFlow | None = None
+    _pending_persona_scopes: set[str] = field(default_factory=set, init=False, repr=False)
     # Startup should inject an Ed25519 key; bytes remains for legacy HMAC-only tests.
     _signing_key: Ed25519PrivateKey | bytes | None = None
     _nonce_store: NonceStore | None = None
@@ -123,37 +144,642 @@ class Stream:
     # ── Lifecycle ──────────────────────────────────────────────────────
 
     async def start(self) -> None:
+        """Initialize startup orchestration before accepting live messages."""
         self._ensure_session_id()
         await self._rehydrate()
-        async for message, connection_id in self.channel.listen():
-            await self._process_turn(message, connection_id)
+        await self._audit("stream_started", started_at=datetime.now(UTC).isoformat())
+        await self._run_connection_health_checks()
+        await self._load_active_goal_schedule()
+        await self._register_heartbeat_jobs()
+
+        listeners = [self._listen_channel(channel) for channel in self._iter_channels()]
+        await asyncio.gather(*listeners)
 
     async def _rehydrate(self) -> None:
         """Restore state from previous run (spec §5.1.3)."""
         tc = self.turn_context
         cm = self._get_context_manager()
         session_id = self._ensure_session_id()
+        known_scopes = self._known_scopes()
 
-        if tc.chronicle_store is not None and cm is not None:
-            recent = await tc.chronicle_store.get_recent(tc.scope_id, limit=50)
-            for item in recent:
-                cm.add(tc.scope_id, item)
+        await self._rehydrate_system_zone(cm, known_scopes)
+        await self._rehydrate_chronicle(tc, cm, known_scopes)
+        await self._rehydrate_all_scope_memories(tc, cm, session_id, known_scopes)
+
+        in_progress_items = await self._list_in_progress_work_items()
+        await self._restore_context_subscriptions(cm, in_progress_items)
+        await self._add_rehydration_system_message(cm, known_scopes)
+        await self._resume_in_progress_work_items(in_progress_items)
+
+        # Persona state is intentionally loaded on demand to avoid eager scope fan-out.
+        self._pending_persona_scopes = set(known_scopes)
+        await self._rehydrate_pending_proposals(known_scopes)
+
+        await self._audit(
+            "stream_rehydrated",
+            turn_number=tc.turn_number,
+            scopes=known_scopes,
+        )
+
+    async def _listen_channel(self, channel: ChannelAdapterCore) -> None:
+        async for message, connection_id in channel.listen():
+            await self._process_turn(message, connection_id)
+
+    def _iter_channels(self) -> tuple[ChannelAdapterCore, ...]:
+        raw_channels = self.channels
+        if raw_channels is None:
+            return (self.channel,)
+
+        deduped: list[ChannelAdapterCore] = []
+        for channel in raw_channels:
+            if channel in deduped:
+                continue
+            deduped.append(channel)
+        if self.channel not in deduped:
+            deduped.insert(0, self.channel)
+        return tuple(deduped)
+
+    async def _run_connection_health_checks(self) -> None:
+        manager = self.connection_manager
+        if manager is None:
+            await self._audit("stream_startup_dependency_missing", dependency="connection_manager")
+            return
+        if not self._has_active_goal_connection_dependencies():
+            await self._audit(
+                "connection_health_checks_skipped",
+                reason="no_active_goal_connection_dependencies",
+            )
+            return
+
+        connections = await manager.list_connections()
+        active_connections = [
+            connection for connection in connections if getattr(connection, "status", "") == "active"
+        ]
+        active_connections.sort(key=lambda connection: connection.connection_id)
+        health_results = await manager.run_health_checks()
+
+        unhealthy = 0
+        for connection, health in zip(active_connections, health_results, strict=False):
+            if health.healthy:
+                continue
+
+            unhealthy += 1
+            recovered, reason = await manager.recover(connection.connection_id)
+            await self._audit(
+                "connection_recovery_attempted",
+                connection_id=connection.connection_id,
+                recovered=recovered,
+                reason=reason,
+            )
+            if recovered:
+                continue
+            await self._notify_recovery_failure(connection.connection_id, reason)
+
+        await self._audit(
+            "connection_health_checks_completed",
+            checked=len(health_results),
+            unhealthy=unhealthy,
+        )
+
+    async def _notify_recovery_failure(self, connection_id: str, reason: str) -> None:
+        send_failure = getattr(self.channel, "send_connection_failure", None)
+        if callable(send_failure):
+            await send_failure(
+                self.owner_id,
+                ConnectionFailure(
+                    failure_type="health_check",
+                    service=connection_id,
+                    message=reason,
+                ),
+            )
+            return
+        await self.channel.send(
+            self.owner_id,
+            f"Connection '{connection_id}' is unhealthy and auto-recovery failed: {reason}",
+        )
+
+    async def _load_active_goal_schedule(self) -> None:
+        raw_active_goal = self._config_value("active_goal")
+        if not isinstance(raw_active_goal, str) or not raw_active_goal.strip():
+            return
+
+        if self.plan_parser is None:
+            await self._audit("stream_startup_dependency_missing", dependency="plan_parser")
+            return
+
+        try:
+            markdown = Path(raw_active_goal).read_text(encoding="utf-8")
+        except OSError as exc:
+            await self._audit("active_goal_load_failed", path=raw_active_goal, error=str(exc))
+            return
+
+        try:
+            active_goal = self.plan_parser.parse(markdown)
+        except ValueError as exc:
+            await self._audit("active_goal_parse_failed", path=raw_active_goal, error=str(exc))
+            return
+
+        await self._audit(
+            "active_goal_loaded",
+            goal_id=active_goal.id,
+            schedule=active_goal.schedule,
+        )
+
+        if not self._is_cron_schedule(active_goal.schedule):
+            return
+
+        if self.scheduler is None:
+            await self._audit("stream_startup_dependency_missing", dependency="scheduler")
+            return
+
+        async def _run_goal() -> None:
+            await self._run_scheduled_goal(active_goal)
+
+        try:
+            self.scheduler.add_cron_job(f"goal:{active_goal.id}", active_goal.schedule, _run_goal)
+        except ValueError as exc:
+            await self._audit(
+                "active_goal_schedule_registration_failed",
+                goal_id=active_goal.id,
+                schedule=active_goal.schedule,
+                error=str(exc),
+            )
+            return
+
+        await self._audit(
+            "active_goal_schedule_registered",
+            goal_id=active_goal.id,
+            schedule=active_goal.schedule,
+        )
+
+    async def _run_scheduled_goal(self, active_goal: WorkItem) -> None:
+        executor = self.turn_context.work_executor
+        if executor is None:
+            await self._audit("stream_startup_dependency_missing", dependency="work_executor")
+            return
+        await executor.execute(active_goal.model_copy(deep=True))
+
+    async def _register_heartbeat_jobs(self) -> None:
+        if self.scheduler is None:
+            await self._audit("stream_startup_dependency_missing", dependency="scheduler")
+            return
+
+        await self._register_suggestion_heartbeat()
+        await self._register_autonomy_heartbeat()
+
+    async def _register_suggestion_heartbeat(self) -> None:
+        enabled = bool(self._config_value("suggestions", "enabled", default=False))
+        if not enabled:
+            return
+
+        suggestion_engine = self._get_suggestion_engine()
+        if suggestion_engine is None:
+            await self._audit("stream_startup_dependency_missing", dependency="suggestion_engine")
+            return
+
+        cron = self._config_value("suggestions", "heartbeat_cron")
+        if not isinstance(cron, str) or not cron.strip():
+            await self._audit("suggestion_heartbeat_skipped", reason="missing_cron")
+            return
+
+        async def _run_suggestion_heartbeat() -> None:
+            await self._suggestion_heartbeat_tick()
+
+        try:
+            self.scheduler.add_cron_job(
+                "heartbeat:suggestions",
+                cron,
+                _run_suggestion_heartbeat,
+            )
+        except ValueError as exc:
+            await self._audit(
+                "suggestion_heartbeat_registration_failed",
+                cron=cron,
+                error=str(exc),
+            )
+            return
+        await self._audit("suggestion_heartbeat_registered", cron=cron)
+
+    async def _register_autonomy_heartbeat(self) -> None:
+        enabled = bool(self._config_value("autonomy", "enabled", default=False))
+        if not enabled:
+            return
+
+        autonomy_calibrator = self._get_autonomy_calibrator()
+        if autonomy_calibrator is None:
+            await self._audit("stream_startup_dependency_missing", dependency="autonomy_calibrator")
+            return
+
+        raw_cron = self._config_value("autonomy", "heartbeat_cron")
+        if not isinstance(raw_cron, str) or not raw_cron.strip():
+            raw_cron = self._config_value("suggestions", "heartbeat_cron")
+        if not isinstance(raw_cron, str) or not raw_cron.strip():
+            await self._audit("autonomy_heartbeat_skipped", reason="missing_cron")
+            return
+
+        async def _run_autonomy_heartbeat() -> None:
+            await self._autonomy_heartbeat_tick()
+
+        try:
+            self.scheduler.add_cron_job(
+                "heartbeat:autonomy",
+                raw_cron,
+                _run_autonomy_heartbeat,
+            )
+        except ValueError as exc:
+            await self._audit(
+                "autonomy_heartbeat_registration_failed",
+                cron=raw_cron,
+                error=str(exc),
+            )
+            return
+        await self._audit("autonomy_heartbeat_registered", cron=raw_cron)
+
+    async def _suggestion_heartbeat_tick(self) -> None:
+        suggestion_engine = self._get_suggestion_engine()
+        if suggestion_engine is None:
+            return
+
+        now = datetime.now(UTC)
+        total_suggestions = 0
+        for scope_id in self._known_scopes():
+            surfaced = await suggestion_engine.generate_idle(scope_id, now)
+            total_suggestions += len(surfaced)
+
+        await self._audit(
+            "suggestion_heartbeat_polled",
+            scopes=self._known_scopes(),
+            surfaced=total_suggestions,
+        )
+
+    async def _autonomy_heartbeat_tick(self) -> None:
+        autonomy_calibrator = self._get_autonomy_calibrator()
+        if autonomy_calibrator is None:
+            return
+
+        now = datetime.now(UTC)
+        total_proposals = 0
+        for scope_id in self._known_scopes():
+            proposals = await autonomy_calibrator.evaluate(scope_id, now)
+            total_proposals += len(proposals)
+
+        await self._audit(
+            "autonomy_heartbeat_polled",
+            scopes=self._known_scopes(),
+            surfaced=total_proposals,
+        )
+
+    async def _rehydrate_system_zone(
+        self,
+        cm: LiveContextManager | None,
+        scopes: list[str],
+    ) -> None:
+        if cm is None:
+            await self._audit("stream_startup_dependency_missing", dependency="context_manager")
+            return
+
+        constitution_content = self._constitution_content()
+        tools_content = self._tool_descriptions_content()
+        config_content = self._configuration_content()
+
+        for scope_id in scopes:
+            self._replace_context_item(
+                cm,
+                scope_id,
+                ContextItem(
+                    ctx_id="system:constitution",
+                    zone=ContextZone.system,
+                    content=constitution_content,
+                    token_count=_counter.count(constitution_content),
+                    created_at=datetime.now(UTC),
+                    turn_number=self.turn_context.turn_number,
+                    source="system:constitution",
+                    taint=TaintLevel.owner,
+                    kind="system",
+                    pinned=True,
+                ),
+            )
+            self._replace_context_item(
+                cm,
+                scope_id,
+                ContextItem(
+                    ctx_id="system:tools",
+                    zone=ContextZone.system,
+                    content=tools_content,
+                    token_count=_counter.count(tools_content),
+                    created_at=datetime.now(UTC),
+                    turn_number=self.turn_context.turn_number,
+                    source="system:tools",
+                    taint=TaintLevel.owner,
+                    kind="system",
+                    pinned=True,
+                ),
+            )
+            self._replace_context_item(
+                cm,
+                scope_id,
+                ContextItem(
+                    ctx_id="system:configuration",
+                    zone=ContextZone.system,
+                    content=config_content,
+                    token_count=_counter.count(config_content),
+                    created_at=datetime.now(UTC),
+                    turn_number=self.turn_context.turn_number,
+                    source="system:configuration",
+                    taint=TaintLevel.owner,
+                    kind="system",
+                    pinned=True,
+                ),
+            )
+
+    async def _rehydrate_chronicle(
+        self,
+        tc: TurnContext,
+        cm: LiveContextManager | None,
+        scopes: list[str],
+    ) -> None:
+        if cm is None:
+            await self._audit("stream_startup_dependency_missing", dependency="context_manager")
+            return
+        if tc.chronicle_store is None:
+            await self._audit("stream_startup_dependency_missing", dependency="chronicle_store")
+            return
+
+        max_entries = self._rehydration_max_chronicle_entries()
+        mask_after_turns = self._observation_mask_after_turns()
+        max_seen_turn = tc.turn_number
+
+        for scope_id in scopes:
+            recent = await tc.chronicle_store.get_recent(scope_id, limit=max_entries)
+            scope_latest_turn = max_seen_turn
             if recent:
-                tc.turn_number = max(item.turn_number for item in recent)
+                scope_latest_turn = max(item.turn_number for item in recent)
+                max_seen_turn = max(max_seen_turn, scope_latest_turn)
+            for item in recent:
+                hydrated = self._masked_if_stale(item, scope_latest_turn, mask_after_turns)
+                cm.add(scope_id, hydrated.model_copy(update={"kind": "message"}))
 
-        if tc.memory_store is not None and cm is not None:
-            await self._rehydrate_memories(tc, cm, session_id)
+        tc.turn_number = max_seen_turn
 
-        await self._audit("stream_rehydrated", turn_number=tc.turn_number)
+    async def _rehydrate_all_scope_memories(
+        self,
+        tc: TurnContext,
+        cm: LiveContextManager | None,
+        session_id: str,
+        scopes: list[str],
+    ) -> None:
+        if cm is None:
+            await self._audit("stream_startup_dependency_missing", dependency="context_manager")
+            return
+        if tc.memory_store is None:
+            await self._audit("stream_startup_dependency_missing", dependency="memory_store")
+            return
+
+        for scope_id in scopes:
+            include_session_memories = scope_id == tc.scope_id
+            await self._rehydrate_memories(
+                tc,
+                cm,
+                session_id,
+                scope_id=scope_id,
+                include_session_memories=include_session_memories,
+            )
+
+    async def _list_in_progress_work_items(self) -> list[WorkItem]:
+        work_item_store = self.work_item_store
+        if work_item_store is None:
+            await self._audit("stream_startup_dependency_missing", dependency="work_item_store")
+            return []
+
+        calls: list[Awaitable[list[WorkItem]]] = [
+            work_item_store.list_by_status(status) for status in _IN_PROGRESS_STATUSES
+        ]
+        call_results = await asyncio.gather(*calls, return_exceptions=True)
+
+        items_by_id: dict[str, WorkItem] = {}
+        for call_result in call_results:
+            if isinstance(call_result, (RuntimeError, ValueError, OSError)):
+                await self._audit("work_item_rehydrate_query_failed", error=str(call_result))
+                continue
+            if isinstance(call_result, BaseException):
+                raise call_result
+
+            for item in call_result:
+                items_by_id[item.id] = item
+        return list(items_by_id.values())
+
+    async def _restore_context_subscriptions(
+        self,
+        cm: LiveContextManager | None,
+        in_progress_items: list[WorkItem],
+    ) -> None:
+        if cm is None:
+            await self._audit("stream_startup_dependency_missing", dependency="context_manager")
+            return
+        if not in_progress_items:
+            return
+
+        restored = 0
+        scope_id = self.turn_context.scope_id
+        for item in in_progress_items:
+            for target in self._file_subscription_targets(item):
+                subscription = ContextSubscription(
+                    sub_id=f"rehydrate:{item.id}:{hashlib.sha256(target.encode('utf-8')).hexdigest()[:12]}",
+                    sub_type="file",
+                    target=target,
+                    zone=ContextZone.workspace,
+                    created_at=datetime.now(UTC),
+                    turn_created=self.turn_context.turn_number,
+                    content_hash=hashlib.sha256(target.encode("utf-8")).hexdigest(),
+                    active=True,
+                    token_count=0,
+                )
+                cm.subscribe(scope_id, subscription)
+                restored += 1
+
+        await self._audit("context_subscriptions_restored", restored=restored)
+
+    async def _add_rehydration_system_message(
+        self,
+        cm: LiveContextManager | None,
+        scopes: list[str],
+    ) -> None:
+        if cm is None:
+            await self._audit("stream_startup_dependency_missing", dependency="context_manager")
+            return
+
+        content = "[SYSTEM] Session rehydrated after restart."
+        for scope_id in scopes:
+            item = ContextItem(
+                ctx_id=f"system:rehydrated:{scope_id}",
+                zone=ContextZone.chronicle,
+                content=content,
+                token_count=_counter.count(content),
+                created_at=datetime.now(UTC),
+                turn_number=self.turn_context.turn_number,
+                source="system:rehydrate",
+                taint=TaintLevel.owner,
+                kind="message",
+            )
+            cm.add(scope_id, item)
+            if self.turn_context.chronicle_store is not None:
+                await self.turn_context.chronicle_store.append(scope_id, item)
+
+    async def _resume_in_progress_work_items(
+        self, in_progress_items: list[WorkItem],
+    ) -> None:
+        if not in_progress_items:
+            return
+
+        executor = self.turn_context.work_executor
+        if executor is None:
+            await self._audit("stream_startup_dependency_missing", dependency="work_executor")
+            return
+
+        calls = [executor.execute(item) for item in in_progress_items]
+        call_results = await asyncio.gather(*calls, return_exceptions=True)
+        resumed = 0
+        for item, call_result in zip(in_progress_items, call_results, strict=False):
+            if isinstance(call_result, (RuntimeError, ValueError, OSError)):
+                await self._audit(
+                    "work_item_resume_failed",
+                    work_item_id=item.id,
+                    error=str(call_result),
+                )
+                continue
+            if isinstance(call_result, BaseException):
+                raise call_result
+            resumed += 1
+
+        await self._audit("work_items_resumed", resumed=resumed)
+
+    async def _rehydrate_pending_proposals(self, scopes: list[str]) -> None:
+        if not scopes:
+            return
+
+        await self._rehydrate_pending_batch_reviews(scopes)
+        await self._rehydrate_pending_suggestions(scopes)
+        await self._rehydrate_pending_autonomy_proposals(scopes)
+
+    async def _rehydrate_pending_batch_reviews(self, scopes: list[str]) -> None:
+        work_item_store = self.work_item_store
+        send_batch_review = getattr(self.channel, "send_batch_review", None)
+        if work_item_store is None or not callable(send_batch_review):
+            return
+
+        total = 0
+        for scope_id in scopes:
+            batches = await self._load_store_pending_items(
+                work_item_store,
+                "list_pending_batch_reviews",
+                scope_id,
+            )
+            for batch in batches:
+                await send_batch_review(self.owner_id, batch)
+                total += 1
+        if total:
+            await self._audit("pending_batch_reviews_rehydrated", total=total)
+
+    async def _rehydrate_pending_suggestions(self, scopes: list[str]) -> None:
+        work_item_store = self.work_item_store
+        send_suggestion = getattr(self.channel, "send_suggestion", None)
+        if work_item_store is not None and callable(send_suggestion):
+            total = 0
+            for scope_id in scopes:
+                pending = await self._load_store_pending_items(
+                    work_item_store,
+                    "list_pending_suggestions",
+                    scope_id,
+                )
+                for suggestion in pending:
+                    await send_suggestion(self.owner_id, suggestion)
+                    total += 1
+            if total:
+                await self._audit("pending_suggestions_rehydrated", total=total)
+                return
+
+        suggestion_engine = self._get_suggestion_engine()
+        if suggestion_engine is None:
+            return
+
+        total = 0
+        now = datetime.now(UTC)
+        for scope_id in scopes:
+            pending = await suggestion_engine.generate_idle(scope_id, now)
+            for suggestion in pending:
+                await self._push_suggestion_to_side_panel(self.owner_id, suggestion)
+                total += 1
+        if total:
+            await self._audit("pending_suggestions_rehydrated", total=total)
+
+    async def _rehydrate_pending_autonomy_proposals(self, scopes: list[str]) -> None:
+        work_item_store = self.work_item_store
+        send_review = getattr(self.channel, "send_autonomy_threshold_review", None)
+        if work_item_store is not None and callable(send_review):
+            total = 0
+            for scope_id in scopes:
+                pending = await self._load_store_pending_items(
+                    work_item_store,
+                    "list_pending_autonomy_proposals",
+                    scope_id,
+                )
+                for proposal in pending:
+                    await send_review(self.owner_id, proposal)
+                    total += 1
+            if total:
+                await self._audit("pending_autonomy_proposals_rehydrated", total=total)
+                return
+
+        autonomy_calibrator = self._get_autonomy_calibrator()
+        if autonomy_calibrator is None or not callable(send_review):
+            return
+
+        total = 0
+        now = datetime.now(UTC)
+        for scope_id in scopes:
+            pending = await autonomy_calibrator.evaluate(scope_id, now)
+            for proposal in pending:
+                await send_review(self.owner_id, proposal)
+                total += 1
+        if total:
+            await self._audit("pending_autonomy_proposals_rehydrated", total=total)
+
+    async def _load_store_pending_items(
+        self,
+        work_item_store: WorkItemStore,
+        method_name: str,
+        scope_id: str,
+    ) -> list[object]:
+        method = getattr(work_item_store, method_name, None)
+        if not callable(method):
+            return []
+
+        try:
+            maybe_result = method(scope_id)
+        except TypeError:
+            maybe_result = method()
+        if not isinstance(maybe_result, Awaitable):
+            return []
+
+        result = await maybe_result
+        if isinstance(result, list):
+            return result
+        return []
 
     async def _rehydrate_memories(
-        self, tc: TurnContext, cm: LiveContextManager, session_id: str,
+        self,
+        tc: TurnContext,
+        cm: LiveContextManager,
+        session_id: str,
+        *,
+        scope_id: str,
+        include_session_memories: bool,
     ) -> None:
-        """Load profile and recent session memories into context."""
+        """Load profile state and recent session context for startup continuity."""
         profile_items = await tc.memory_store.search_keyword("user profile preferences", limit=1)
         for item in profile_items:
             cm.add(
-                tc.scope_id,
+                scope_id,
                 ContextItem(
                     ctx_id=f"memory:profile:{item.memory_id}",
                     zone=ContextZone.memory,
@@ -168,10 +794,13 @@ class Stream:
                 ),
             )
 
+        if not include_session_memories:
+            return
+
         recent_session = await tc.memory_store.search_session(session_id)
         for item in recent_session[:10]:
             cm.add(
-                tc.scope_id,
+                scope_id,
                 ContextItem(
                     ctx_id=f"memory:session:{item.memory_id}",
                     zone=ContextZone.memory,
@@ -190,6 +819,7 @@ class Stream:
     async def _process_turn(self, message: ChannelMessage, connection_id: str = "owner") -> str:
         session_id = self._ensure_session_id()
         scope_id = self.turn_context.scope_id
+        await self._ensure_persona_state_loaded(scope_id)
         self.turn_context.turn_number += 1
         turn_number = self.turn_context.turn_number
         turn_id = f"{scope_id}:{turn_number}"
@@ -968,6 +1598,177 @@ class Stream:
             )
 
     # ── Helpers ────────────────────────────────────────────────────────
+
+    async def _ensure_persona_state_loaded(self, scope_id: str) -> None:
+        if scope_id not in self._pending_persona_scopes:
+            return
+
+        personality_engine = self.turn_context.personality_engine
+        if personality_engine is None:
+            self._pending_persona_scopes.discard(scope_id)
+            await self._audit("stream_startup_dependency_missing", dependency="personality_engine")
+            return
+
+        try:
+            await personality_engine.get_effective_axes(scope_id, "default")
+        except (RuntimeError, ValueError, OSError) as exc:
+            await self._audit("persona_state_lazy_load_failed", scope_id=scope_id, error=str(exc))
+        finally:
+            self._pending_persona_scopes.discard(scope_id)
+
+    def _known_scopes(self) -> list[str]:
+        scopes = {self.turn_context.scope_id}
+
+        context_manager = self._get_context_manager()
+        if context_manager is not None:
+            by_scope = getattr(context_manager, "by_scope", None)
+            if isinstance(by_scope, dict):
+                scopes.update(
+                    scope_id for scope_id in by_scope
+                    if isinstance(scope_id, str) and scope_id.strip()
+                )
+
+        chronicle_store = self.turn_context.chronicle_store
+        if chronicle_store is not None:
+            for attr_name in ("by_scope", "known_scopes", "scopes"):
+                raw = getattr(chronicle_store, attr_name, None)
+                if isinstance(raw, (dict, list, tuple, set)):
+                    scopes.update(
+                        scope_id for scope_id in raw
+                        if isinstance(scope_id, str) and scope_id.strip()
+                    )
+
+        return sorted(scopes)
+
+    def _config_value(self, *path: str, default: object | None = None) -> object | None:
+        current: object | None = self.turn_context.config
+        for key in path:
+            if current is None:
+                return default
+            if isinstance(current, dict):
+                current = current.get(key)
+                continue
+            current = getattr(current, key, None)
+        if current is None:
+            return default
+        return current
+
+    def _rehydration_max_chronicle_entries(self) -> int:
+        value = self._config_value("rehydration", "max_chronicle_entries", default=50)
+        if not isinstance(value, int) or value < 1:
+            return 50
+        return value
+
+    def _observation_mask_after_turns(self) -> int:
+        value = self._config_value("context", "observation_mask_after_turns", default=5)
+        if not isinstance(value, int) or value < 0:
+            return 5
+        return value
+
+    def _masked_if_stale(
+        self,
+        item: ContextItem,
+        latest_turn: int,
+        mask_after_turns: int,
+    ) -> ContextItem:
+        if item.kind != "tool_result" or item.masked:
+            return item
+        if latest_turn - item.turn_number <= mask_after_turns:
+            return item
+
+        placeholder = (
+            f"[Result of {item.source} — {item.token_count} tokens — see memory for details]"
+        )
+        return item.model_copy(
+            update={
+                "content": placeholder,
+                "token_count": _counter.count(placeholder),
+                "masked": True,
+            }
+        )
+
+    def _replace_context_item(
+        self,
+        cm: LiveContextManager,
+        scope_id: str,
+        item: ContextItem,
+    ) -> None:
+        cm.drop(scope_id, item.ctx_id)
+        cm.add(scope_id, item)
+
+    def _constitution_content(self) -> str:
+        raw_constitution = self._config_value("personality", "constitution")
+        if isinstance(raw_constitution, list):
+            lines = [f"- {line}" for line in raw_constitution if isinstance(line, str) and line.strip()]
+            if lines:
+                return "Constitution:\n" + "\n".join(lines)
+        return (
+            "Constitution:\n"
+            "- Never fabricate information.\n"
+            "- Keep private data private.\n"
+            "- Require approval for state-changing actions."
+        )
+
+    def _tool_descriptions_content(self) -> str:
+        skill_registry = self.turn_context.skill_registry
+        if skill_registry is None:
+            return "Tool descriptions: no registered skills."
+
+        descriptions = [
+            f"- {skill.name}: {skill.description}"
+            for skill in skill_registry.list_all()
+            if skill.description.strip()
+        ]
+        if not descriptions:
+            return "Tool descriptions: no registered skills."
+        return "Tool descriptions:\n" + "\n".join(descriptions)
+
+    def _configuration_content(self) -> str:
+        config = self.turn_context.config
+        if config is None:
+            return "Runtime configuration snapshot: <missing>"
+
+        payload: object
+        model_dump = getattr(config, "model_dump", None)
+        if callable(model_dump):
+            payload = model_dump(mode="json")
+        elif isinstance(config, dict):
+            payload = config
+        else:
+            payload = getattr(config, "__dict__", str(config))
+
+        serialized = json.dumps(payload, sort_keys=True, default=str)
+        return f"Runtime configuration snapshot:\n{serialized}"
+
+    def _file_subscription_targets(self, item: WorkItem) -> tuple[str, ...]:
+        targets: list[str] = []
+        for raw_target in item.input_artifacts_from:
+            if not isinstance(raw_target, str):
+                continue
+            target = raw_target.strip()
+            if not target or target in targets:
+                continue
+            targets.append(target)
+        return tuple(targets)
+
+    def _has_active_goal_connection_dependencies(self) -> bool:
+        active_goal = self._config_value("active_goal")
+        if not isinstance(active_goal, str) or not active_goal.strip():
+            return False
+
+        raw_dependencies = self._config_value("active_goal_connection_dependencies")
+        if isinstance(raw_dependencies, bool):
+            return raw_dependencies
+        if isinstance(raw_dependencies, (list, tuple, set)):
+            return bool(raw_dependencies)
+        return True
+
+    @staticmethod
+    def _is_cron_schedule(schedule: str | None) -> bool:
+        if not isinstance(schedule, str):
+            return False
+        parts = schedule.split()
+        return len(parts) == 5
 
     def _prepend_high_confidence_suggestions(self, response_text: str, suggestions: list[SuggestionProposal]) -> str:
         if not suggestions:
