@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
+from hashlib import sha256
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import AsyncIterator
 
 from silas.models.agents import AgentResponse, InteractionMode, InteractionRegister, RouteDecision
 from silas.models.context import ContextItem, ContextProfile, ContextSubscription, ContextZone
+from silas.models.execution import VerificationReport, VerificationResult
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import ChannelMessage, TaintLevel
 from silas.models.personality import AxisProfile, MoodState, PersonaState, VoiceConfig
 from silas.models.proactivity import SuggestionProposal
-from silas.models.work import BudgetUsed, WorkItem, WorkItemResult, WorkItemStatus
+from silas.models.work import BudgetUsed, VerificationCheck, WorkItem, WorkItemResult, WorkItemStatus
 from silas.stubs import InMemoryAuditLog as InMemoryAuditLog  # noqa: PLC0414
 
 
@@ -403,6 +406,50 @@ class FakePersonalityEngine:
         return self.states_by_scope[scope_id].model_copy(deep=True)
 
 
+@dataclass(slots=True)
+class FakeVerificationRunner:
+    report: VerificationReport = field(
+        default_factory=lambda: VerificationReport(
+            all_passed=True,
+            results=[VerificationResult(name="default", passed=True, reason="passed")],
+            failed=[],
+        )
+    )
+    run_calls: list[list[VerificationCheck]] = field(default_factory=list)
+
+    async def run_checks(self, checks: list[VerificationCheck]) -> VerificationReport:
+        self.run_calls.append([check.model_copy(deep=True) for check in checks])
+        return self.report.model_copy(deep=True)
+
+
+@dataclass(slots=True)
+class FakeKeyManager:
+    private_by_owner: dict[str, bytes] = field(default_factory=dict)
+    private_by_public: dict[str, bytes] = field(default_factory=dict)
+
+    def generate_keypair(self, owner_id: str) -> str:
+        private_key = sha256(owner_id.encode("utf-8")).digest()
+        public_key = sha256(private_key).hexdigest()
+        self.private_by_owner[owner_id] = private_key
+        self.private_by_public[public_key] = private_key
+        return public_key
+
+    def sign(self, owner_id: str, payload: bytes) -> bytes:
+        private_key = self.private_by_owner.get(owner_id)
+        if private_key is None:
+            raise KeyError(f"no private key for owner '{owner_id}'")
+        return sha256(private_key + payload).digest()
+
+    def verify(self, public_key_hex: str, payload: bytes, signature: bytes) -> tuple[bool, str]:
+        private_key = self.private_by_public.get(public_key_hex)
+        if private_key is None:
+            return False, "Unknown key"
+        expected = sha256(private_key + payload).digest()
+        if hmac.compare_digest(expected, signature):
+            return True, "Valid"
+        return False, "Invalid signature"
+
+
 def sample_memory_item(memory_id: str, content: str) -> MemoryItem:
     return MemoryItem(
         memory_id=memory_id,
@@ -419,6 +466,8 @@ def sample_context_profile(name: str = "conversation") -> ContextProfile:
 
 __all__ = [
     "FakeAutonomyCalibrator",
+    "FakeKeyManager",
+    "FakeVerificationRunner",
     "FakeSuggestionEngine",
     "FakeTokenCounter",
     "FakePersonalityEngine",

@@ -52,6 +52,13 @@ def structured_fallback(call_name: str, default_context_profile: str) -> object:
             plan_action=None,
             needs_approval=False,
         )
+    if call_name == "executor":
+        from silas.models.execution import ExecutorAgentOutput
+
+        return ExecutorAgentOutput(
+            summary="Executor structured output invalid.",
+            last_error="executor_structured_output_invalid",
+        )
     raise RuntimeError(f"No structured fallback configured for call_name={call_name!r}")
 
 
