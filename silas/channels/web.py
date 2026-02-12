@@ -17,8 +17,10 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, field_validator
 
-from silas.models.approval import ApprovalVerdict
+from silas.models.approval import ApprovalDecision, ApprovalVerdict
+from silas.models.draft import DraftVerdict
 from silas.models.messages import ChannelMessage, utc_now
+from silas.models.review import BatchActionDecision, DecisionResult
 from silas.protocols.channels import ChannelAdapterCore
 
 try:  # pragma: no cover - optional dependency
@@ -74,7 +76,9 @@ class WebChannel(ChannelAdapterCore):
         self._websockets_by_session: dict[str, WebSocket] = {}
         self._active_sessions_by_connection: dict[str, set[str]] = {}
         self._approval_response_handler: ApprovalResponseHandler | None = None
+        self._pending_card_responses: dict[str, asyncio.Future[dict[str, object]]] = {}
         self._ws_lock = asyncio.Lock()
+        self.supports_secure_input: bool = True
 
         self._push_subscriptions: dict[str, dict[str, object]] = {}
         self._vapid_private_key = os.getenv("SILAS_VAPID_PRIVATE_KEY", "")
@@ -405,6 +409,9 @@ class WebChannel(ChannelAdapterCore):
                 if msg_type == "approval_response":
                     await self._handle_approval_response(parsed)
                     return
+                if msg_type == "card_response":
+                    self._resolve_card_response(parsed)
+                    return
                 if msg_type != "message":
                     return
                 text = str(parsed.get("text", ""))
@@ -468,6 +475,292 @@ class WebChannel(ChannelAdapterCore):
             "timestamp": utc_now().isoformat(),
         }
         await self._send_json(connection_id, payload)
+
+    # --- Card request-response infrastructure ---
+
+    async def _send_card_and_wait(
+        self,
+        recipient_id: str,
+        card_type: str,
+        card_data: dict[str, object],
+        timeout: float = 300.0,
+    ) -> dict[str, object]:
+        """Send an interactive card and wait for the user's response.
+
+        The frontend sends back a ``card_response`` message with a matching
+        ``card_id``.  If no response arrives within *timeout* seconds the
+        future is cancelled and a default "declined/dismissed" dict is
+        returned so callers never hang indefinitely.
+        """
+        import uuid
+
+        card_id = uuid.uuid4().hex
+        future: asyncio.Future[dict[str, object]] = asyncio.get_event_loop().create_future()
+        self._pending_card_responses[card_id] = future
+
+        payload: dict[str, object] = {
+            "type": card_type,
+            "card_id": card_id,
+            **card_data,
+            "timestamp": utc_now().isoformat(),
+        }
+        await self._send_json(recipient_id, payload)
+
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        except (TimeoutError, asyncio.CancelledError):
+            return {"card_id": card_id, "timed_out": True}
+        finally:
+            self._pending_card_responses.pop(card_id, None)
+
+    def _resolve_card_response(self, parsed: dict[str, object]) -> None:
+        """Match an incoming card_response to its pending Future."""
+        card_id = parsed.get("card_id")
+        if not isinstance(card_id, str):
+            return
+        future = self._pending_card_responses.get(card_id)
+        if future is not None and not future.done():
+            future.set_result(parsed)
+
+    # --- RichCardChannel implementation ---
+
+    async def send_approval_request(
+        self, recipient_id: str, work_item: object,
+    ) -> ApprovalDecision:
+        """Present a plan for approval and collect the user's decision."""
+        card_data: dict[str, object] = {
+            "work_item_id": getattr(work_item, "id", ""),
+            "title": getattr(work_item, "title", ""),
+            "body": getattr(work_item, "body", ""),
+            "budget": (
+                work_item.budget.model_dump()
+                if hasattr(work_item, "budget") and hasattr(work_item.budget, "model_dump")
+                else {}
+            ),
+            "skills": list(work_item.skills) if hasattr(work_item, "skills") and work_item.skills else [],
+        }
+        response = await self._send_card_and_wait(recipient_id, "approval_request", card_data)
+        verdict_str = str(response.get("verdict", "declined"))
+        verdict_map = {
+            "approved": ApprovalVerdict.approved,
+            "declined": ApprovalVerdict.declined,
+            "edit_requested": ApprovalVerdict.edit_requested,
+            "conditional": ApprovalVerdict.conditional,
+        }
+        verdict = verdict_map.get(verdict_str, ApprovalVerdict.declined)
+        conditions = response.get("conditions", {})
+        if not isinstance(conditions, dict):
+            conditions = {}
+        return ApprovalDecision(verdict=verdict, conditions=conditions)
+
+    async def send_gate_approval(
+        self,
+        recipient_id: str,
+        gate_name: str,
+        value: str | float,
+        context: str,
+    ) -> str:
+        """Present a gate trigger and collect approve/block."""
+        card_data: dict[str, object] = {
+            "gate_name": gate_name,
+            "value": value,
+            "context": context,
+        }
+        response = await self._send_card_and_wait(recipient_id, "gate_approval", card_data)
+        action = str(response.get("action", "block"))
+        return action if action in {"approve", "block"} else "block"
+
+    async def send_checkpoint(
+        self, message: str, options: list[dict[str, object]],
+    ) -> dict[str, object]:
+        """Present a checkpoint with options and collect the user's choice."""
+        card_data: dict[str, object] = {"message": message, "options": options}
+        response = await self._send_card_and_wait(self.scope_id, "checkpoint", card_data)
+        return response
+
+    async def send_batch_review(
+        self, recipient_id: str, batch: object,
+    ) -> BatchActionDecision:
+        """Present a batch for review."""
+        from silas.models.review import BatchActionVerdict
+
+        items = getattr(batch, "items", [])
+        card_data: dict[str, object] = {
+            "batch_id": getattr(batch, "batch_id", ""),
+            "action": getattr(batch, "action", ""),
+            "items": [i.model_dump() for i in items] if items else [],
+            "reason_summary": getattr(batch, "reason_summary", ""),
+        }
+        response = await self._send_card_and_wait(recipient_id, "batch_review", card_data)
+        verdict_str = str(response.get("verdict", "decline"))
+        verdict_map = {
+            "approve": BatchActionVerdict.approve,
+            "decline": BatchActionVerdict.decline,
+            "edit_selection": BatchActionVerdict.edit_selection,
+        }
+        verdict = verdict_map.get(verdict_str, BatchActionVerdict.decline)
+        selected = response.get("selected_item_ids", [])
+        if not isinstance(selected, list):
+            selected = []
+        return BatchActionDecision(
+            verdict=verdict,
+            selected_item_ids=[str(i) for i in selected],
+        )
+
+    async def send_draft_review(
+        self,
+        recipient_id: str,
+        context: str,
+        draft: str,
+        metadata: dict[str, object],
+    ) -> DraftVerdict:
+        """Present a draft for review."""
+        card_data: dict[str, object] = {
+            "context": context,
+            "draft": draft,
+            "metadata": metadata,
+        }
+        response = await self._send_card_and_wait(recipient_id, "draft_review", card_data)
+        verdict_str = str(response.get("verdict", "reject"))
+        verdict_map = {
+            "approve": DraftVerdict.approve,
+            "edit": DraftVerdict.edit,
+            "rephrase": DraftVerdict.rephrase,
+            "reject": DraftVerdict.reject,
+        }
+        return verdict_map.get(verdict_str, DraftVerdict.reject)
+
+    async def send_decision(
+        self,
+        recipient_id: str,
+        question: str,
+        options: list[object],
+        allow_freetext: bool,
+    ) -> DecisionResult:
+        """Present a decision card with options."""
+        card_data: dict[str, object] = {
+            "question": question,
+            "options": [
+                o.model_dump() if hasattr(o, "model_dump") else o for o in options
+            ],
+            "allow_freetext": allow_freetext,
+        }
+        response = await self._send_card_and_wait(recipient_id, "decision", card_data)
+        return DecisionResult(
+            selected_value=response.get("selected_value"),  # type: ignore[arg-type]
+            freetext=response.get("freetext"),  # type: ignore[arg-type]
+            approved=bool(response.get("approved", False)),
+        )
+
+    async def send_suggestion(
+        self, recipient_id: str, suggestion: object,
+    ) -> DecisionResult:
+        """Present a proactive suggestion card."""
+        card_data: dict[str, object] = {
+            "suggestion": suggestion.model_dump() if hasattr(suggestion, "model_dump") else {},
+        }
+        response = await self._send_card_and_wait(recipient_id, "suggestion", card_data)
+        return DecisionResult(
+            selected_value=response.get("selected_value"),  # type: ignore[arg-type]
+            freetext=response.get("freetext"),  # type: ignore[arg-type]
+            approved=bool(response.get("approved", False)),
+        )
+
+    async def send_autonomy_threshold_review(
+        self, recipient_id: str, proposal: object,
+    ) -> object:
+        """Present an autonomy threshold proposal."""
+        card_data: dict[str, object] = {
+            "proposal": proposal.model_dump() if hasattr(proposal, "model_dump") else {},
+        }
+        response = await self._send_card_and_wait(
+            recipient_id, "autonomy_threshold_review", card_data,
+        )
+        decision_str = str(response.get("decision", "decline"))
+        return decision_str  # caller interprets as AutonomyThresholdDecision
+
+    async def send_secure_input(
+        self, recipient_id: str, request: object,
+    ) -> object:
+        """Present a secure input card.
+
+        The web frontend renders a password field that POSTs directly to
+        ``/secrets/{ref_id}`` — the secret never travels over WebSocket.
+        We only send the metadata (label, hint, guidance) and wait for the
+        frontend to confirm storage succeeded.
+        """
+        from silas.models.connections import SecureInputCompleted
+
+        card_data: dict[str, object] = {
+            "ref_id": getattr(request, "ref_id", ""),
+            "label": getattr(request, "label", ""),
+            "input_hint": getattr(request, "input_hint", None),
+            "guidance": getattr(request, "guidance", {}),
+        }
+        response = await self._send_card_and_wait(recipient_id, "secure_input", card_data)
+        return SecureInputCompleted(
+            ref_id=str(card_data["ref_id"]),
+            success=bool(response.get("success", False)),
+        )
+
+    async def send_connection_setup_step(
+        self, recipient_id: str, step: object,
+    ) -> object:
+        """Present a connection setup step card."""
+        from silas.models.connections import SetupStepResponse
+
+        card_data: dict[str, object] = {
+            "step": step.model_dump() if hasattr(step, "model_dump") else {},
+        }
+        response = await self._send_card_and_wait(
+            recipient_id, "connection_setup_step", card_data,
+        )
+        return SetupStepResponse(
+            step_type=str(response.get("step_type", "unknown")),
+            action=str(response.get("action", "done")),
+        )
+
+    async def send_permission_escalation(
+        self,
+        recipient_id: str,
+        connection_name: str,
+        current: list[str],
+        requested: list[str],
+        reason: str,
+    ) -> DecisionResult:
+        """Present a permission escalation card."""
+        card_data: dict[str, object] = {
+            "connection_name": connection_name,
+            "current_permissions": current,
+            "requested_permissions": requested,
+            "reason": reason,
+        }
+        response = await self._send_card_and_wait(
+            recipient_id, "permission_escalation", card_data,
+        )
+        return DecisionResult(
+            selected_value=response.get("selected_value"),  # type: ignore[arg-type]
+            freetext=response.get("freetext"),  # type: ignore[arg-type]
+            approved=bool(response.get("approved", False)),
+        )
+
+    async def send_connection_failure(
+        self, recipient_id: str, failure: object,
+    ) -> DecisionResult:
+        """Present a connection failure card with recovery options."""
+        card_data: dict[str, object] = {
+            "failure": failure.model_dump() if hasattr(failure, "model_dump") else {},
+        }
+        response = await self._send_card_and_wait(
+            recipient_id, "connection_failure", card_data,
+        )
+        return DecisionResult(
+            selected_value=response.get("selected_value"),  # type: ignore[arg-type]
+            freetext=response.get("freetext"),  # type: ignore[arg-type]
+            approved=bool(response.get("approved", False)),
+        )
+
+    # --- Legacy card method (kept for backward compatibility) ---
 
     async def send_approval_card(self, recipient_id: str, card: dict[str, object]) -> None:
         payload = {

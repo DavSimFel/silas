@@ -248,4 +248,9 @@ def test_batch_action_item_serialization() -> None:
     item = BatchActionItem(item_id="i1", title="Review ticket", actor="alice")
     payload = item.model_dump()
 
-    assert payload == {"item_id": "i1", "title": "Review ticket", "actor": "alice"}
+    assert payload["item_id"] == "i1"
+    assert payload["title"] == "Review ticket"
+    assert payload["actor"] == "alice"
+    # New spec fields have defaults
+    assert payload["reason"] == ""
+    assert payload["confidence"] == 1.0

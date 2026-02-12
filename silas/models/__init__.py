@@ -72,7 +72,14 @@ from silas.models.personality import (
 )
 from silas.models.preferences import InferredPreference, PreferenceSignal
 from silas.models.proactivity import Suggestion, SuggestionProposal
-from silas.models.review import BatchActionDecision, BatchActionItem, BatchProposal
+from silas.models.review import (
+    BatchActionDecision,
+    BatchActionItem,
+    BatchActionVerdict,
+    BatchProposal,
+    DecisionOption,
+    DecisionResult,
+)
 from silas.models.sessions import Session, SessionType
 from silas.models.skills import SkillDefinition, SkillMetadata, SkillRef, SkillResult
 from silas.models.undo import UndoEntry
@@ -109,6 +116,7 @@ __all__ = [
     "Base64Bytes",
     "BatchActionDecision",
     "BatchActionItem",
+    "BatchActionVerdict",
     "BatchProposal",
     "Budget",
     "BudgetUsed",
@@ -119,6 +127,8 @@ __all__ = [
     "ContextProfile",
     "ContextSubscription",
     "ContextZone",
+    "DecisionOption",
+    "DecisionResult",
     "DraftReview",
     "DraftVerdict",
     "EscalationAction",
