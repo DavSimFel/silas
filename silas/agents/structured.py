@@ -24,10 +24,9 @@ def summarize_validation_error(err: ValidationError) -> str:
 
 
 def _unwrap_run_result(result: object) -> object:
-    try:
-        return result.output  # type: ignore[attr-defined]
-    except AttributeError:
-        return result
+    """Extract .output from pydantic-ai RunResult, or return as-is."""
+    output = getattr(result, "output", None)
+    return output if output is not None else result
 
 
 def structured_fallback(call_name: str, default_context_profile: str) -> object:

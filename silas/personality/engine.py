@@ -49,7 +49,7 @@ def _coerce_delta_map(raw: object) -> dict[str, float]:
         if not isinstance(key, str):
             continue
         try:
-            result[key] = float(value)  # type: ignore[arg-type]
+            result[key] = float(str(value))
         except (TypeError, ValueError):
             continue
     return result

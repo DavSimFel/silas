@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
@@ -10,6 +11,8 @@ from pydantic import BaseModel, Field
 
 from silas.agents.structured import run_structured_agent
 from silas.models.gates import Gate, GateLane, GateResult
+
+logger = logging.getLogger(__name__)
 
 
 class _QualityAdvice(BaseModel):

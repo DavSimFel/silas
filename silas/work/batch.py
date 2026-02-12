@@ -1,12 +1,42 @@
+"""BatchExecutor — executes approved batch action proposals.
+
+Handles gate-checked batch operations against work item stores,
+with proper protocol typing instead of duck-typed `object` params.
+"""
+
 from __future__ import annotations
 
+import logging
 import uuid
+from typing import Protocol, runtime_checkable
 
 from silas.models.review import BatchActionDecision, BatchActionItem, BatchProposal
 
+logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class BatchGateRunner(Protocol):
+    """Protocol for gate runners that can check batch action permissions."""
+
+    def check_batch_action(self, action: str, payload: dict[str, object]) -> bool: ...
+
+
+@runtime_checkable
+class BatchWorkItemStore(Protocol):
+    """Protocol for stores that can execute batch actions."""
+
+    def execute_batch_action(self, action: str, payload: dict[str, object]) -> None: ...
+
 
 class BatchExecutor:
-    def __init__(self, work_item_store: object, gate_runner: object | None = None) -> None:
+    """Executes approved batch proposals against a work item store with optional gate checks."""
+
+    def __init__(
+        self,
+        work_item_store: BatchWorkItemStore,
+        gate_runner: BatchGateRunner | None = None,
+    ) -> None:
         self._work_item_store = work_item_store
         self._gate_runner = gate_runner
 
@@ -15,6 +45,7 @@ class BatchExecutor:
         proposal: BatchProposal,
         decision: BatchActionDecision,
     ) -> list[dict[str, object]]:
+        """Execute a batch proposal filtered by the user's decision."""
         if decision.verdict == "decline":
             return []
 
@@ -25,21 +56,12 @@ class BatchExecutor:
 
         results: list[dict[str, object]] = []
         for item in selected_items:
-            error: str | None = None
-            success = True
-            payload = {"item_id": item.item_id, "title": item.title, "actor": item.actor}
-            try:
-                if not self._is_allowed(proposal.action, payload):
-                    raise PermissionError("blocked by gate runner")
-                self._execute_item(proposal.action, payload)
-            except Exception as exc:
-                success = False
-                error = str(exc)
-
-            results.append({"item_id": item.item_id, "success": success, "error": error})
+            result = self._execute_single_item(proposal.action, item)
+            results.append(result)
         return results
 
     def create_batch_from_items(self, items: list[dict[str, object]], action: str) -> BatchProposal:
+        """Build a BatchProposal from raw item dicts."""
         batch_items: list[BatchActionItem] = []
         for item in items:
             item_id = str(item.get("item_id") or item.get("id") or uuid.uuid4().hex)
@@ -54,43 +76,26 @@ class BatchExecutor:
             reasoning="",
         )
 
+    def _execute_single_item(
+        self, action: str, item: BatchActionItem,
+    ) -> dict[str, object]:
+        """Execute one batch item with gate check, returning success/error dict."""
+        payload = {"item_id": item.item_id, "title": item.title, "actor": item.actor}
+        try:
+            if not self._is_allowed(action, payload):
+                raise PermissionError("blocked by gate runner")
+            self._work_item_store.execute_batch_action(action, payload)
+        except Exception as exc:
+            logger.warning("Batch item %s failed: %s", item.item_id, exc)
+            return {"item_id": item.item_id, "success": False, "error": str(exc)}
+
+        return {"item_id": item.item_id, "success": True, "error": None}
+
     def _is_allowed(self, action: str, payload: dict[str, object]) -> bool:
+        """Check gate runner permission. No gate runner = always allowed."""
         if self._gate_runner is None:
             return True
-        if hasattr(self._gate_runner, "allow"):
-            return bool(self._gate_runner.allow(action, payload))  # type: ignore[attr-defined]
-        if hasattr(self._gate_runner, "run"):
-            result = self._gate_runner.run(action, payload)  # type: ignore[attr-defined]
-            return _coerce_gate_result(result)
-        if callable(self._gate_runner):
-            result = self._gate_runner(action, payload)
-            return _coerce_gate_result(result)
-        return True
-
-    def _execute_item(self, action: str, payload: dict[str, object]) -> None:
-        if hasattr(self._work_item_store, "execute_action"):
-            self._work_item_store.execute_action(action, payload)  # type: ignore[attr-defined]
-            return
-        if hasattr(self._work_item_store, "apply"):
-            self._work_item_store.apply(action, payload)  # type: ignore[attr-defined]
-            return
-        if callable(self._work_item_store):
-            self._work_item_store(action, payload)
+        return self._gate_runner.check_batch_action(action, payload)
 
 
-def _coerce_gate_result(result: object) -> bool:
-    if isinstance(result, bool):
-        return result
-    if isinstance(result, dict):
-        if "allowed" in result:
-            return bool(result["allowed"])
-        if "success" in result:
-            return bool(result["success"])
-    try:
-        return bool(result.allowed)  # type: ignore[attr-defined]
-    except AttributeError:
-        pass
-    return bool(result)
-
-
-__all__ = ["BatchExecutor"]
+__all__ = ["BatchExecutor", "BatchGateRunner", "BatchWorkItemStore"]

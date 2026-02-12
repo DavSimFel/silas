@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shutil
 import signal
@@ -21,6 +22,8 @@ class SandboxExecResult:
     stderr: str
     timed_out: bool
     duration_seconds: float
+
+logger = logging.getLogger(__name__)
 
 
 class SubprocessSandboxManager:

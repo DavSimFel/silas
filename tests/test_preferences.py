@@ -46,7 +46,7 @@ class _BatchStore:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, object]]] = []
 
-    def execute_action(self, action: str, payload: dict[str, object]) -> None:
+    def execute_batch_action(self, action: str, payload: dict[str, object]) -> None:
         self.calls.append((action, payload))
 
 
