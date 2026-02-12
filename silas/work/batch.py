@@ -85,7 +85,7 @@ class BatchExecutor:
             if not self._is_allowed(action, payload):
                 raise PermissionError("blocked by gate runner")
             self._work_item_store.execute_batch_action(action, payload)
-        except Exception as exc:
+        except (PermissionError, ValueError, RuntimeError, OSError) as exc:
             logger.warning("Batch item %s failed: %s", item.item_id, exc)
             return {"item_id": item.item_id, "success": False, "error": str(exc)}
 

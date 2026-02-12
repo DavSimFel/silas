@@ -57,7 +57,7 @@ class SilasKeyManager:
             public_key.verify(signature, payload)
         except InvalidSignature:
             return False, "Invalid signature"
-        except Exception as exc:  # pragma: no cover - backend and key errors vary by platform
+        except (ValueError, TypeError, OSError) as exc:  # pragma: no cover - backend and key errors vary by platform
             return False, str(exc)
 
         return True, "Valid"
@@ -81,12 +81,12 @@ class SilasKeyManager:
 
         try:
             private_key_raw = base64.b64decode(encoded_private_key.encode("utf-8"), validate=True)
-        except Exception as exc:
+        except (ValueError, TypeError) as exc:
             raise ValueError("stored private key is not valid base64") from exc
 
         try:
             return Ed25519PrivateKey.from_private_bytes(private_key_raw)
-        except Exception as exc:
+        except (ValueError, TypeError) as exc:
             raise ValueError("stored private key has invalid format") from exc
 
     def _credential_name(self, owner_id: str, label: str) -> str:

@@ -41,7 +41,7 @@ class SilasSkillLoader:
         parsed = self._parse_frontmatter(skill_file.read_text(encoding="utf-8"))
         try:
             metadata = SkillMetadata.model_validate(parsed)
-        except Exception as exc:
+        except (ValueError, TypeError) as exc:
             raise ValueError(f"invalid frontmatter for '{skill_name}': {exc}") from exc
 
         if metadata.name != skill_name:
@@ -183,7 +183,7 @@ class SilasSkillLoader:
     ) -> SkillMetadata:
         try:
             return SkillMetadata.model_validate(frontmatter)
-        except Exception as exc:
+        except (ValueError, TypeError) as exc:
             errors.append(f"invalid frontmatter schema: {exc}")
 
         name = frontmatter.get("name")

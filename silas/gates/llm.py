@@ -78,7 +78,7 @@ class LLMChecker:
             result = self._parse_response(gate, raw)
             self._clear_failures()
             return result
-        except Exception as exc:
+        except (ConnectionError, TimeoutError, ValueError, RuntimeError, OSError) as exc:
             self._record_failure(now)
             return self._failure_result(gate, str(exc))
 

@@ -146,7 +146,7 @@ class SubprocessSandboxManager:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             return
-        except Exception:  # pragma: no cover - platform dependent
+        except OSError:  # pragma: no cover - platform dependent
             process.kill()
 
 

@@ -45,8 +45,8 @@ class PlannerAgent:
                 output_type=AgentResponse,
                 system_prompt=self.system_prompt,
             )
-        except Exception:
-            logger.warning("Failed to initialize Planner Agent; falling back to deterministic planner", exc_info=True)
+        except (ImportError, ValueError, TypeError, RuntimeError) as exc:
+            logger.warning("Failed to initialize Planner Agent; falling back to deterministic planner: %s", exc)
             self.agent = None
             self._llm_available = False
 
@@ -66,7 +66,7 @@ class PlannerAgent:
                     default_context_profile=self.default_context_profile,
                 )
                 return self._coerce_response(raw, user_request)
-            except Exception:
+            except (ConnectionError, TimeoutError, ValueError, RuntimeError):
                 logger.warning("Planner LLM call failed; using deterministic fallback", exc_info=True)
 
         return self._fallback_response(user_request)

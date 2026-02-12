@@ -94,7 +94,7 @@ class SkillExecutor:
                 last_error = (
                     f"skill '{skill_name}' timed out after {definition.timeout_seconds} seconds"
                 )
-            except Exception as exc:
+            except (ValueError, TypeError, RuntimeError, OSError) as exc:
                 last_error = str(exc)
 
             if attempt < definition.max_retries:

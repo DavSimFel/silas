@@ -142,7 +142,7 @@ class SilasGateRunner(GateRunner):
 
         try:
             result = await provider.check(gate, dict(context))
-        except Exception as exc:
+        except (ValueError, TypeError, RuntimeError, OSError, TimeoutError) as exc:
             return GateResult(
                 gate_name=gate.name,
                 lane=GateLane.policy,

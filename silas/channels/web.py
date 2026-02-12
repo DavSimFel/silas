@@ -252,7 +252,7 @@ class WebChannel(ChannelAdapterCore):
                 status_code = getattr(response, "status_code", None)
                 if status_code in {404, 410}:
                     stale_endpoints.append(endpoint)
-            except Exception:
+            except (OSError, ValueError, RuntimeError):
                 logger.warning("Push notification failed for endpoint", exc_info=True)
                 failed += 1
 

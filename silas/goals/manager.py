@@ -67,7 +67,7 @@ class SilasGoalManager:
             }
             run.transition_to("completed")
             return run.model_copy(deep=True)
-        except Exception as exc:
+        except (ValueError, KeyError, RuntimeError, OSError) as exc:
             run.error = str(exc)
             run.transition_to("failed")
             return run.model_copy(deep=True)

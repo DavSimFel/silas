@@ -63,8 +63,8 @@ class ProxyAgent:
                 output_type=RouteDecision,
                 system_prompt=self.system_prompt,
             )
-        except Exception:
-            logger.warning("Failed to initialize PydanticAI Agent for proxy — using fallback mode", exc_info=True)
+        except (ImportError, ValueError, TypeError, RuntimeError) as exc:
+            logger.warning("Failed to initialize PydanticAI Agent for proxy — using fallback mode: %s", exc)
             self.agent = None
             self._llm_available = False
 
@@ -74,7 +74,7 @@ class ProxyAgent:
             try:
                 result = await self.agent.run(prompt)
                 return ProxyRunResult(output=result.output)
-            except Exception:
+            except (ConnectionError, TimeoutError, ValueError, RuntimeError):
                 logger.warning("Proxy LLM call failed — falling back to deterministic route", exc_info=True)
 
         # Deterministic fallback: always route direct with echo
