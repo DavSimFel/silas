@@ -90,11 +90,15 @@ def plan_action_to_work_item(
     """Convert a single plan action dict into a WorkItem."""
     plan_markdown = action.get("plan_markdown")
     if isinstance(plan_markdown, str) and plan_markdown.strip():
-        return parser.parse(plan_markdown)
+        item = parser.parse(plan_markdown)
+        item.needs_approval = True  # Planner cannot bypass approval.
+        return item
 
     explicit_work_item = action.get("work_item")
     if isinstance(explicit_work_item, Mapping):
-        return WorkItem.model_validate(dict(explicit_work_item))
+        item = WorkItem.model_validate(dict(explicit_work_item))
+        item.needs_approval = True  # Planner cannot bypass approval.
+        return item
 
     payload = dict(action)
     payload.setdefault("id", f"plan:{turn_number}:{index + 1}")
@@ -110,7 +114,12 @@ def plan_action_to_work_item(
         body = f"Execute planner action {index + 1}."
     payload["body"] = body
 
-    return WorkItem.model_validate(payload)
+    work_item = WorkItem.model_validate(payload)
+    # Security: planner cannot downgrade approval requirements.
+    # needs_approval is always True for planner-generated work items —
+    # the approval flow is the only way to authorize execution.
+    work_item.needs_approval = True
+    return work_item
 
 
 def order_work_items(work_items: list[WorkItem]) -> list[WorkItem]:

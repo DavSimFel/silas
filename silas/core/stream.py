@@ -7,6 +7,8 @@ to keep this file focused on orchestration.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import re
 import uuid
 from dataclasses import dataclass
@@ -49,8 +51,12 @@ class Stream:
     output_gate_runner: OutputGateRunner | None = None
     session_id: str | None = None
     _approval_flow: ApprovalFlow | None = None
+    # Signing key for HMAC message signatures. Generated per-instance if not provided.
+    _signing_key: bytes = b""
 
     def __post_init__(self) -> None:
+        if not self._signing_key:
+            self._signing_key = uuid.uuid4().bytes + uuid.uuid4().bytes  # 32 bytes
         self._sync_turn_context_fields()
         self._approval_flow = ApprovalFlow(
             approval_manager=self.turn_context.approval_manager,
@@ -152,7 +158,11 @@ class Stream:
         await self._audit("phase1a_noop", step=1, note="input gates skipped")
 
         taint = TaintLevel.owner if message.sender_id == self.owner_id else TaintLevel.external
-        signed = SignedMessage(message=message, signature=b"", nonce=uuid.uuid4().hex, taint=taint)
+        nonce = uuid.uuid4().hex
+        # HMAC signature binds message content to nonce, preventing replay/forgery.
+        sig_payload = f"{message.sender_id}:{message.text}:{nonce}".encode()
+        signature = hmac.new(self._signing_key, sig_payload, hashlib.sha256).digest()
+        signed = SignedMessage(message=message, signature=signature, nonce=nonce, taint=taint)
         cm = self._get_context_manager()
 
         self.turn_context.turn_number += 1

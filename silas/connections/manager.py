@@ -343,7 +343,12 @@ class SilasConnectionManager:
         return set(self._scheduled_refresh)
 
     def _resolve_script(self, skill_name: str, script_name: str) -> Path:
-        skill_dir = self.skills_dir / skill_name
+        # Guard against path traversal: resolved paths must stay under skills_dir.
+        skill_dir = (self.skills_dir / skill_name).resolve()
+        skills_root = self.skills_dir.resolve()
+        if not str(skill_dir).startswith(str(skills_root) + "/") and skill_dir != skills_root:
+            raise ValueError(f"skill name escapes skills directory: {skill_name}")
+
         if not skill_dir.exists() or not skill_dir.is_dir():
             raise FileNotFoundError(f"skill directory not found: {skill_name}")
 
@@ -352,8 +357,11 @@ class SilasConnectionManager:
             skill_dir / "scripts" / script_name,
         ]
         for path in candidates:
-            if path.exists() and path.is_file():
-                return path
+            resolved = path.resolve()
+            if not str(resolved).startswith(str(skills_root) + "/"):
+                raise ValueError(f"script path escapes skills directory: {path}")
+            if resolved.exists() and resolved.is_file():
+                return resolved
 
         raise FileNotFoundError(f"{script_name} not found for skill: {skill_name}")
 
