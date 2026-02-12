@@ -17,6 +17,34 @@ class ModelsConfig(BaseModel):
     planner: str = "openrouter:anthropic/claude-sonnet-4-5"
     executor: str = "openrouter:anthropic/claude-haiku-4-5"
     scorer: str = "openrouter:anthropic/claude-haiku-4-5"
+    api_key: str | None = None
+    """LLM provider API key. If set, injected as the appropriate env var
+    (e.g. OPENROUTER_API_KEY) based on the provider prefix of the model strings.
+    Can also be set directly via SILAS_MODELS__API_KEY or the provider-native
+    env var (OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY)."""
+
+    def inject_api_key_env(self) -> None:
+        """Push api_key into the process environment for PydanticAI to pick up.
+
+        Only sets the env var if api_key is configured and the corresponding
+        env var isn't already set (explicit env vars take precedence).
+        """
+        if not self.api_key:
+            return
+
+        # Detect provider from any model string
+        providers = {m.split(":")[0] for m in [self.proxy, self.planner, self.executor, self.scorer] if ":" in m}
+        env_map = {
+            "openrouter": "OPENROUTER_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "google-gla": "GOOGLE_API_KEY",
+            "groq": "GROQ_API_KEY",
+        }
+        for provider in providers:
+            env_var = env_map.get(provider)
+            if env_var and not os.environ.get(env_var):
+                os.environ[env_var] = self.api_key
 
 
 class WebChannelConfig(BaseModel):
@@ -145,6 +173,7 @@ def load_config(path: str | Path = "config/silas.yaml") -> SilasSettings:
 
     merged = _apply_env_overrides(raw)
     settings = SilasSettings.model_validate(merged)
+    settings.models.inject_api_key_env()
     RouteDecision.configure_profiles(set(settings.context.profiles.keys()))
     return settings
 
