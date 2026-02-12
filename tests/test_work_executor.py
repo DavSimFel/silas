@@ -10,7 +10,12 @@ from silas.work.executor import LiveWorkItemExecutor
 from tests.fakes import InMemoryWorkItemStore
 
 
-def _register_skill(registry: SkillRegistry, name: str) -> None:
+def _register_skill(
+    registry: SkillRegistry,
+    name: str,
+    *,
+    requires_approval: bool = False,
+) -> None:
     registry.register(
         SkillDefinition(
             name=name,
@@ -18,7 +23,7 @@ def _register_skill(registry: SkillRegistry, name: str) -> None:
             version="1.0.0",
             input_schema={"type": "object"},
             output_schema={"type": "object"},
-            requires_approval=False,
+            requires_approval=requires_approval,
             max_retries=0,
             timeout_seconds=5,
         )
@@ -33,6 +38,7 @@ def _work_item(
     depends_on: list[str] | None = None,
     status: WorkItemStatus = WorkItemStatus.pending,
     budget: Budget | None = None,
+    needs_approval: bool = False,
 ) -> WorkItem:
     return WorkItem(
         id=item_id,
@@ -43,6 +49,7 @@ def _work_item(
         depends_on=depends_on or [],
         status=status,
         budget=budget or Budget(),
+        needs_approval=needs_approval,
     )
 
 
@@ -70,6 +77,13 @@ def work_executor(
         skill_executor=skill_executor,
         work_item_store=work_store,
     )
+
+
+class _FailOnDoneSaveStore(InMemoryWorkItemStore):
+    async def save(self, item: WorkItem) -> None:
+        if item.status == WorkItemStatus.done:
+            raise RuntimeError("simulated done-state persistence failure")
+        await super().save(item)
 
 
 @pytest.mark.asyncio
@@ -336,3 +350,96 @@ async def test_failed_dependency_stops_downstream_execution(
     loaded_root = await work_store.get("task-b")
     assert loaded_root is not None
     assert loaded_root.status == WorkItemStatus.failed
+
+
+@pytest.mark.asyncio
+async def test_needs_approval_true_without_token_blocks_execution(
+    work_executor: LiveWorkItemExecutor,
+    skill_registry: SkillRegistry,
+    skill_executor: SkillExecutor,
+    work_store: InMemoryWorkItemStore,
+) -> None:
+    _register_skill(skill_registry, "safe_skill")
+    calls: list[str] = []
+
+    async def _safe_skill(inputs: dict[str, object]) -> dict[str, object]:
+        calls.append(str(inputs["work_item_id"]))
+        return {"ok": True}
+
+    skill_executor.register_handler("safe_skill", _safe_skill)
+
+    result = await work_executor.execute(
+        _work_item(
+            "task-approval-needed",
+            skills=["safe_skill"],
+            needs_approval=True,
+        )
+    )
+
+    assert result.status == WorkItemStatus.blocked
+    assert result.last_error is not None
+    assert "explicit approval token required" in result.last_error
+    assert calls == []
+
+    loaded = await work_store.get("task-approval-needed")
+    assert loaded is not None
+    assert loaded.status == WorkItemStatus.blocked
+
+
+@pytest.mark.asyncio
+async def test_skill_metadata_requires_approval_cannot_be_downgraded(
+    work_executor: LiveWorkItemExecutor,
+    skill_registry: SkillRegistry,
+    skill_executor: SkillExecutor,
+    work_store: InMemoryWorkItemStore,
+) -> None:
+    _register_skill(skill_registry, "sensitive_skill", requires_approval=True)
+    calls: list[str] = []
+
+    async def _sensitive_skill(inputs: dict[str, object]) -> dict[str, object]:
+        calls.append(str(inputs["work_item_id"]))
+        return {"ok": True}
+
+    skill_executor.register_handler("sensitive_skill", _sensitive_skill)
+
+    result = await work_executor.execute(
+        _work_item(
+            "task-sensitive",
+            skills=["sensitive_skill"],
+            needs_approval=False,
+        )
+    )
+
+    assert result.status == WorkItemStatus.blocked
+    assert calls == []
+    loaded = await work_store.get("task-sensitive")
+    assert loaded is not None
+    assert loaded.needs_approval is True
+    assert loaded.status == WorkItemStatus.blocked
+
+
+@pytest.mark.asyncio
+async def test_persist_failure_prevents_completion_marking(
+    skill_registry: SkillRegistry,
+    skill_executor: SkillExecutor,
+) -> None:
+    _register_skill(skill_registry, "skill_a")
+    store = _FailOnDoneSaveStore()
+    executor = LiveWorkItemExecutor(
+        skill_executor=skill_executor,
+        work_item_store=store,
+    )
+
+    async def _skill_a(_inputs: dict[str, object]) -> dict[str, object]:
+        return {"ok": True}
+
+    skill_executor.register_handler("skill_a", _skill_a)
+    result = await executor.execute(_work_item("task-persist-failure", skills=["skill_a"]))
+
+    assert result.status == WorkItemStatus.failed
+    assert result.last_error is not None
+    assert "failed to persist completion state" in result.last_error
+
+    loaded = await store.get("task-persist-failure")
+    assert loaded is not None
+    assert loaded.status == WorkItemStatus.failed

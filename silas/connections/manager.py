@@ -343,7 +343,15 @@ class SilasConnectionManager:
         return set(self._scheduled_refresh)
 
     def _resolve_script(self, skill_name: str, script_name: str) -> Path:
-        skill_dir = self.skills_dir / skill_name
+        skills_root = self.skills_dir.resolve()
+        skill_dir = (self.skills_dir / skill_name).resolve()
+        try:
+            # Reject traversal in skill_name (e.g. "../other-skill") so all
+            # connection scripts stay scoped under the configured skills root.
+            skill_dir.relative_to(skills_root)
+        except ValueError as exc:
+            raise FileNotFoundError(f"skill directory not found: {skill_name}") from exc
+
         if not skill_dir.exists() or not skill_dir.is_dir():
             raise FileNotFoundError(f"skill directory not found: {skill_name}")
 
@@ -352,8 +360,16 @@ class SilasConnectionManager:
             skill_dir / "scripts" / script_name,
         ]
         for path in candidates:
-            if path.exists() and path.is_file():
-                return path
+            resolved_path = path.resolve()
+            try:
+                # Reject traversal in script names (e.g. "../../outside.py")
+                # even if the target exists on disk.
+                resolved_path.relative_to(skill_dir)
+            except ValueError:
+                continue
+
+            if resolved_path.exists() and resolved_path.is_file():
+                return resolved_path
 
         raise FileNotFoundError(f"{script_name} not found for skill: {skill_name}")
 

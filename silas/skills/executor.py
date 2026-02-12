@@ -38,6 +38,11 @@ class SkillExecutor:
     def register_handler(self, skill_name: str, handler: SkillHandler) -> None:
         self._handlers[skill_name] = handler
 
+    def skill_requires_approval(self, skill_name: str) -> bool:
+        """Return whether skill metadata requires explicit approval at execution time."""
+        definition = self._skill_registry.get(skill_name)
+        return bool(definition is not None and definition.requires_approval)
+
     async def execute(self, skill_name: str, inputs: dict[str, object]) -> SkillResult:
         started_at = datetime.now(UTC)
         definition = self._skill_registry.get(skill_name)

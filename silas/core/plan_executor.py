@@ -188,14 +188,41 @@ def build_skill_work_item(
     if not isinstance(body, str) or not body.strip():
         body = f"Planner requested execution of skill '{skill_name}'."
 
+    needs_approval = _resolve_skill_needs_approval(
+        action=action,
+        requires_approval=requires_approval,
+    )
+
     return WorkItem(
         id=f"skill:{turn_number}:{uuid.uuid4().hex}",
         type=WorkItemType.task,
         title=title,
         body=body,
-        needs_approval=requires_approval,
+        needs_approval=needs_approval,
         skills=[skill_name],
     )
+
+
+def _resolve_skill_needs_approval(
+    *,
+    action: Mapping[str, object],
+    requires_approval: bool,
+) -> bool:
+    """Keep skill metadata as the floor for approval requirements.
+
+    Planner output is untrusted input, so it may request less approval than
+    the skill definition requires. We only allow planner data to request a
+    stricter requirement, never a weaker one.
+    """
+    planner_value = action.get("needs_approval")
+    if planner_value is None:
+        nested_work_item = action.get("work_item")
+        if isinstance(nested_work_item, Mapping):
+            planner_value = nested_work_item.get("needs_approval")
+
+    if isinstance(planner_value, bool):
+        return requires_approval or planner_value
+    return requires_approval
 
 
 __all__ = [

@@ -411,8 +411,8 @@ class PlannerRouteWithPlanActionsModel:
             routed,
             "plan_actions",
             [
-                {"id": "plan-a", "type": "task", "title": "Run first action", "body": "Execute first planner action.", "skills": ["skill_a"]},
-                {"id": "plan-b", "type": "task", "title": "Run second action", "body": "Execute second planner action.", "skills": ["skill_b"], "depends_on": ["plan-a"]},
+                {"id": "plan-a", "type": "task", "title": "Run first action", "body": "Execute first planner action.", "needs_approval": False, "skills": ["skill_a"]},
+                {"id": "plan-b", "type": "task", "title": "Run second action", "body": "Execute second planner action.", "needs_approval": False, "skills": ["skill_b"], "depends_on": ["plan-a"]},
             ],
         )
         return RunResult(output=routed)

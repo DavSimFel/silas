@@ -225,6 +225,27 @@ class TestConnectionModels:
 
 class TestConnectionManager:
     @pytest.mark.asyncio
+    async def test_discover_rejects_skill_name_path_traversal(self, tmp_path: Path) -> None:
+        skills_dir = tmp_path / "skills"
+        _touch_script(skills_dir, "github", "discover.py")
+        _touch_script(tmp_path, "outside", "discover.py")
+
+        manager = SilasConnectionManager(skills_dir=skills_dir)
+
+        with pytest.raises(FileNotFoundError, match="skill directory not found"):
+            await manager.discover_connection("../outside", {"email": "dev@example.com"})
+
+    def test_resolve_script_rejects_script_path_traversal(self, tmp_path: Path) -> None:
+        skills_dir = tmp_path / "skills"
+        _touch_script(skills_dir, "github", "discover.py")
+        (tmp_path / "outside.py").write_text("# outside\n", encoding="utf-8")
+
+        manager = SilasConnectionManager(skills_dir=skills_dir)
+
+        with pytest.raises(FileNotFoundError, match="not found"):
+            manager._resolve_script("github", "../outside.py")
+
+    @pytest.mark.asyncio
     async def test_discover_connection_uses_subprocess(self, tmp_path: Path, monkeypatch) -> None:
         skills_dir = tmp_path / "skills"
         _touch_script(skills_dir, "github", "discover.py")

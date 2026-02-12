@@ -79,6 +79,11 @@ class LiveWorkItemExecutor:
         used = work_item.budget_used.model_copy(deep=True)
         max_attempts = max(1, work_item.budget.max_attempts)
         last_error: str | None = None
+        approval_required = self._requires_explicit_approval(work_item)
+        if approval_required:
+            work_item = work_item.model_copy(update={"needs_approval": True})
+        if approval_required and work_item.approval_token is None:
+            return await self._mark_blocked_for_missing_approval(work_item, used)
 
         self._skill_executor.set_work_item(work_item)
         try:
@@ -126,14 +131,7 @@ class LiveWorkItemExecutor:
 
                 work_item.budget_used = used.model_copy(deep=True)
                 if attempt_ok:
-                    work_item.status = WorkItemStatus.done
-                    await self._persist(work_item)
-                    return WorkItemResult(
-                        work_item_id=work_item.id,
-                        status=WorkItemStatus.done,
-                        summary=f"Work item {work_item.id} completed.",
-                        budget_used=used.model_copy(deep=True),
-                    )
+                    return await self._finalize_success(work_item, used)
 
                 if used.exceeds(work_item.budget):
                     last_error = last_error or "budget exhausted"
@@ -155,6 +153,86 @@ class LiveWorkItemExecutor:
     async def _persist(self, item: WorkItem) -> None:
         await self._work_item_store.save(item)
         await self._work_item_store.update_status(item.id, item.status, item.budget_used)
+
+    async def _finalize_success(
+        self,
+        item: WorkItem,
+        used: BudgetUsed,
+    ) -> WorkItemResult:
+        """Persist completion before reporting success to avoid false done states."""
+        completed_item = item.model_copy(
+            update={
+                "status": WorkItemStatus.done,
+                "budget_used": used.model_copy(deep=True),
+            }
+        )
+        try:
+            await self._persist(completed_item)
+        except Exception as exc:
+            # Work-item store implementations vary, so we normalize persistence
+            # failures into an execution failure instead of returning a false done.
+            return await self._mark_persist_failure(item, used, str(exc))
+
+        return WorkItemResult(
+            work_item_id=item.id,
+            status=WorkItemStatus.done,
+            summary=f"Work item {item.id} completed.",
+            budget_used=used.model_copy(deep=True),
+        )
+
+    async def _mark_persist_failure(
+        self,
+        item: WorkItem,
+        used: BudgetUsed,
+        persist_error: str,
+    ) -> WorkItemResult:
+        failed_item = item.model_copy(
+            update={
+                "status": WorkItemStatus.failed,
+                "budget_used": used.model_copy(deep=True),
+            }
+        )
+        last_error = f"failed to persist completion state: {persist_error}"
+        try:
+            await self._persist(failed_item)
+        except Exception as exc:
+            # We still return failure even if persistence is unavailable, because
+            # reporting done here would misrepresent runtime state.
+            last_error = f"{last_error}; failed to persist failure state: {exc}"
+
+        return WorkItemResult(
+            work_item_id=item.id,
+            status=WorkItemStatus.failed,
+            summary=f"Work item {item.id} failed.",
+            last_error=last_error,
+            budget_used=used.model_copy(deep=True),
+        )
+
+    async def _mark_blocked_for_missing_approval(
+        self,
+        item: WorkItem,
+        used: BudgetUsed,
+    ) -> WorkItemResult:
+        blocked_item = item.model_copy(
+            update={
+                "needs_approval": True,
+                "status": WorkItemStatus.blocked,
+                "budget_used": used.model_copy(deep=True),
+            }
+        )
+        await self._persist(blocked_item)
+        return WorkItemResult(
+            work_item_id=item.id,
+            status=WorkItemStatus.blocked,
+            summary=f"Work item {item.id} blocked.",
+            last_error="explicit approval token required before execution",
+            budget_used=used.model_copy(deep=True),
+        )
+
+    def _requires_explicit_approval(self, item: WorkItem) -> bool:
+        if item.needs_approval:
+            return True
+        return any(self._skill_executor.skill_requires_approval(skill) for skill in item.skills)
 
     async def _mark_failed(
         self,
