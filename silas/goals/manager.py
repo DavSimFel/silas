@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import inspect
 import json
+import logging
 import uuid
 from collections.abc import Awaitable
 from datetime import UTC, datetime
@@ -11,6 +12,8 @@ from typing import Any
 
 from silas.models.goals import Goal, GoalRun, StandingApproval
 from silas.models.work import WorkItem, WorkItemType
+
+logger = logging.getLogger(__name__)
 
 
 class SilasGoalManager:
@@ -176,7 +179,16 @@ class SilasGoalManager:
 
         task = loop.create_task(awaitable)
         self._background_save_tasks.add(task)
-        task.add_done_callback(self._background_save_tasks.discard)
+
+        def _on_done(t: asyncio.Task[Any]) -> None:
+            self._background_save_tasks.discard(t)
+            if t.cancelled():
+                logger.warning("Background save task was cancelled")
+            elif exc := t.exception():
+                # Surface persistence failures instead of silently swallowing.
+                logger.error("Background save failed: %s", exc, exc_info=exc)
+
+        task.add_done_callback(_on_done)
         return None
 
     def _resolve_active_approval(self, goal_id: str, policy_hash: str) -> StandingApproval | None:

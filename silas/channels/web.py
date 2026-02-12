@@ -39,10 +39,12 @@ class WebChannel(ChannelAdapterCore):
         port: int = 8420,
         web_dir: str | Path = "web",
         scope_id: str = "owner",
+        auth_token: str | None = None,
     ) -> None:
         self.host = host
         self.port = port
         self.scope_id = scope_id
+        self._auth_token = auth_token
         self.web_dir = Path(web_dir)
         self._incoming: asyncio.Queue[tuple[ChannelMessage, str]] = asyncio.Queue()
         self._websocket: WebSocket | None = None
@@ -70,30 +72,13 @@ class WebChannel(ChannelAdapterCore):
                 },
             )
 
-        @self.app.post("/api/push/subscribe")
-        async def push_subscribe(payload: dict[str, object]) -> JSONResponse:
-            endpoint = self._extract_subscription_endpoint(payload)
-            if endpoint is None:
-                raise HTTPException(status_code=400, detail="Invalid push subscription payload")
-            self._push_subscriptions[endpoint] = payload
-            return JSONResponse({"status": "ok", "count": len(self._push_subscriptions)})
-
-        @self.app.post("/api/push/unsubscribe")
-        async def push_unsubscribe(payload: dict[str, object]) -> JSONResponse:
-            endpoint = self._extract_subscription_endpoint(payload)
-            if endpoint is None:
-                raise HTTPException(status_code=400, detail="Invalid push subscription payload")
-            removed = self._push_subscriptions.pop(endpoint, None) is not None
-            return JSONResponse(
-                {
-                    "status": "ok",
-                    "removed": removed,
-                    "count": len(self._push_subscriptions),
-                },
-            )
+        self._setup_push_routes()
 
         @self.app.websocket("/ws")
         async def ws_endpoint(websocket: WebSocket) -> None:
+            if not await self._check_ws_auth(websocket):
+                return
+
             session_id = self._resolve_session_id(websocket.query_params.get("session"))
             connection_key = self._connection_key(websocket)
 
@@ -170,6 +155,39 @@ class WebChannel(ChannelAdapterCore):
             media_type=media_type or "application/octet-stream",
             headers=headers,
         )
+
+    def _setup_push_routes(self) -> None:
+        @self.app.post("/api/push/subscribe")
+        async def push_subscribe(payload: dict[str, object]) -> JSONResponse:
+            endpoint = self._extract_subscription_endpoint(payload)
+            if endpoint is None:
+                raise HTTPException(status_code=400, detail="Invalid push subscription payload")
+            self._push_subscriptions[endpoint] = payload
+            return JSONResponse({"status": "ok", "count": len(self._push_subscriptions)})
+
+        @self.app.post("/api/push/unsubscribe")
+        async def push_unsubscribe(payload: dict[str, object]) -> JSONResponse:
+            endpoint = self._extract_subscription_endpoint(payload)
+            if endpoint is None:
+                raise HTTPException(status_code=400, detail="Invalid push subscription payload")
+            removed = self._push_subscriptions.pop(endpoint, None) is not None
+            return JSONResponse(
+                {
+                    "status": "ok",
+                    "removed": removed,
+                    "count": len(self._push_subscriptions),
+                },
+            )
+
+    async def _check_ws_auth(self, websocket: WebSocket) -> bool:
+        """Reject WebSocket connections that fail token auth. Returns True if authorized."""
+        if not self._auth_token:
+            return True
+        token = websocket.query_params.get("token", "")
+        if token != self._auth_token:
+            await websocket.close(code=4401, reason="unauthorized")
+            return False
+        return True
 
     def _resolve_session_id(self, raw_session: str | None) -> str:
         if raw_session is None:
@@ -278,7 +296,8 @@ class WebChannel(ChannelAdapterCore):
                 if msg_type != "message":
                     return
                 text = str(parsed.get("text", ""))
-                sender_id = str(parsed.get("sender_id", self.scope_id))
+                # sender_id is server-assigned, never from client payload.
+                # Authenticated WebSocket connections are the owner.
         except json.JSONDecodeError:
             pass
 
@@ -350,8 +369,8 @@ class WebChannel(ChannelAdapterCore):
         if handler is None:
             return
 
-        sender_id = payload.get("sender_id")
-        resolved_by = sender_id if isinstance(sender_id, str) and sender_id else self.scope_id
+        # resolved_by is always the authenticated owner — never from client payload.
+        resolved_by = self.scope_id
         verdict = (
             ApprovalVerdict.approved
             if normalized_action == "approve"
