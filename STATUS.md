@@ -1,201 +1,202 @@
 # Implementation Status
 
-Last updated: 2026-02-12 (post-gap-analysis, second pass + companion docs)
-
-## Summary
-
-This file now separates:
-
-- **Implemented component**: class/module exists and has tests.
-- **Runtime spec-compliant**: integrated end-to-end in Stream/Executor flows with spec-required enforcement.
-
-Current state: many components are implemented, with `INV-01`, `INV-03`, standing-approval spawn verification, planner-route handoff, and step-0/1 input-gate flow now enforced in runtime execution, but there are still critical runtime gaps against `specs.md`.
+Last updated: 2026-02-12
 
 ---
 
-## ✅ Implemented Components (Exist + Tested)
+## Vision
 
-### Protocols / Core Components
+Silas is a fully autonomous AI runtime — three pydantic-ai agent loops (proxy/planner/executor) communicating via typed durable queues. Capable of indefinite autonomous operation, restricted ONLY by the cryptographic approval system. Self-healing cascade: retry → consult-planner → re-plan → escalate.
 
-| Component | Implementation | Notes |
-|----------|---------------|------|
-| ChannelAdapterCore / RichCardChannel | `WebChannel` | Implemented |
-| MemoryStore | `SQLiteMemoryStore` | Implemented |
-| MemoryRetriever | `SilasMemoryRetriever` | Implemented |
-| MemoryConsolidator | `SilasMemoryConsolidator` | Implemented |
-| ContextManager | `LiveContextManager` | Implemented |
-| ApprovalVerifier | `SilasApprovalVerifier` (Ed25519) | Implemented as component |
-| NonceStore | `SQLiteNonceStore` | Implemented |
-| GateRunner | `SilasGateRunner` | Implemented |
-| Gate providers | `PredicateChecker`, `ScriptChecker`, `LLMChecker` | Implemented |
-| VerificationRunner | `SilasVerificationRunner` | Implemented |
-| AccessController | `SilasAccessController` | Implemented |
-| WorkItemExecutor | `LiveWorkItemExecutor` | Implemented, but missing required runtime checks (see gaps) |
-| WorkItemStore | `SQLiteWorkItemStore` | Implemented |
-| ChronicleStore | `SQLiteChronicleStore` | Implemented |
-| PlanParser | `MarkdownPlanParser` | Implemented |
-| AuditLog | `SQLiteAuditLog` | Implemented |
-| PersonalityEngine | `SilasPersonalityEngine` | Component exists, partial Stream integration |
-| PersonaStore | `SQLitePersonaStore` | Implemented |
-| SkillLoader | `SilasSkillLoader` | Implemented |
-| SkillResolver | `LiveSkillResolver` | Implemented |
-| SuggestionEngine | `SimpleSuggestionEngine` | Implemented |
-| AutonomyCalibrator | `SimpleAutonomyCalibrator` | Implemented |
-| TaskScheduler | `SilasScheduler` (APScheduler) | Implemented |
-
-### Security & Keys (Component-Level)
-
-| Component | Status |
-|-----------|--------|
-| Secret isolation (Tier 1 + Tier 2) | Implemented |
-| Ed25519 approval signer/verifier | Implemented |
-| Secure input endpoint (`POST /secrets/{ref_id}`) | Implemented |
-| `data_dir` wiring from settings | Implemented |
-
-### Models
-
-Pydantic model constraints implemented:
-
-- `AgentResponse`: `len(memory_queries) <= 3`
-- `RouteDecision`: profile validation + route/response shape checks
-- `Expectation`: exactly one predicate field
-- `ContextProfile`: pct bounds and sum constraint
-- `BudgetUsed.exceeds()`: `>=` semantics
-- `MemoryOp`: op-specific required fields
+**Key specs:**
+- `specs/agent-loop-architecture.md` — multi-agent queue architecture (998 lines, v3.2, reviewed 4 rounds)
+- `specs.md` — core runtime behavioral contract
+- `specs/security-model.md` — security invariants (INV-01..05)
+- `specs/protocols.md` — protocol interfaces
+- `specs/models.md` — data models
 
 ---
 
-## ⚠️ Critical Runtime Spec Gaps (Open)
+## Current State
 
-These are the highest-priority gaps between code and `specs.md`.
-
-| Severity | Gap | Spec Reference | Current Runtime Behavior |
-|----------|-----|----------------|--------------------------|
-| High | **Step-5 budget enforcement semantics diverge** | §5.1 step 5 | Budget enforcement is deferred until after response generation, and evicted context is not persisted back to memory per spec |
-| High | **Message trust/signing flow mismatch** | §5.1 step 2 | Runtime uses per-process HMAC and no Ed25519 inbound verification/nonced freshness replay flow |
-| High | **Stream startup sequence incomplete** | §5.1 `start()` steps 2-7 | Runtime starts rehydration + listen loop only; no `stream_started` audit, connection health/recovery, active-goal scheduling, or heartbeat registration |
-| High | **Rehydration is partial vs required lifecycle state** | §5.1.3 steps 1,4-8 | Missing system-zone restore, subscription restore, rehydration system message, in-progress work resume, persona lazy load, and pending review/suggestion/autonomy queue restore |
-| High | **Secure-input endpoint contract incomplete** | §5.10.1, §5.9 secure input endpoint | `POST /secrets/{ref_id}` response/validation/audit behavior does not match spec (`{"stored": true}`, pending-ref validation, `secret_stored` audit event) |
-| High | **ConnectionManager protocol/runtime drift** | §5.10.1-§5.10.2, `specs/protocols.md` §4.19 | Setup flow is not channel-driven interactive lifecycle, escalation path auto-merges permissions without decision card flow, and activation approval token is ignored |
-| High | **Per-connection isolation model incomplete** | §5.1 connection lock/processor model | Stream currently uses a single `TurnContext` scope path, not scoped processor/lock maps |
-| High | **Interaction mode resolver not centralized/used** | §5.1.0 `resolve_interaction_mode` | No single resolver function enforced in turn pipeline |
-| High | **Sandbox/verification execution policy incomplete** | §9.1, §5.3 | Subprocess sandbox does not enforce spec-level network fail-closed controls/resource limits; verification runner still shells via `bash -lc` |
-| High | **Execution layer remains disconnected from work execution path** | §5.2.1(c-e), §9.2 | `ShellExecutor`/`PythonExecutor`/sandbox execution envelopes are implemented but not used by `WorkItemExecutor` runtime flow |
-| High | **Operations/reliability controls from §17 are largely unimplemented** | `specs/operations-roadmap.md` §17.1-§17.6 | No unified runtime error taxonomy wiring, no graceful-drain shutdown path with safe card-resolution defaults, and no configured rate-limit/backpressure queue controls |
-| Medium | **Output gate escalation model incomplete** | §5.1 step 8 + §5.1.1 | Blocked output is hardcoded to `"I cannot share that"` rather than escalation-map execution |
-| Medium | **Quality/policy lane behavior differs on output path** | §5.4/§5.5 | `OutputGateRunner` is a custom path and not full two-lane gate-runner policy/quality flow |
-| Medium | **Gate-provider feature coverage is incomplete** | §5.5.2, §5.5.4 | Predicate provider does not implement `file_valid`; script provider does not implement reserved `modified_context` parsing + `check_expect`/`extract` delegation behavior |
-| Medium | **Proactivity model/protocol contracts diverge from companion specs** | `specs/models.md` §3.11, `specs/protocols.md` §4.22-§4.23 | Suggestion/autonomy payloads are simplified (`dict`/`str`) and do not match typed `SuggestionProposal` / `AutonomyThresholdProposal` / decision contracts |
-| Medium | **Proactivity/autonomy loops are turn-coupled, not heartbeat-driven** | §5.1.6 | Suggestion polling runs during turn handling; autonomy `evaluate()` loop is not scheduler-driven and heartbeat jobs are not wired into runtime start |
-| Medium | **Core `web_search` executor parity is missing** | §9.2, `specs/security-model.md` (core retrieval tools) | Runtime currently exposes mock `web_search` via skill handler, not provider-backed `WebSearchExecutor` with deterministic registration/limits |
-| Medium | **Memory portability contract is not implemented** | `specs/protocols.md` §4.2.3 | `MemoryPortability` protocol exists, but no `export_bundle`/`import_bundle` implementation is wired in runtime components |
-| Medium | **Tier-2 signing key load is not wired into runtime auth path** | §0.8.1 `INV-01`/`INV-02`, §5.11 | Startup loads signing key but does not inject it into Stream/approval verification path |
-| Medium | **Proxy fallback behavior differs from spec fallback** | §5.1.0 fallback rules | Proxy local fallback echoes input with `default_and_offer` instead of spec fallback messaging/mode |
-| Medium | **Tests codify non-spec behavior** | §5.1 + §5.2 | Some tests assert current stub/deferred behavior (planner stub path, direct proxy plan-actions execution) |
+- **65 commits ahead of main**, 37 PRs merged (#27-#62)
+- **~690 tests**, 0 lint errors (ruff strict, C901 max=12)
+- Core runtime exists: agents (one-shot), gates, approval engine, execution pipeline, memory, context, sandbox, channels, onboarding, frontend
+- Agents run as one-shot structured output — no tool loops, no queues yet
 
 ---
 
-## ✅ Recently Closed Runtime Gaps
+## ✅ What Exists (Component + Tested)
 
-| Closed On | Gap | Spec Reference | Runtime Fix |
-|-----------|-----|----------------|-------------|
-| 2026-02-12 | **INV-01 enforced at execution entry** | §0.8.1 `INV-01`, §5.2.1 step 0 | `LiveWorkItemExecutor` now requires `approval_token` + `approval_verifier.check(...)`; missing/invalid approval blocks execution and is auditable |
-| 2026-02-12 | **INV-03 enforced for completion truth** | §0.8.1 `INV-03`, §5.2.1(e) | `LiveWorkItemExecutor` now runs external verification for `work_item.verify` and only returns `done` when checks pass |
-| 2026-02-12 | **Standing-approval spawn path requires verification** | §5.2.3 step 4 | `SilasGoalManager` now only clears `needs_approval` when a standing token exists and `approval_engine.verify(goal_token, goal_work_item, spawned_task)` succeeds; verified token is attached to spawned task |
-| 2026-02-12 | **Planner route handoff now invokes planner agent** | §5.1 step 7 | `Stream` now calls `turn_context.planner` on `route="planner"` and executes planner-produced actions (with legacy proxy-action fallback only when planner output has no actions) |
-| 2026-02-12 | **Turn pipeline step-0/step-1 gate path wired** | §5.1 steps 0-1 | `Stream` now precompiles active gates once per turn and runs two-lane input gate evaluation (block/require-approval/continue + quality audit) before routing |
+### Agents & Execution
+- `ProxyAgent`, `PlannerAgent`, `ExecutorAgent` — one-shot `run_structured_agent`
+- `LiveWorkItemExecutor` — retry loop, verification, budget, attempt tracking, INV-01/INV-03 enforced
+- `SQLiteWorkItemStore`, `SQLiteChronicleStore`, `SQLiteAuditLog`
+- `ExecutionEnvelope`, `SandboxConfig`, executor type registry (shell/python/skill)
+- `MarkdownPlanParser`, plan action execution
 
----
+### Security & Approval
+- `SilasApprovalVerifier` (Ed25519), `SQLiteNonceStore`
+- `LiveApprovalManager` — token issue/verify lifecycle
+- `SilasGateRunner` + providers (`PredicateChecker`, `ScriptChecker`, `LLMChecker`)
+- `SilasAccessController` — gate-driven access state
+- Secret isolation (Tier 1 + Tier 2), `POST /secrets/{ref_id}`
+- Two-tier key storage (Ed25519 signing keys)
 
-## ⚠️ Status Document Corrections Applied
+### Memory & Context
+- `SQLiteMemoryStore`, `SilasMemoryRetriever`, `SilasMemoryConsolidator`
+- `LiveContextManager` — context budget enforcement, eviction
+- `SilasPersonalityEngine`, `SQLitePersonaStore`
 
-- Replaced prior “Implemented & Spec-Compliant” framing with split status (component-level vs runtime compliance).
-- Removed inaccurate implication that all listed components are fully integrated in the runtime enforcement path.
-- Fixed protocol-section framing mismatch (previously labeled `18/22` while listing more entries).
-- Added missing deferred/core-runtime items previously omitted from the deferred list.
+### Infrastructure
+- `WebChannel` (WebSocket + REST), onboarding flow
+- `SilasScheduler` (APScheduler)
+- `SilasSkillLoader`, `LiveSkillResolver`
+- `SimpleSuggestionEngine`, `SimpleAutonomyCalibrator`
+- Frontend (Phase A+B+C)
 
----
-
-## ❌ Deferred / Not Yet Fully Integrated
-
-### Previously listed deferred items
-
-- GuardrailsAI gate provider
-- Memory portability (`export_bundle` / `import_bundle`)
-- Slide-to-confirm UX and WebAuthn/biometric ladder
-- Benchmarking framework (§19-20)
-- Optional Docker sandbox backend
-- Telegram/CLI channels
-- Evals (Pydantic Evals)
-- Dynamic skill context injection (ADR-020 disabled)
-- Connection auto-discovery shipping path
-
-### Additional deferred core-runtime items (newly documented)
-
-- Full step-0 active gate precompile and reuse across turn
-- Input gate enforcement flow (policy and quality lanes)
-- Spec-complete plan approval flow (parse -> approval -> token issue+verify -> execute)
-- Full startup lifecycle wiring (`stream_started`, connection health/recovery, active-goal registration, scheduler heartbeats)
-- Rehydration completeness (system zone, subscriptions, pending cards, in-progress work resume, persona continuity hooks)
-- Secure-input pending-request registry + audit event parity for `/secrets/{ref_id}`
-- Goal standing-approval verification + token attachment in spawn flow
-- ConnectionManager interactive setup and permission-escalation card flow
-- Step-5-compliant budget timing + evicted-context persistence
-- Two-tier context eviction parity (trivial-ack drop, stale subscription deactivate, scorer fallback path)
-- Memory query (`step 9`) and memory-op gated writes (`step 10`) in Stream
-- Raw output/query ingest (`step 11.5`)
-- Access-state updates from gate pass results (`step 14`)
-- Personality pre-agent directive injection and post-turn event/decay hooks (`steps 7/15`)
-- Per-connection turn processors + lock map isolation model
-- Centralized `resolve_interaction_mode(...)` governance
-- Planner-agent invocation on planner route in main Stream path
-- Sandbox policy parity (resource/network/path enforcement + verification command execution contract)
-- Wire execution envelopes/executor registry into runtime `WorkItemExecutor`
-- Scheduler-driven suggestion/autonomy loops + proposal review flow
-- Gate-provider parity for `file_valid` and script `check_expect`/`extract`/`modified_context`
-- Provider-backed `WebSearchExecutor` integration (no mock-skill fallback for core retrieval)
-- Full `MemoryPortability` implementation (`export_bundle` / `import_bundle`) with canonical bundle format
-- Proactivity contract alignment to typed `SuggestionProposal` / `AutonomyThresholdProposal` models
-- Operations hardening: taxonomy-coded error handling, graceful shutdown drain, rate limiting, and queue backpressure controls
+### Models (Pydantic, all constrained)
+- `AgentResponse`, `RouteDecision`, `Expectation`, `ContextProfile`
+- `WorkItem`, `WorkItemResult`, `WorkItemStatus`, `BudgetUsed`
+- `ExecutionResult`, `ExecutorToolCall`, `VerificationReport`
 
 ---
 
-## 📊 Test/Lint Snapshot
+## 🏗️ Agent Loop Refactor — Work Items
 
-- Test suite is large and active (~670+ tests).
-- Lint/type quality is generally strong.
-- Some current tests intentionally validate deferred/stubbed behavior; these should be updated as runtime gaps close.
+The core gap: agents need tool loops and queue-based communication. ~1,650 LOC delta.
+
+### WI-1: Durable Queue Store + Message Types
+**Status:** Not started  
+**Estimate:** ~400 LOC  
+**Scope:**
+- `silas/queue/store.py`: `DurableQueueStore` — SQLite-backed, `enqueue()`, `lease()`, `ack()`, `nack()`, `dead_letter()`, `heartbeat()`
+- `silas/queue/types.py`: `QueueMessage`, `StatusPayload`, `ErrorPayload`, `ErrorCode` enum, `QueuePayload` union type, `message_kind` literals
+- `silas/queue/router.py`: `QueueRouter` — routes messages to correct queue by kind (proxy_queue, planner_queue, executor_queue, runtime_queue)
+- Idempotency contract: `has_processed(consumer, msg_id)` / `mark_processed()`
+- Lease heartbeat: consumers with long runs must heartbeat at `lease_duration_s / 3`
+- SQLite migration for queue + idempotency tables
+- `silas/queue/telemetry.py`: `QueueTelemetryEvent`, `RuntimeAuditEvent` schemas
+- Tests: lifecycle (enqueue→lease→ack), crash recovery (lease expiry→re-lease), heartbeat, idempotency, dead-letter, routing table
+
+**Spec refs:** §2.1-2.5, §6.1-6.2
 
 ---
 
-## 🏗️ Build History
+### WI-2: Wire pydantic-ai Tool Loops on All Agents
+**Status:** Not started  
+**Estimate:** ~500 LOC  
+**Scope:**
+- Add `pydantic-ai-backend[console]` dependency
+- **ProxyAgent:** Register tools via `create_console_toolset(include_execute=False)` with `READONLY_RULESET` + custom `memory_search`, `web_search`, `tell_user` tools. Change `agent.run()` from one-shot structured output to tool-loop `agent.run()` that produces `RouteDecision` after optional tool use.
+- **PlannerAgent:** Register `create_console_toolset(include_execute=False)` with `READONLY_RULESET` + custom `request_research`, `validate_plan`, `memory_search` tools. Implement research state machine (§4.8): `planning → awaiting_research → ready_to_finalize → expired` with in-flight cap=3, timeout=120s, dedupe.
+- **ExecutorAgent:** Register `create_console_toolset()` with `DEFAULT_RULESET` for execution mode, `READONLY_RULESET` for research mode. Wire full wrapper chain: `ConsoleToolset → SkillToolset → PreparedToolset → FilteredToolset → ApprovalRequiredToolset`. Research mode uses `RESEARCH_TOOL_ALLOWLIST` clamping (hard-disabled mutation tools).
+- Add `pydantic-ai-backend[docker]` dependency, wire `DockerSandbox` as executor sandbox backend (feature-flagged, subprocess fallback)
+- Feature flags: `config.agent_loops.proxy_tools`, `config.agent_loops.planner_research`, `config.agent_loops.executor_tools`
+- Tests: proxy tool loop produces RouteDecision, planner research delegation + state machine transitions, executor tool loop with wrapper chain enforcement, research mode allowlist blocks writes
 
-| PR | Description | Tests Added |
-|----|-------------|-------------|
-| #27 | Remaining tests (medium priority) | +20 |
-| #28 | Scorer agent, two-tier eviction | +models |
-| #29 | Planner, executor, key manager, sandbox | +16 |
-| #30 | LLM + script gate providers | +tests |
-| #31 | SkillResolver, SilasScheduler | +31 |
-| #32 | C901 complexity fixes | — |
-| #33 | 317 lint violations fixed | — |
-| #34 | Integration tests | +20 |
-| #35 | Remove all `type: ignore` | — |
-| #36 | Execution layer + agent fallback tests | +21 |
-| #37 | Code quality + API key support | — |
-| #38 | WorkItemRunner + zombie cleanup | +tests |
-| #39 | Split stream.py (966→572 lines) | — |
-| #40 | WebSocket auth enforcement | +tests |
-| #42 | Benchmarking spec (§19-20) | — |
-| #43 | Security batch (6 findings) | — |
-| #44 | Security regression tests | +12 |
-| #45 | Protocol drift fixes | — |
-| #46 | TYPE_CHECKING guards | — |
-| #47 | Structured logging | +3 |
-| #48 | Onboarding flow (CLI + web + PWA) | +6 |
-| #49 | SecretStore (two-tier) | +12 |
-| #50 | RichCardChannel (12 methods) | +12 |
-| #51 | ApprovalVerifier + Ed25519 | +tests |
-| #52 | Two-tier key storage | +tests |
-| #53 | MemoryRetriever | +11 |
-| #54 | Compliance batch (gaps 5,7,8,12) | +7 |
+**Spec refs:** §3, §4.1-4.8, §5.1-5.2, §11.1-11.3
+
+---
+
+### WI-3: Queue-Based Agent Communication + Execution
+**Status:** Not started  
+**Estimate:** ~450 LOC  
+**Scope:**
+- Replace procedural calls in `Stream._process_turn` with queue dispatch: proxy enqueues to planner_queue/executor_queue, receives results via proxy_queue
+- Status event routing (§6.3): `route_to_surface()` with dual-emit (STREAM + ACTIVITY) for failure statuses
+- Consult-planner suspend/resume: executor persists `awaiting_planner_guidance`, enqueues to planner_queue, waits on runtime_queue with 90s timeout. Budget split: executor tokens → work-item budget, consult tokens → plan budget.
+- Replan cascade (Principle #8): after all attempts + consult exhausted → `replan_request` to planner_queue. Planner §4.6.1 produces revised plan (alternative strategy, not retry). `max_replan_depth=2`, then escalate to user.
+- `trace_id` propagation across all hops
+- Executor pool with concurrency caps (per-scope + global)
+- Feature flag: `config.agent_loops.queue_execution`
+- Tests: full flow (user msg → proxy → planner → executor → status → proxy → user), consult timeout, replan cascade, parallel execution, status routing, trace propagation
+
+**Spec refs:** §5.2.3, §4.6.1, §6.3, §7.3-7.4
+
+---
+
+### WI-4: Integration + Migration
+**Status:** Not started  
+**Estimate:** ~300 LOC  
+**Scope:**
+- Parity test suite: queue-based behavior matches procedural for all existing test scenarios
+- Remove procedural fallback paths (behind feature flag first, then delete)
+- Frontend adaptation: queue status events → Activity surface, execution progress cards
+- Standing approvals wiring for long-term autonomous goals (§5.2.3 spawn policy)
+- Git-worktree workspace isolation for parallel executors (§7.4): snapshot baseline_commit, ephemeral worktree per task, three-way merge on success, per-scope merge lock
+- Update STATUS.md, close remaining spec gaps
+- Load testing with concurrent work items
+
+**Spec refs:** §7.4, §5.2.3, §8 (migration), §9 (testing)
+
+---
+
+## ⚠️ Remaining Runtime Spec Gaps (Post-Refactor)
+
+These are lower priority — addressed after the agent loop refactor lands.
+
+| Priority | Gap | Spec Reference |
+|----------|-----|----------------|
+| Medium | Message trust/signing flow (Ed25519 inbound) | §5.1 step 2 |
+| Medium | Stream startup sequence completion | §5.1 steps 2-7 |
+| Medium | Rehydration completeness | §5.1.3 |
+| Medium | Secure-input endpoint contract | §5.10.1 |
+| Medium | ConnectionManager lifecycle | §5.10.1-§5.10.2 |
+| Medium | Per-connection isolation model | §5.1 |
+| Medium | Sandbox network/resource enforcement | §9.1 |
+| Medium | Output gate escalation model | §5.1 step 8 |
+| Medium | Proactivity/autonomy loops (heartbeat-driven) | §5.1.6 |
+| Medium | Web search executor (provider-backed) | §9.2 |
+| Medium | Memory portability | §4.2.3 |
+| Low | GuardrailsAI gate provider | — |
+| Low | Telegram/CLI channels | — |
+| Low | Benchmarking / Pydantic Evals | §19-20 |
+| Low | Operations hardening (error taxonomy, shutdown, rate limits) | §17 |
+
+---
+
+## ✅ Recently Closed Gaps
+
+| Date | Gap | Fix |
+|------|-----|-----|
+| 2026-02-12 | Agent loop architecture spec | v3.2 complete, 4 review rounds, all issues closed |
+| 2026-02-12 | INV-01 enforced at execution entry | `LiveWorkItemExecutor` requires approval_token |
+| 2026-02-12 | INV-03 enforced for completion truth | External verification for `work_item.verify` |
+| 2026-02-12 | Standing-approval spawn verification | `SilasGoalManager` verifies token before clearing needs_approval |
+| 2026-02-12 | Planner route handoff | Stream calls `turn_context.planner` on route="planner" |
+| 2026-02-12 | Turn pipeline step-0/step-1 gates | Two-lane input gate evaluation before routing |
+| 2026-02-12 | Step-5 budget enforcement | Context budget enforced + eviction persisted as memory |
+
+---
+
+## Timeline
+
+| Work Item | Estimate | Cumulative |
+|-----------|----------|------------|
+| WI-1: Queue Store + Types | 1-2 days | 1-2 days |
+| WI-2: Tool Loops on All Agents | 1-2 days | 2-4 days |
+| WI-3: Queue Communication + Execution | 1-2 days | 3-6 days |
+| WI-4: Integration + Migration | 1 day | 4-7 days |
+
+**Target: Autonomous runtime in ~1 week.**
+
+---
+
+## Build History
+
+| PR | Description |
+|----|-------------|
+| #27-#36 | Core components, tests, lint, complexity |
+| #37-#44 | Code quality, security, integration tests |
+| #45-#54 | Protocols, logging, onboarding, secrets, approval, compliance |
+| #55-#62 | RichCardChannel, memory, preferences, review models |
+
+---
+
+## Key Dependencies
+
+- `pydantic-ai` — agent framework (existing)
+- `pydantic-ai-backend` — file ops, sandbox, permissions (NEW — WI-2)
+- SQLite — all stores including new queue store
+- Docker — executor sandbox (WI-2, feature-flagged)
