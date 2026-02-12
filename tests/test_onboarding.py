@@ -348,6 +348,24 @@ def test_signing_key_store_encrypted_on_disk(tmp_path: Path) -> None:
     assert b"ed25519" not in raw.lower()
 
 
+def test_load_stream_signing_key_roundtrip(tmp_path: Path) -> None:
+    from silas.secrets import SigningKeyStore, load_stream_signing_key
+
+    store = SigningKeyStore(tmp_path, "stream-pass")
+    store.generate_keypair()
+
+    private_key = load_stream_signing_key(tmp_path, "stream-pass")
+    signature = private_key.sign(b"stream")
+    private_key.public_key().verify(signature, b"stream")
+
+
+def test_load_stream_signing_key_missing_keypair_raises(tmp_path: Path) -> None:
+    from silas.secrets import load_stream_signing_key
+
+    with pytest.raises(RuntimeError, match="no signing keypair"):
+        load_stream_signing_key(tmp_path, "missing")
+
+
 @pytest.mark.anyio
 async def test_signing_key_integrated_with_verifier(tmp_path: Path) -> None:
     """Tier 2 key works with SilasApprovalVerifier end-to-end."""

@@ -350,3 +350,18 @@ class SigningKeyStore:
             )
             return raw.hex()
         return pub_hex
+
+
+def load_stream_signing_key(data_dir: Path, passphrase: str) -> Ed25519PrivateKey:
+    """Load the stream signing key and fail closed when trust material is missing.
+
+    Why: stream message tainting depends on this key. Startup must abort if the
+    runtime cannot unlock Tier-2 signing material, rather than silently downgrading.
+    """
+    store = SigningKeyStore(data_dir, passphrase)
+    if not store.has_keypair():
+        raise RuntimeError("no signing keypair found — run `silas init` first")
+    try:
+        return store.load_private_key()
+    except (KeyError, ValueError) as exc:
+        raise RuntimeError("unable to unlock signing key — check signing passphrase") from exc
