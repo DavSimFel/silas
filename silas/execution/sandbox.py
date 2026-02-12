@@ -33,6 +33,7 @@ class SubprocessSandboxManager:
         self._base_dir = Path(base_dir).resolve() if base_dir is not None else None
         self._preserve_sandboxes = preserve_sandboxes
         self._sandboxes: dict[str, Sandbox] = {}
+        self._active_pids: dict[str, set[int]] = {}  # sandbox_id → active process PIDs
 
     async def create(self, config: SandboxConfig) -> Sandbox:
         if config.network_access:
@@ -68,6 +69,7 @@ class SubprocessSandboxManager:
 
         run_env = self._build_env(sandbox, env)
         started = perf_counter()
+        self._active_pids.setdefault(sandbox_id, set())
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=sandbox.work_dir,
@@ -77,6 +79,7 @@ class SubprocessSandboxManager:
             start_new_session=True,
         )
 
+        self._active_pids[sandbox_id].add(process.pid)
         timed_out = False
         stdout_bytes: bytes
         stderr_bytes: bytes
@@ -94,6 +97,9 @@ class SubprocessSandboxManager:
             stdout_bytes, stderr_bytes = await process.communicate()
 
         duration_seconds = perf_counter() - started
+        pids = self._active_pids.get(sandbox_id)
+        if pids is not None:
+            pids.discard(process.pid)
         return SandboxExecResult(
             exit_code=process.returncode,
             stdout=self._decode_output(stdout_bytes, max_output_bytes),
@@ -103,6 +109,16 @@ class SubprocessSandboxManager:
         )
 
     async def destroy(self, sandbox_id: str) -> None:
+        # Kill any lingering processes before removing the sandbox
+        lingering_pids = self._active_pids.pop(sandbox_id, set())
+        for pid in lingering_pids:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except OSError:  # pragma: no cover - platform dependent
+                logger.debug("Failed to kill process group %d during sandbox destroy", pid)
+
         sandbox = self._sandboxes.pop(sandbox_id, None)
         if sandbox is None or self._preserve_sandboxes:
             return
