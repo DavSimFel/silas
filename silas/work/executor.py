@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from silas.models.work import BudgetUsed, WorkItem, WorkItemResult, WorkItemStatus
 from silas.protocols.work import WorkItemStore
@@ -33,7 +33,7 @@ class LiveWorkItemExecutor:
             unmet = [
                 dep_id
                 for dep_id in prerequisites.get(work_item_id, set())
-                if execution_results.get(dep_id, None) is None
+                if execution_results.get(dep_id) is None
                 or execution_results[dep_id].status != WorkItemStatus.done
             ]
             if unmet:
@@ -87,7 +87,7 @@ class LiveWorkItemExecutor:
                     last_error = "budget exhausted before attempt"
                     break
 
-                attempt_started = datetime.now(timezone.utc)
+                attempt_started = datetime.now(UTC)
                 work_item.attempts += 1
                 used.attempts += 1
                 used.executor_runs += 1
@@ -121,7 +121,7 @@ class LiveWorkItemExecutor:
 
                 if not work_item.skills:
                     used.wall_time_seconds += (
-                        datetime.now(timezone.utc) - attempt_started
+                        datetime.now(UTC) - attempt_started
                     ).total_seconds()
 
                 work_item.budget_used = used.model_copy(deep=True)

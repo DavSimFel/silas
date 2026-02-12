@@ -58,7 +58,7 @@ class ScriptChecker:
                 process.communicate(content.encode("utf-8")),
                 timeout=timeout_seconds,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             process.kill()
             await process.communicate()
             return self._result(

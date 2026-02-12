@@ -6,10 +6,10 @@ import shutil
 import signal
 import tempfile
 import uuid
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
-from typing import Mapping, Sequence
 
 from silas.models.execution import Sandbox, SandboxConfig
 
@@ -85,7 +85,7 @@ class SubprocessSandboxManager:
                 process.communicate(),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             timed_out = True
             self._terminate_process(process)
             stdout_bytes, stderr_bytes = await process.communicate()
@@ -147,4 +147,4 @@ class SubprocessSandboxManager:
             process.kill()
 
 
-__all__ = ["SubprocessSandboxManager", "SandboxExecResult"]
+__all__ = ["SandboxExecResult", "SubprocessSandboxManager"]

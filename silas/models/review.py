@@ -24,4 +24,4 @@ class BatchActionDecision(BaseModel):
     selected_items: list[str] = Field(default_factory=list)
 
 
-__all__ = ["BatchActionItem", "BatchProposal", "BatchActionDecision"]
+__all__ = ["BatchActionDecision", "BatchActionItem", "BatchProposal"]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +28,7 @@ from silas.persistence.nonce_store import SQLiteNonceStore
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _work_item(item_id: str = "wi-sec", *, body: str = "Perform secure operation") -> WorkItem:

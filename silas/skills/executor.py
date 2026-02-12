@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import TaintLevel
@@ -39,7 +39,7 @@ class SkillExecutor:
         self._handlers[skill_name] = handler
 
     async def execute(self, skill_name: str, inputs: dict[str, object]) -> SkillResult:
-        started_at = datetime.now(timezone.utc)
+        started_at = datetime.now(UTC)
         definition = self._skill_registry.get(skill_name)
         if definition is None:
             return SkillResult(
@@ -90,11 +90,11 @@ class SkillExecutor:
                     duration_ms=self._duration_ms(started_at),
                     retries_used=retries_used,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 last_error = (
                     f"skill '{skill_name}' timed out after {definition.timeout_seconds} seconds"
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 last_error = str(exc)
 
             if attempt < definition.max_retries:
@@ -111,7 +111,7 @@ class SkillExecutor:
         )
 
     def _duration_ms(self, started_at: datetime) -> int:
-        ended_at = datetime.now(timezone.utc)
+        ended_at = datetime.now(UTC)
         delta = ended_at - started_at
         return int(delta.total_seconds() * 1000)
 
@@ -147,7 +147,7 @@ class SkillExecutor:
         content = self._required_str(inputs, "content")
         memory_type_raw = self._required_str(inputs, "memory_type")
         memory_type = MemoryType(memory_type_raw)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         memory_id = f"skill:{memory_type.value}:{uuid.uuid4().hex}"
 
         await self._memory_store.store(

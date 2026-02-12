@@ -44,4 +44,4 @@ class PlanParser(Protocol):
     def parse(self, markdown: str) -> WorkItem: ...
 
 
-__all__ = ["WorkItemExecutor", "VerificationRunner", "WorkItemStore", "PlanParser"]
+__all__ = ["PlanParser", "VerificationRunner", "WorkItemExecutor", "WorkItemStore"]

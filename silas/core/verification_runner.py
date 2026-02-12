@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Sequence
 
 from silas.execution.sandbox import SubprocessSandboxManager
 from silas.models.execution import SandboxConfig, VerificationReport, VerificationResult
@@ -35,7 +35,7 @@ class SilasVerificationRunner:
             all_passed=not failed,
             results=results,
             failed=failed,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
     async def _run_check(self, check: VerificationCheck) -> VerificationResult:

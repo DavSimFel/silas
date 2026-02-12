@@ -87,12 +87,12 @@ class Connection(BaseModel):
 
 __all__ = [
     "AuthStrategy",
-    "SecureInputRequest",
-    "SecureInputCompleted",
-    "SetupStep",
-    "SetupStepResponse",
+    "Connection",
+    "ConnectionFailure",
     "HealthCheckResult",
     "RecoveryOption",
-    "ConnectionFailure",
-    "Connection",
+    "SecureInputCompleted",
+    "SecureInputRequest",
+    "SetupStep",
+    "SetupStepResponse",
 ]

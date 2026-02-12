@@ -6,7 +6,7 @@ import inspect
 import json
 import uuid
 from collections.abc import Awaitable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from silas.models.goals import Goal, GoalRun, StandingApproval
@@ -35,7 +35,7 @@ class SilasGoalManager:
         if not stored_goal.spawn_policy_hash:
             stored_goal.spawn_policy_hash = self._compute_policy_hash(stored_goal.work_template)
 
-        stored_goal.updated_at = datetime.now(timezone.utc)
+        stored_goal.updated_at = datetime.now(UTC)
         self._goals[stored_goal.goal_id] = stored_goal
 
     def unschedule_goal(self, goal_id: str) -> None:
@@ -100,7 +100,7 @@ class SilasGoalManager:
             goal_id=goal_id,
             policy_hash=canonical_hash,
             granted_by=granted_by,
-            granted_at=datetime.now(timezone.utc),
+            granted_at=datetime.now(UTC),
             expires_at=expires_at,
             max_uses=max_uses,
             uses_remaining=max_uses,
@@ -203,12 +203,10 @@ class SilasGoalManager:
         )
 
     def _is_approval_active(self, approval: StandingApproval) -> bool:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if approval.expires_at is not None and approval.expires_at <= now:
             return False
-        if approval.uses_remaining is not None and approval.uses_remaining <= 0:
-            return False
-        return True
+        return not (approval.uses_remaining is not None and approval.uses_remaining <= 0)
 
     def _canonical_policy_hash(self, policy_hash: str) -> str:
         normalized = policy_hash.strip().lower()
@@ -226,7 +224,7 @@ class SilasGoalManager:
 
     def _json_safe(self, value: object) -> object:
         if isinstance(value, datetime):
-            return value.astimezone(timezone.utc).isoformat()
+            return value.astimezone(UTC).isoformat()
         if isinstance(value, dict):
             return {str(k): self._json_safe(v) for k, v in value.items()}
         if isinstance(value, list | tuple):

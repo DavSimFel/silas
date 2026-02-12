@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from silas.models.skills import SkillMetadata
 from silas.models.work import WorkItem, WorkItemType
@@ -66,7 +66,7 @@ def _work_item(
         body="do work",
         skills=skills or [],
         parent=parent,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 

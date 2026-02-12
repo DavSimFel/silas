@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class PreferenceSignal(BaseModel):
@@ -51,4 +51,4 @@ class InferredPreference(BaseModel):
         return value
 
 
-__all__ = ["PreferenceSignal", "InferredPreference"]
+__all__ = ["InferredPreference", "PreferenceSignal"]

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from hashlib import sha256
 from typing import TYPE_CHECKING, Literal
 
@@ -16,13 +16,13 @@ if TYPE_CHECKING:
     from silas.models.gates import AccessLevel, Gate
 
 
-class WorkItemType(str, Enum):
+class WorkItemType(StrEnum):
     task = "task"
     project = "project"
     goal = "goal"
 
 
-class WorkItemStatus(str, Enum):
+class WorkItemStatus(StrEnum):
     pending = "pending"
     running = "running"
     healthy = "healthy"
@@ -219,15 +219,15 @@ def work_item_plan_hash(work_item: WorkItem) -> str:
 
 
 __all__ = [
-    "WorkItemType",
-    "WorkItemStatus",
     "Budget",
     "BudgetUsed",
+    "EscalationAction",
     "Expectation",
     "VerificationCheck",
-    "EscalationAction",
     "WorkItem",
     "WorkItemResult",
+    "WorkItemStatus",
+    "WorkItemType",
     "work_item_plan_hash",
     "work_item_plan_hash_bytes",
 ]

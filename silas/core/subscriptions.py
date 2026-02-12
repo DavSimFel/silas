@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +19,7 @@ class ContextSubscriptionManager:
 
     def register(self, subscription: ContextSubscription) -> None:
         self._subscriptions[subscription.sub_id] = subscription.model_copy(
-            update={"created_at": datetime.now(timezone.utc)}
+            update={"created_at": datetime.now(UTC)}
         )
 
     def unregister(self, subscription_id: str) -> bool:
@@ -64,7 +64,7 @@ class ContextSubscriptionManager:
         return path.read_text(encoding="utf-8")
 
     def get_active(self) -> list[ContextSubscription]:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return [
             subscription.model_copy(deep=True)
             for subscription in self._subscriptions.values()
@@ -72,7 +72,7 @@ class ContextSubscriptionManager:
         ]
 
     def prune_expired(self) -> int:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         expired_ids = [
             subscription.sub_id
             for subscription in self._subscriptions.values()
@@ -91,7 +91,7 @@ def _is_expired(subscription: ContextSubscription, now: datetime) -> bool:
     expires_at = getattr(subscription, "expires_at", None)
     if isinstance(expires_at, datetime):
         if expires_at.tzinfo is None or expires_at.tzinfo.utcoffset(expires_at) is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
+            expires_at = expires_at.replace(tzinfo=UTC)
         return expires_at <= now
 
     return False

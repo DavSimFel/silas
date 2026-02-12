@@ -13,12 +13,12 @@ from silas.skills.validator import SkillValidator
 SkillLoader = SilasSkillLoader
 
 __all__ = [
+    "SilasSkillLoader",
     "SkillExecutor",
     "SkillInstaller",
     "SkillLoader",
     "SkillRegistry",
     "SkillValidator",
-    "SilasSkillLoader",
     "builtin_skill_definitions",
     "register_builtin_skills",
 ]

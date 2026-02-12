@@ -150,11 +150,11 @@ def load_config(path: str | Path = "config/silas.yaml") -> SilasSettings:
 
 
 __all__ = [
-    "SilasSettings",
-    "ModelsConfig",
     "ChannelsConfig",
-    "WebChannelConfig",
     "ContextConfig",
+    "ModelsConfig",
+    "SilasSettings",
     "StreamConfig",
+    "WebChannelConfig",
     "load_config",
 ]

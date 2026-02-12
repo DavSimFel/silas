@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 from silas.models.work import Expectation
 
 
-class GateType(str, Enum):
+class GateType(StrEnum):
     numeric_range = "numeric_range"
     string_match = "string_match"
     regex = "regex"
@@ -17,12 +17,12 @@ class GateType(str, Enum):
     custom_check = "custom_check"
 
 
-class GateLane(str, Enum):
+class GateLane(StrEnum):
     policy = "policy"
     quality = "quality"
 
 
-class GateProvider(str, Enum):
+class GateProvider(StrEnum):
     guardrails_ai = "guardrails_ai"
     predicate = "predicate"
     llm = "llm"
@@ -30,7 +30,7 @@ class GateProvider(str, Enum):
     custom = "custom"
 
 
-class GateTrigger(str, Enum):
+class GateTrigger(StrEnum):
     every_user_message = "every_user_message"
     every_agent_response = "every_agent_response"
     after_step = "after_step"
@@ -99,12 +99,12 @@ ALLOWED_MUTATIONS = frozenset({"response", "message", "tool_args"})
 
 
 __all__ = [
-    "GateType",
+    "ALLOWED_MUTATIONS",
+    "AccessLevel",
+    "Gate",
     "GateLane",
     "GateProvider",
-    "GateTrigger",
-    "Gate",
-    "AccessLevel",
     "GateResult",
-    "ALLOWED_MUTATIONS",
+    "GateTrigger",
+    "GateType",
 ]

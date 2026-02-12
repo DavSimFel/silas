@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from silas.gates import PredicateChecker, SilasAccessController, SilasGateRunner
@@ -242,9 +242,9 @@ def test_access_level_expiry_downgrades_automatically() -> None:
     controller = SilasAccessController(owner_id="owner", access_levels=levels)
     controller.gate_passed("conn-expiring", "gate_auth")
 
-    state = controller._state_by_connection["conn-expiring"]  # noqa: SLF001 - state asserted here
+    state = controller._state_by_connection["conn-expiring"]
     state.level_name = "authenticated"
-    state.granted_at = datetime.now(timezone.utc) - timedelta(seconds=5)
+    state.granted_at = datetime.now(UTC) - timedelta(seconds=5)
 
     assert controller.get_access_level("conn-expiring") == "anonymous"
     assert controller.get_allowed_tools("conn-expiring") == ["read"]

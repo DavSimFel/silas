@@ -129,8 +129,10 @@ async def test_dependency_ordering_runs_dependencies_first(
     assert calls == ["task-a", "task-b"]
     loaded_dep = await work_store.get("task-a")
     loaded_root = await work_store.get("task-b")
-    assert loaded_dep is not None and loaded_dep.status == WorkItemStatus.done
-    assert loaded_root is not None and loaded_root.status == WorkItemStatus.done
+    assert loaded_dep is not None
+    assert loaded_dep.status == WorkItemStatus.done
+    assert loaded_root is not None
+    assert loaded_root.status == WorkItemStatus.done
 
 
 @pytest.mark.asyncio

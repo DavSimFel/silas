@@ -70,4 +70,4 @@ class SkillResult(BaseModel):
         return value
 
 
-__all__ = ["SkillMetadata", "SkillRef", "SkillDefinition", "SkillResult"]
+__all__ = ["SkillDefinition", "SkillMetadata", "SkillRef", "SkillResult"]

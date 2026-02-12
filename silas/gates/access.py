@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 
 from silas.models.gates import AccessLevel
 from silas.models.messages import TaintLevel
@@ -92,7 +92,7 @@ class SilasAccessController:
         next_level = self._highest_reachable_level(state.verified_gates)
         if self._rank(next_level) > self._rank(state.level_name):
             state.level_name = next_level
-            state.granted_at = datetime.now(timezone.utc)
+            state.granted_at = datetime.now(UTC)
             if customer_context is not None:
                 state.customer_context = dict(customer_context)
 
@@ -149,13 +149,13 @@ class SilasAccessController:
     def _ensure_owner_state(self, connection_id: str) -> None:
         state = self._state_by_connection.get(connection_id)
         if state is None:
-            state = _AccessState(level_name="owner", granted_at=datetime.now(timezone.utc))
+            state = _AccessState(level_name="owner", granted_at=datetime.now(UTC))
             self._state_by_connection[connection_id] = state
             return
 
         state.level_name = "owner"
         if state.granted_at is None:
-            state.granted_at = datetime.now(timezone.utc)
+            state.granted_at = datetime.now(UTC)
 
     def _state_for(self, connection_id: str) -> _AccessState:
         state = self._state_by_connection.get(connection_id)
@@ -175,7 +175,7 @@ class SilasAccessController:
         if expiry_seconds <= 0:
             return
         deadline = state.granted_at + timedelta(seconds=expiry_seconds)
-        if datetime.now(timezone.utc) < deadline:
+        if datetime.now(UTC) < deadline:
             return
 
         state.level_name = self.default_level

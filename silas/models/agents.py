@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 from silas.models.memory import MemoryType
 
 
-class MemoryOpType(str, Enum):
+class MemoryOpType(StrEnum):
     store = "store"
     update = "update"
     delete = "delete"
@@ -36,13 +36,14 @@ class MemoryOp(BaseModel):
         elif self.op == MemoryOpType.delete:
             if self.memory_id is None:
                 raise ValueError("memory_id is required for delete")
-        elif self.op == MemoryOpType.link:
-            if self.memory_id is None or self.link_to is None or self.link_type is None:
-                raise ValueError("memory_id, link_to, and link_type are required for link")
+        elif self.op == MemoryOpType.link and (
+            self.memory_id is None or self.link_to is None or self.link_type is None
+        ):
+            raise ValueError("memory_id, link_to, and link_type are required for link")
         return self
 
 
-class MemoryQueryStrategy(str, Enum):
+class MemoryQueryStrategy(StrEnum):
     semantic = "semantic"
     temporal = "temporal"
     session = "session"
@@ -56,20 +57,20 @@ class MemoryQuery(BaseModel):
     max_tokens: int = 2000
 
 
-class InteractionRegister(str, Enum):
+class InteractionRegister(StrEnum):
     exploration = "exploration"
     execution = "execution"
     review = "review"
     status = "status"
 
 
-class InteractionMode(str, Enum):
+class InteractionMode(StrEnum):
     default_and_offer = "default_and_offer"
     act_and_report = "act_and_report"
     confirm_only_when_required = "confirm_only_when_required"
 
 
-class PlanActionType(str, Enum):
+class PlanActionType(StrEnum):
     propose = "propose"
     revise = "revise"
     execute_next = "execute_next"
@@ -136,14 +137,14 @@ class RouteDecision(BaseModel):
 
 
 __all__ = [
-    "MemoryOpType",
-    "MemoryOp",
-    "MemoryQueryStrategy",
-    "MemoryQuery",
-    "InteractionRegister",
-    "InteractionMode",
-    "PlanActionType",
-    "PlanAction",
     "AgentResponse",
+    "InteractionMode",
+    "InteractionRegister",
+    "MemoryOp",
+    "MemoryOpType",
+    "MemoryQuery",
+    "MemoryQueryStrategy",
+    "PlanAction",
+    "PlanActionType",
     "RouteDecision",
 ]

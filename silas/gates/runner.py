@@ -142,7 +142,7 @@ class SilasGateRunner(GateRunner):
 
         try:
             result = await provider.check(gate, dict(context))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return GateResult(
                 gate_name=gate.name,
                 lane=GateLane.policy,

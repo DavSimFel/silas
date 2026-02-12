@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -114,7 +114,7 @@ async def test_skill_executor_retry_with_exponential_backoff() -> None:
         )
     )
     executor = SkillExecutor(skill_registry=registry)
-    executor._backoff_base_seconds = 0  # noqa: SLF001 - test-only speedup
+    executor._backoff_base_seconds = 0
 
     attempts = {"count": 0}
 
@@ -140,7 +140,7 @@ async def test_builtin_memory_recall_with_sqlite_memory_store(tmp_path: Path) ->
     await run_migrations(str(db_path))
     memory_store = SQLiteMemoryStore(str(db_path))
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await memory_store.store(
         MemoryItem(
             memory_id="mem-skill-1",

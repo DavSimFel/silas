@@ -32,7 +32,7 @@ class BatchExecutor:
                 if not self._is_allowed(proposal.action, payload):
                     raise PermissionError("blocked by gate runner")
                 self._execute_item(proposal.action, payload)
-            except Exception as exc:  # noqa: BLE001 - surfaced in result payload.
+            except Exception as exc:
                 success = False
                 error = str(exc)
 

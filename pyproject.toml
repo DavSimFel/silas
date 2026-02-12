@@ -40,8 +40,28 @@ line-length = 100
 src = ["silas", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "N", "C901"]
-ignore = ["E501"]
+select = [
+  "E", "F", "I", "B", "N", "C901",  # existing
+  "UP",   # pyupgrade — modern Python patterns
+  "SIM",  # simplify — reduce unnecessary complexity
+  "RUF",  # ruff-specific — mutable defaults, ambiguous unicode
+  "PT",   # pytest style — fixture/assert best practices
+  "S",    # bandit security — hardcoded secrets, unsafe patterns
+  "DTZ",  # datetime — enforce timezone-aware datetimes
+  "PIE",  # misc — unnecessary pass, duplicate fields
+  "T20",  # no print() — use logging instead
+]
+ignore = [
+  "E501",   # line length handled by formatter
+  "S101",   # assert in tests is fine
+  "S603",   # subprocess calls are intentional in execution layer
+  "S607",   # partial executable path — we control the environment
+  "UP007",  # X | Y union syntax — keep Optional for readability where needed
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately use hardcoded values, tmp paths, and broad raises
+"tests/*" = ["S104", "S105", "S106", "S108", "PT011", "RUF043", "DTZ001"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 12

@@ -193,7 +193,7 @@ class SkillResolver:
         return ResolvedSkills(metadata=metadata, missing=missing)
 
 
-from typing import Callable  # noqa: E402
+from collections.abc import Callable  # noqa: E402
 
 # Type alias: given a work item, return the parent's skill name list
 ParentSkillResolver = Callable[[WorkItem], list[str]]

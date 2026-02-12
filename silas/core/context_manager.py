@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.models.context import (
@@ -54,7 +54,7 @@ class LiveContextManager:
         return [item for item in self.by_scope.get(scope_id, []) if item.zone == zone]
 
     def subscribe(self, scope_id: str, sub: ContextSubscription) -> str:
-        stored_sub = sub.model_copy(update={"created_at": datetime.now(timezone.utc)})
+        stored_sub = sub.model_copy(update={"created_at": datetime.now(UTC)})
         self.subscriptions_by_scope.setdefault(scope_id, {})[stored_sub.sub_id] = stored_sub
         return stored_sub.sub_id
 

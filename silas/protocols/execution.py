@@ -26,4 +26,4 @@ class KeyManager(Protocol):
     def verify(self, public_key_hex: str, payload: bytes, signature: bytes) -> tuple[bool, str]: ...
 
 
-__all__ = ["EphemeralExecutor", "SandboxManager", "KeyManager"]
+__all__ = ["EphemeralExecutor", "KeyManager", "SandboxManager"]

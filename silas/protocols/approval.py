@@ -57,4 +57,4 @@ class ApprovalManager(Protocol):
     def list_pending(self) -> list[PendingApproval]: ...
 
 
-__all__ = ["ApprovalVerifier", "NonceStore", "ApprovalManager"]
+__all__ = ["ApprovalManager", "ApprovalVerifier", "NonceStore"]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import aiosqlite
 
@@ -19,7 +19,7 @@ class SQLiteNonceStore:
 
     async def record(self, domain: str, nonce: str) -> None:
         key = f"{domain}:{nonce}"
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 "INSERT OR IGNORE INTO nonces (key, domain, nonce, recorded_at) VALUES (?, ?, ?, ?)",

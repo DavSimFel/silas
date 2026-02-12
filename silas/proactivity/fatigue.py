@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from statistics import median
 
 _MEDIUM_PLUS_RISK_LEVELS = {"medium", "high", "irreversible"}
@@ -102,7 +102,7 @@ class ApprovalFatigueTracker:
             "cadence_decisions_per_minute": self.cadence_per_minute(scope_id),
             "fatigue_trigger_count": self.fatigue_trigger_count(scope_id),
             "hard_throttle": False,
-            "checked_at": datetime.now(timezone.utc),
+            "checked_at": datetime.now(UTC),
         }
 
     def _trim_window(self, values: list[float] | list[datetime]) -> None:

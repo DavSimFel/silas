@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 _CORRECTION_OUTCOMES = {"edit_selection", "declined", "undo"}
@@ -31,7 +31,7 @@ class SimpleAutonomyCalibrator:
         events = self._events_by_scope.setdefault(scope_id, [])
         events.append(
             {
-                "recorded_at": datetime.now(timezone.utc),
+                "recorded_at": datetime.now(UTC),
                 "action_family": action_family,
                 "outcome": outcome,
             }

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -71,7 +71,7 @@ class PersonaState(BaseModel):
     def _ensure_updated_at_timezone_aware_utc(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
             raise ValueError("updated_at must be timezone-aware")
-        return value.astimezone(timezone.utc)
+        return value.astimezone(UTC)
 
 
 class PersonaEvent(BaseModel):
@@ -89,14 +89,14 @@ class PersonaEvent(BaseModel):
     def _ensure_created_at_timezone_aware_utc(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
             raise ValueError("created_at must be timezone-aware")
-        return value.astimezone(timezone.utc)
+        return value.astimezone(UTC)
 
 
 __all__ = [
     "AxisProfile",
     "MoodState",
-    "VoiceConfig",
+    "PersonaEvent",
     "PersonaPreset",
     "PersonaState",
-    "PersonaEvent",
+    "VoiceConfig",
 ]

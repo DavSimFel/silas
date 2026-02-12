@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class GoalSchedule(BaseModel):
@@ -102,7 +102,7 @@ class GoalRun(BaseModel):
         if status not in allowed[self.status]:
             raise ValueError(f"invalid GoalRun transition: {self.status} -> {status}")
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if status == "running" and self.started_at is None:
             self.started_at = now
         if status in {"completed", "failed", "skipped"}:
@@ -155,4 +155,4 @@ class StandingApproval(BaseModel):
         return self
 
 
-__all__ = ["GoalSchedule", "Goal", "GoalRun", "StandingApproval"]
+__all__ = ["Goal", "GoalRun", "GoalSchedule", "StandingApproval"]

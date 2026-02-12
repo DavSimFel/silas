@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -66,7 +66,7 @@ def _work_item(work_item_id: str, *, skills: list[str] | None = None) -> WorkIte
         title=f"Work item {work_item_id}",
         body="do work",
         skills=skills or [],
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -176,7 +176,7 @@ async def test_web_channel_health_endpoint_shape() -> None:
 @pytest.mark.asyncio
 async def test_web_channel_health_endpoint_sorts_sessions() -> None:
     channel = WebChannel()
-    channel._websockets_by_session = {  # noqa: SLF001
+    channel._websockets_by_session = {
         "session-z": object(),
         "session-a": object(),
     }

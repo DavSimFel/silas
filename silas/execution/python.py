@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import sys
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping
 
 from silas.execution.sandbox import SubprocessSandboxManager
 from silas.models.execution import ExecutionEnvelope, ExecutionResult

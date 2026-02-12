@@ -55,8 +55,8 @@ class MemoryPortability(Protocol):
 
 
 __all__ = [
-    "MemoryStore",
-    "MemoryRetriever",
     "MemoryConsolidator",
     "MemoryPortability",
+    "MemoryRetriever",
+    "MemoryStore",
 ]

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from math import floor
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from silas.models.messages import TaintLevel, utc_now
 
 
-class ContextZone(str, Enum):
+class ContextZone(StrEnum):
     system = "system"
     chronicle = "chronicle"
     memory = "memory"
@@ -119,9 +119,9 @@ class TokenBudget(BaseModel):
 
 
 __all__ = [
-    "ContextZone",
-    "ContextProfile",
     "ContextItem",
+    "ContextProfile",
     "ContextSubscription",
+    "ContextZone",
     "TokenBudget",
 ]
