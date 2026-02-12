@@ -12,8 +12,7 @@ asyncio event loop — no extra threads for job execution.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Coroutine
-from typing import Any
+from collections.abc import Awaitable, Callable
 
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -22,8 +21,8 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 logger = logging.getLogger(__name__)
 
-# Callback type: async function with no args, returning anything
-AsyncCallback = Callable[[], Coroutine[Any, Any, Any]]
+# Callback type: async function with no args.
+AsyncCallback = Callable[[], Awaitable[None]]
 
 
 class SilasScheduler:
@@ -68,23 +67,28 @@ class SilasScheduler:
             ValueError: If goal_id is already registered or cron_expr is invalid.
         """
         schedule_id = f"goal:{goal_id}"
-
-        if schedule_id in self._jobs:
-            raise ValueError(f"schedule '{schedule_id}' already registered")
-
-        # Parse cron expression into APScheduler trigger
-        trigger = CronTrigger.from_crontab(cron_expr)
-
-        job = self._scheduler.add_job(
-            self._safe_invoke(callback, schedule_id),
-            trigger=trigger,
-            id=schedule_id,
-            name=f"goal-{goal_id}",
-            replace_existing=False,
-        )
-        self._jobs[schedule_id] = job.id
+        self.add_cron_job(schedule_id, cron_expr, callback)
         logger.info("Registered goal schedule: %s (%s)", schedule_id, cron_expr)
         return schedule_id
+
+    def add_cron_job(self, name: str, cron: str, callback: AsyncCallback) -> None:
+        """Register a generic cron job.
+
+        This provides the protocol-level scheduler contract used by orchestration
+        code while allowing richer scheduler helpers to build on top.
+        """
+        if name in self._jobs:
+            raise ValueError(f"schedule '{name}' already registered")
+
+        trigger = CronTrigger.from_crontab(cron)
+        job = self._scheduler.add_job(
+            self._safe_invoke(callback, name),
+            trigger=trigger,
+            id=name,
+            name=name,
+            replace_existing=False,
+        )
+        self._jobs[name] = job.id
 
     def add_heartbeat(
         self,
@@ -147,16 +151,33 @@ class SilasScheduler:
         del self._jobs[schedule_id]
         logger.info("Removed schedule: %s", schedule_id)
 
-    def start(self) -> None:
-        """Start the scheduler. Idempotent — safe to call if already running."""
+    async def start(self) -> None:
+        """Start the scheduler.
+
+        The protocol defines an async lifecycle, so this method is async even
+        though APScheduler startup itself is synchronous.
+        """
         if self._running:
             return
         self._scheduler.start()
         self._running = True
         logger.info("Scheduler started with %d jobs", len(self._jobs))
 
+    async def shutdown(self) -> None:
+        """Shutdown the scheduler and clear all jobs.
+
+        Keeping shutdown async preserves lifecycle consistency with other
+        runtime components.
+        """
+        if not self._running:
+            return
+        self._scheduler.shutdown(wait=False)
+        self._jobs.clear()
+        self._running = False
+        logger.info("Scheduler stopped")
+
     def stop(self) -> None:
-        """Stop the scheduler and clear all jobs. Idempotent."""
+        """Backward-compatible sync alias for shutdown()."""
         if not self._running:
             return
         self._scheduler.shutdown(wait=False)
@@ -178,7 +199,7 @@ class SilasScheduler:
         async def _wrapper() -> None:
             try:
                 await callback()
-            except Exception:  # Intentional catch-all: scheduler wrapper must never crash
+            except (RuntimeError, ValueError, OSError):
                 logger.exception("Schedule %s callback failed", schedule_id)
 
         return _wrapper

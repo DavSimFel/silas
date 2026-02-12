@@ -21,21 +21,22 @@ class TestSchedulerLifecycle:
     @pytest.mark.asyncio
     async def test_start_stop(self) -> None:
         s = SilasScheduler()
-        s.start()
+        await s.start()
         assert s.running
-        s.stop()
+        await s.shutdown()
         assert not s.running
 
     @pytest.mark.asyncio
     async def test_start_is_idempotent(self) -> None:
         s = SilasScheduler()
-        s.start()
-        s.start()  # Should not raise
+        await s.start()
+        await s.start()  # Should not raise
         assert s.running
-        s.stop()
+        await s.shutdown()
 
-    def test_stop_is_idempotent(self, scheduler: SilasScheduler) -> None:
-        scheduler.stop()  # Not running, should not raise
+    @pytest.mark.asyncio
+    async def test_shutdown_is_idempotent(self, scheduler: SilasScheduler) -> None:
+        await scheduler.shutdown()  # Not running, should not raise
         assert not scheduler.running
 
 
@@ -122,12 +123,12 @@ class TestCallbackExecution:
             call_count += 1
 
         scheduler.add_heartbeat("test", 1, counter)
-        scheduler.start()
+        await scheduler.start()
 
         # Wait enough time for at least one tick
         await asyncio.sleep(1.5)
 
-        scheduler.stop()
+        await scheduler.shutdown()
         assert call_count >= 1
 
     @pytest.mark.asyncio
@@ -145,11 +146,11 @@ class TestCallbackExecution:
 
         scheduler.add_heartbeat("bad", 1, failing)
         scheduler.add_heartbeat("good", 1, healthy)
-        scheduler.start()
+        await scheduler.start()
 
         await asyncio.sleep(1.5)
 
-        scheduler.stop()
+        await scheduler.shutdown()
         # The healthy callback should still have fired despite the failing one
         assert healthy_count >= 1
 
@@ -166,8 +167,8 @@ class TestStopClearsJobs:
         s.add_heartbeat("hb1", 30, noop)
         assert len(s.job_ids) == 2
 
-        s.start()
-        s.stop()
+        await s.start()
+        await s.shutdown()
 
         # All jobs should be cleared after stop
         assert s.job_ids == []

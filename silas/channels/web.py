@@ -326,10 +326,6 @@ class WebChannel(ChannelAdapterCore):
             return None
 
     async def send(self, recipient_id: str, text: str, reply_to: str | None = None) -> None:
-        websocket = await self._resolve_socket_for_recipient(recipient_id)
-        if websocket is None:
-            return
-
         payload = {
             "type": "message",
             "sender": "silas",
@@ -337,18 +333,42 @@ class WebChannel(ChannelAdapterCore):
             "reply_to": reply_to,
             "timestamp": utc_now().isoformat(),
         }
-        await websocket.send_text(json.dumps(payload))
+        await self._send_json(recipient_id, payload)
+
+    async def send_stream_start(self, connection_id: str) -> None:
+        payload = {
+            "type": "stream_start",
+            "timestamp": utc_now().isoformat(),
+        }
+        await self._send_json(connection_id, payload)
+
+    async def send_stream_chunk(self, connection_id: str, text: str) -> None:
+        payload = {
+            "type": "stream_chunk",
+            "text": text,
+            "timestamp": utc_now().isoformat(),
+        }
+        await self._send_json(connection_id, payload)
+
+    async def send_stream_end(self, connection_id: str) -> None:
+        payload = {
+            "type": "stream_end",
+            "timestamp": utc_now().isoformat(),
+        }
+        await self._send_json(connection_id, payload)
 
     async def send_approval_card(self, recipient_id: str, card: dict[str, object]) -> None:
-        websocket = await self._resolve_socket_for_recipient(recipient_id)
-        if websocket is None:
-            return
-
         payload = {
             "type": "approval_card",
             "card": card,
             "timestamp": utc_now().isoformat(),
         }
+        await self._send_json(recipient_id, payload)
+
+    async def _send_json(self, recipient_id: str, payload: dict[str, object]) -> None:
+        websocket = await self._resolve_socket_for_recipient(recipient_id)
+        if websocket is None:
+            return
         await websocket.send_text(json.dumps(payload))
 
     def register_approval_response_handler(self, handler: ApprovalResponseHandler | None) -> None:
