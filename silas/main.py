@@ -11,6 +11,7 @@ from typing import Any
 import click
 import httpx
 import yaml
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from silas.agents.proxy import build_proxy_agent
 from silas.approval import LiveApprovalManager
@@ -48,7 +49,10 @@ def _db_path(settings: SilasSettings) -> str:
     return str(data_dir / "silas.db")
 
 
-def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
+def build_stream(
+    settings: SilasSettings,
+    signing_key: Ed25519PrivateKey | bytes | None = None,
+) -> tuple[Stream, WebChannel]:
     web_cfg = settings.channels.web
     db = _db_path(settings)
 
@@ -70,7 +74,7 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
     chronicle_store = SQLiteChronicleStore(db)
     work_item_store = SQLiteWorkItemStore(db)  # noqa: F841 — wired in Phase 3
     audit = SQLiteAuditLog(db)
-    nonce_store = SQLiteNonceStore(db)  # noqa: F841 — wired in Phase 3
+    nonce_store = SQLiteNonceStore(db)
     token_counter = HeuristicTokenCounter()
     context_manager = LiveContextManager(
         token_budget=settings.context.as_token_budget(),
@@ -115,6 +119,8 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
         output_gate_runner=output_gate_runner,
         suggestion_engine=suggestion_engine,
         autonomy_calibrator=autonomy_calibrator,
+        _signing_key=signing_key,
+        _nonce_store=nonce_store,
     )
     return stream, channel
 
@@ -272,18 +278,12 @@ async def _start_runtime(settings: SilasSettings, passphrase: str) -> None:
     db = _db_path(settings)
     await run_migrations(db)
 
-    # Load Tier 2 signing key for approval verification
-    from silas.secrets import SigningKeyStore
+    from silas.secrets import load_stream_signing_key
 
-    signing_store = SigningKeyStore(settings.data_dir, passphrase)
-    if not signing_store.has_keypair():
-        logger.warning("No signing keypair found — approvals will not be cryptographically bound")
-        _signing_key = None
-    else:
-        _signing_key = signing_store.load_private_key()
-        logger.info("Tier 2 signing key loaded")
+    signing_key = load_stream_signing_key(settings.data_dir, passphrase)
+    logger.info("Tier 2 signing key loaded for stream inbound verification")
 
-    stream, web_channel = build_stream(settings)
+    stream, web_channel = build_stream(settings, signing_key=signing_key)
     await asyncio.gather(web_channel.serve(), stream.start())
 
 
@@ -299,6 +299,8 @@ def start_command(config_path: str) -> None:
 
     try:
         asyncio.run(_start_runtime(settings, passphrase))
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
     except KeyboardInterrupt:
         click.echo("Shutting down.")
 

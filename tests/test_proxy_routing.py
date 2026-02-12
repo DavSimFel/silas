@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from silas.agents.proxy import ProxyAgent
 from silas.config import SilasSettings
 from silas.main import build_stream
@@ -92,3 +93,17 @@ def test_build_stream_wires_output_gate_runner(
     stream, _ = build_stream(settings)
 
     assert stream.output_gate_runner is not None
+
+
+def test_build_stream_injects_signing_key_into_stream(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = SilasSettings.model_validate({"data_dir": str(tmp_path / "data")})
+    signing_key = Ed25519PrivateKey.generate()
+    monkeypatch.setattr("silas.main.build_proxy_agent", lambda model, default_context_profile: TestModel())
+
+    stream, _ = build_stream(settings, signing_key=signing_key)
+
+    assert stream._signing_key is signing_key
+    assert stream._nonce_store is not None

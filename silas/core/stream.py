@@ -14,6 +14,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import ValidationError
 
 from silas.agents.structured import run_structured_agent
@@ -34,14 +36,41 @@ from silas.models.approval import ApprovalScope, ApprovalVerdict
 from silas.models.context import ContextItem, ContextZone
 from silas.models.gates import Gate, GateResult, GateTrigger
 from silas.models.memory import MemoryItem, MemoryType, ReingestionTier
-from silas.models.messages import ChannelMessage, SignedMessage, TaintLevel
+from silas.models.messages import (
+    ChannelMessage,
+    SignedMessage,
+    TaintLevel,
+    signed_message_canonical_bytes,
+)
 from silas.models.proactivity import SuggestionProposal
 from silas.models.work import WorkItem, WorkItemType
+from silas.protocols.approval import NonceStore
 from silas.protocols.channels import ChannelAdapterCore
 from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
 
 _counter = HeuristicTokenCounter()
 _MENTION_PATTERN = re.compile(r"@([A-Za-z0-9_:-]+)")
+
+
+class _InMemoryNonceStore:
+    """Ephemeral replay guard for local/test streams.
+
+    Why: production stream startup injects ``SQLiteNonceStore``. This fallback keeps
+    direct unit-test ``Stream(...)`` construction replay-safe without requiring a DB.
+    """
+
+    def __init__(self) -> None:
+        self._seen: set[str] = set()
+
+    async def is_used(self, domain: str, nonce: str) -> bool:
+        return f"{domain}:{nonce}" in self._seen
+
+    async def record(self, domain: str, nonce: str) -> None:
+        self._seen.add(f"{domain}:{nonce}")
+
+    async def prune_expired(self, older_than: datetime) -> int:
+        del older_than
+        return 0
 
 
 @dataclass(slots=True)
@@ -56,12 +85,15 @@ class Stream:
     output_gate_runner: OutputGateRunner | None = None
     session_id: str | None = None
     _approval_flow: ApprovalFlow | None = None
-    # Signing key for HMAC message signatures. Generated per-instance if not provided.
-    _signing_key: bytes = b""
+    # Startup should inject an Ed25519 key; bytes remains for legacy HMAC-only tests.
+    _signing_key: Ed25519PrivateKey | bytes | None = None
+    _nonce_store: NonceStore | None = None
 
     def __post_init__(self) -> None:
-        if not self._signing_key:
-            self._signing_key = uuid.uuid4().bytes + uuid.uuid4().bytes  # 32 bytes
+        if self._signing_key is None:
+            self._signing_key = uuid.uuid4().bytes + uuid.uuid4().bytes
+        if self._nonce_store is None:
+            self._nonce_store = _InMemoryNonceStore()
         self._sync_turn_context_fields()
         self._approval_flow = ApprovalFlow(
             approval_manager=self.turn_context.approval_manager,
@@ -186,22 +218,21 @@ class Stream:
                 )
                 return blocked_response
 
-            taint = TaintLevel.owner if message.sender_id == self.owner_id else TaintLevel.external
-            nonce = uuid.uuid4().hex
-            # HMAC signature binds message content to nonce, preventing replay/forgery.
-            sig_payload = f"{message.sender_id}:{processed_message_text}:{nonce}".encode()
-            signature = hmac.new(self._signing_key, sig_payload, hashlib.sha256).digest()
-            signed = SignedMessage(message=message, signature=signature, nonce=nonce, taint=taint)
+            signed = await self._prepare_signed_inbound_message(
+                message=message,
+                processed_message_text=processed_message_text,
+                turn_number=turn_number,
+            )
             cm = self._get_context_manager()
 
             chronicle_item = ContextItem(
                 ctx_id=f"chronicle:{turn_number}:{uuid.uuid4().hex}",
                 zone=ContextZone.chronicle,
-                content=f"[{signed.taint.value}] {message.sender_id}: {processed_message_text}",
-                token_count=_counter.count(processed_message_text),
+                content=f"[{signed.taint.value}] {signed.message.sender_id}: {signed.message.text}",
+                token_count=_counter.count(signed.message.text),
                 created_at=datetime.now(UTC),
                 turn_number=turn_number,
-                source=f"channel:{message.channel}",
+                source=f"channel:{signed.message.channel}",
                 taint=signed.taint,
                 kind="message",
             )
@@ -210,8 +241,8 @@ class Stream:
             if self.turn_context.chronicle_store is not None:
                 await self.turn_context.chronicle_store.append(scope_id, chronicle_item)
 
-            await self._auto_retrieve_memories(processed_message_text, cm, signed.taint, turn_number)
-            await self._ingest_raw_memory(processed_message_text, signed.taint, session_id, turn_number)
+            await self._auto_retrieve_memories(signed.message.text, cm, signed.taint, turn_number)
+            await self._ingest_raw_memory(signed.message.text, signed.taint, session_id, turn_number)
 
             evicted_ctx_ids: list[str] = []
             if cm is not None:
@@ -303,6 +334,86 @@ class Stream:
             await self._audit("turn_processed", turn_number=turn_number, route=routed.route)
 
             return response_text
+
+    async def verify_inbound(self, signed_message: SignedMessage) -> tuple[bool, str]:
+        """Validate inbound message trust before owner-level actions rely on it.
+
+        Why: the stream's taint boundary depends on cryptographic provenance and
+        single-use nonces so replayed or forged payloads cannot escalate trust.
+        """
+        payload = signed_message_canonical_bytes(signed_message.message, signed_message.nonce)
+        if not self._is_valid_signature(payload, signed_message.signature):
+            return False, "invalid_signature"
+
+        nonce_store = self._nonce_store
+        if nonce_store is None:
+            return False, "nonce_store_unavailable"
+
+        if await nonce_store.is_used("msg", signed_message.nonce):
+            return False, "nonce_replay"
+        await nonce_store.record("msg", signed_message.nonce)
+        return True, "ok"
+
+    async def _prepare_signed_inbound_message(
+        self,
+        *,
+        message: ChannelMessage,
+        processed_message_text: str,
+        turn_number: int,
+    ) -> SignedMessage:
+        signed = self._sign_inbound_message(message, processed_message_text)
+        is_verified, verify_reason = await self.verify_inbound(signed)
+        if not is_verified:
+            await self._audit(
+                "inbound_message_untrusted",
+                turn_number=turn_number,
+                sender_id=message.sender_id,
+                reason=verify_reason,
+            )
+        taint = self._resolve_inbound_taint(message.sender_id, is_verified)
+        return signed.model_copy(update={"taint": taint})
+
+    def _sign_inbound_message(
+        self,
+        message: ChannelMessage,
+        processed_message_text: str,
+    ) -> SignedMessage:
+        nonce = uuid.uuid4().hex
+        message_payload = message.model_copy(update={"text": processed_message_text})
+        canonical_payload = signed_message_canonical_bytes(message_payload, nonce)
+        signature = self._sign_payload(canonical_payload)
+        return SignedMessage(
+            message=message_payload,
+            signature=signature,
+            nonce=nonce,
+            taint=TaintLevel.external,
+        )
+
+    def _sign_payload(self, canonical_payload: bytes) -> bytes:
+        signing_key = self._signing_key
+        if isinstance(signing_key, Ed25519PrivateKey):
+            return signing_key.sign(canonical_payload)
+        if isinstance(signing_key, bytes):
+            return hmac.new(signing_key, canonical_payload, hashlib.sha256).digest()
+        raise RuntimeError("stream signing key is not configured")
+
+    def _is_valid_signature(self, canonical_payload: bytes, signature: bytes) -> bool:
+        signing_key = self._signing_key
+        if isinstance(signing_key, Ed25519PrivateKey):
+            try:
+                signing_key.public_key().verify(signature, canonical_payload)
+            except (InvalidSignature, TypeError, ValueError):
+                return False
+            return True
+        if isinstance(signing_key, bytes):
+            expected_signature = hmac.new(signing_key, canonical_payload, hashlib.sha256).digest()
+            return hmac.compare_digest(expected_signature, signature)
+        return False
+
+    def _resolve_inbound_taint(self, sender_id: str, is_verified: bool) -> TaintLevel:
+        if is_verified and sender_id == self.owner_id:
+            return TaintLevel.owner
+        return TaintLevel.external
 
     # ── Planner Route Handling ─────────────────────────────────────────
 

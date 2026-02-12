@@ -6,10 +6,13 @@ memory retrieval, context profile setting, and edge cases.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from silas.approval import LiveApprovalManager
 from silas.core.stream import Stream
 from silas.models.agents import AgentResponse, InteractionMode, InteractionRegister, RouteDecision
@@ -17,7 +20,12 @@ from silas.models.approval import ApprovalScope, ApprovalToken, ApprovalVerdict
 from silas.models.context import ContextZone
 from silas.models.gates import Gate, GateLane, GateResult, GateTrigger
 from silas.models.memory import MemoryItem, MemoryType
-from silas.models.messages import ChannelMessage, TaintLevel
+from silas.models.messages import (
+    ChannelMessage,
+    SignedMessage,
+    TaintLevel,
+    signed_message_canonical_bytes,
+)
 from silas.models.skills import SkillDefinition
 from silas.models.work import WorkItemStatus
 from silas.skills.executor import SkillExecutor, register_builtin_skills
@@ -54,6 +62,21 @@ def _stream(
         owner_id="owner",
         default_context_profile="conversation",
     )
+
+
+class _InMemoryNonceStore:
+    def __init__(self) -> None:
+        self._keys: set[str] = set()
+
+    async def is_used(self, domain: str, nonce: str) -> bool:
+        return f"{domain}:{nonce}" in self._keys
+
+    async def record(self, domain: str, nonce: str) -> None:
+        self._keys.add(f"{domain}:{nonce}")
+
+    async def prune_expired(self, older_than: datetime) -> int:
+        del older_than
+        return 0
 
 
 class BlockingOutputGateRunner:
@@ -318,6 +341,100 @@ async def test_external_taint_classification(
     await stream._process_turn(_msg("hi", sender_id="stranger"))
     chronicle = context_manager.get_zone("owner", ContextZone.chronicle)
     assert chronicle[0].taint == TaintLevel.external
+
+
+@pytest.mark.asyncio
+async def test_verify_inbound_accepts_ed25519_signature_and_consumes_nonce(
+    channel: InMemoryChannel,
+    turn_context,
+) -> None:
+    signing_key = Ed25519PrivateKey.generate()
+    nonce_store = _InMemoryNonceStore()
+    stream = Stream(
+        channel=channel,
+        turn_context=turn_context,
+        _signing_key=signing_key,
+        _nonce_store=nonce_store,
+    )
+    message = _msg("verify this", sender_id="owner")
+    nonce = "nonce-ed25519"
+    signature = signing_key.sign(signed_message_canonical_bytes(message, nonce))
+    signed = SignedMessage(message=message, signature=signature, nonce=nonce)
+
+    is_valid, reason = await stream.verify_inbound(signed)
+    replay_valid, replay_reason = await stream.verify_inbound(signed)
+
+    assert is_valid is True
+    assert reason == "ok"
+    assert replay_valid is False
+    assert replay_reason == "nonce_replay"
+
+
+@pytest.mark.asyncio
+async def test_verify_inbound_rejects_invalid_ed25519_signature(
+    channel: InMemoryChannel,
+    turn_context,
+) -> None:
+    signing_key = Ed25519PrivateKey.generate()
+    nonce_store = _InMemoryNonceStore()
+    stream = Stream(
+        channel=channel,
+        turn_context=turn_context,
+        _signing_key=signing_key,
+        _nonce_store=nonce_store,
+    )
+    message = _msg("tamper test", sender_id="owner")
+    nonce = "nonce-invalid"
+    signature = signing_key.sign(signed_message_canonical_bytes(_msg("different"), nonce))
+    signed = SignedMessage(message=message, signature=signature, nonce=nonce)
+
+    is_valid, reason = await stream.verify_inbound(signed)
+
+    assert is_valid is False
+    assert reason == "invalid_signature"
+    assert await nonce_store.is_used("msg", nonce) is False
+
+
+@pytest.mark.asyncio
+async def test_verify_inbound_falls_back_to_hmac_for_raw_bytes_signing_key(
+    channel: InMemoryChannel,
+    turn_context,
+) -> None:
+    signing_key = b"legacy-test-signing-key"
+    nonce_store = _InMemoryNonceStore()
+    stream = Stream(
+        channel=channel,
+        turn_context=turn_context,
+        _signing_key=signing_key,
+        _nonce_store=nonce_store,
+    )
+    message = _msg("legacy compatibility", sender_id="owner")
+    nonce = "nonce-hmac"
+    canonical_payload = signed_message_canonical_bytes(message, nonce)
+    signature = hmac.new(signing_key, canonical_payload, hashlib.sha256).digest()
+    signed = SignedMessage(message=message, signature=signature, nonce=nonce)
+
+    is_valid, reason = await stream.verify_inbound(signed)
+
+    assert is_valid is True
+    assert reason == "ok"
+
+
+def test_sign_inbound_message_uses_ed25519_signature_when_key_is_present(
+    channel: InMemoryChannel,
+    turn_context,
+) -> None:
+    signing_key = Ed25519PrivateKey.generate()
+    stream = Stream(
+        channel=channel,
+        turn_context=turn_context,
+        _signing_key=signing_key,
+        _nonce_store=_InMemoryNonceStore(),
+    )
+
+    signed = stream._sign_inbound_message(_msg("ed25519"), "ed25519")
+
+    assert len(signed.signature) == 64
 
 
 @pytest.mark.asyncio
