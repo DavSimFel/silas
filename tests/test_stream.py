@@ -391,7 +391,7 @@ async def test_planner_route_response_runs_through_output_gates(
 
     result = await stream._process_turn(_msg("build a 5-step plan"))
 
-    assert gate_runner.calls[0][0] == stream._planner_stub_response()
+    assert gate_runner.calls[0][0] == "I need to plan this request before execution. Planner execution is not available yet."
     assert result == "I cannot share that"
     assert channel.outgoing[0]["text"] == "I cannot share that"
 
