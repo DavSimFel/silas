@@ -241,14 +241,15 @@
 
 **What it does:** Silas moves into his own runtime. Onboarding gets the owner set up. Polish happens from the inside.
 
-### Onboarding Flow (§1.5)
-- Welcome card: "I'm Silas. Let's get you set up." + `[Get Started]` CTA
-- LLM provider selection (OpenRouter / local) with API key secure input field
-- `POST /secrets/{ref_id}` endpoint (§8.1) — secure credential ingestion to OS keyring (bypasses WebSocket, never enters agent pipeline)
-- API key immediate validation (test call to provider)
-- Identity bootstrap (name, primary email, primary phone)
-- Completion → redirect to The Stream
-- First message: "I'm ready. Tell me what to connect first, or I'll figure it out."
+### Onboarding Flow (§1.5) ✅ PR #48
+- ✅ CLI: `silas init` interactive wizard (agent name, owner name, API key)
+- ✅ Web: `POST /api/onboard` endpoint with Pydantic validation
+- ✅ PWA: Glass card 2-step overlay (agent name → API key)
+- ✅ API key validation against OpenRouter `/api/v1/models`
+- ✅ 6 tests (CLI + web)
+- ⏳ `POST /secrets/{ref_id}` → OS keyring (two-tier key storage, follow-up)
+- ⏳ Identity bootstrap (primary email, phone) — deferred to post-migration
+- ⏳ First message: "I'm ready. Tell me what to connect first, or I'll figure it out."
 
 ### Migration
 - Seed initial memory + personality baseline from owner's context files
