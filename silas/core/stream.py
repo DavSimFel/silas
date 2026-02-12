@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from silas.agents.structured import run_structured_agent
 from silas.core.approval_flow import ApprovalFlow
 from silas.core.context_manager import LiveContextManager
+from silas.core.logging import correlation_scope
 from silas.core.plan_executor import (
     build_skill_work_item,
     execute_plan_actions,
@@ -152,103 +153,128 @@ class Stream:
 
     async def _process_turn(self, message: ChannelMessage, connection_id: str = "owner") -> str:
         session_id = self._ensure_session_id()
+        scope_id = self.turn_context.scope_id
+        next_turn_number = self.turn_context.turn_number + 1
+        turn_id = f"{scope_id}:{next_turn_number}"
 
-        await self._audit("phase1a_noop", step=0, note="active gates precompile skipped")
-        high_confidence_suggestions = await self._collect_suggestions(connection_id)
-        await self._audit("phase1a_noop", step=1, note="input gates skipped")
+        with correlation_scope(turn_id=turn_id, scope_id=scope_id):
+            await self._audit("phase1a_noop", step=0, note="active gates precompile skipped")
+            high_confidence_suggestions = await self._collect_suggestions(connection_id)
+            await self._audit("phase1a_noop", step=1, note="input gates skipped")
 
-        taint = TaintLevel.owner if message.sender_id == self.owner_id else TaintLevel.external
-        nonce = uuid.uuid4().hex
-        # HMAC signature binds message content to nonce, preventing replay/forgery.
-        sig_payload = f"{message.sender_id}:{message.text}:{nonce}".encode()
-        signature = hmac.new(self._signing_key, sig_payload, hashlib.sha256).digest()
-        signed = SignedMessage(message=message, signature=signature, nonce=nonce, taint=taint)
-        cm = self._get_context_manager()
+            taint = TaintLevel.owner if message.sender_id == self.owner_id else TaintLevel.external
+            nonce = uuid.uuid4().hex
+            # HMAC signature binds message content to nonce, preventing replay/forgery.
+            sig_payload = f"{message.sender_id}:{message.text}:{nonce}".encode()
+            signature = hmac.new(self._signing_key, sig_payload, hashlib.sha256).digest()
+            signed = SignedMessage(message=message, signature=signature, nonce=nonce, taint=taint)
+            cm = self._get_context_manager()
 
-        self.turn_context.turn_number += 1
-        turn_number = self.turn_context.turn_number
-        chronicle_item = ContextItem(
-            ctx_id=f"chronicle:{turn_number}:{uuid.uuid4().hex}",
-            zone=ContextZone.chronicle,
-            content=f"[{signed.taint.value}] {message.sender_id}: {message.text}",
-            token_count=_counter.count(message.text),
-            created_at=datetime.now(UTC),
-            turn_number=turn_number,
-            source=f"channel:{message.channel}",
-            taint=signed.taint,
-            kind="message",
-        )
-        if cm is not None:
-            cm.add(self.turn_context.scope_id, chronicle_item)
-        if self.turn_context.chronicle_store is not None:
-            await self.turn_context.chronicle_store.append(self.turn_context.scope_id, chronicle_item)
+            self.turn_context.turn_number += 1
+            turn_number = self.turn_context.turn_number
+            chronicle_item = ContextItem(
+                ctx_id=f"chronicle:{turn_number}:{uuid.uuid4().hex}",
+                zone=ContextZone.chronicle,
+                content=f"[{signed.taint.value}] {message.sender_id}: {message.text}",
+                token_count=_counter.count(message.text),
+                created_at=datetime.now(UTC),
+                turn_number=turn_number,
+                source=f"channel:{message.channel}",
+                taint=signed.taint,
+                kind="message",
+            )
+            if cm is not None:
+                cm.add(scope_id, chronicle_item)
+            if self.turn_context.chronicle_store is not None:
+                await self.turn_context.chronicle_store.append(scope_id, chronicle_item)
 
-        await self._auto_retrieve_memories(message.text, cm, signed.taint, turn_number)
-        await self._ingest_raw_memory(message.text, signed.taint, session_id, turn_number)
+            await self._auto_retrieve_memories(message.text, cm, signed.taint, turn_number)
+            await self._ingest_raw_memory(message.text, signed.taint, session_id, turn_number)
 
-        await self._audit("phase1a_noop", step=5, note="budget enforcement deferred to post-response")
-        available_skills = self._available_skill_names()
-        await self._audit("skill_availability_checked", step=6, available_skills=available_skills, has_skills=bool(available_skills))
-        await self._audit("phase1a_noop", step=6.5, note="skill-aware toolset preparation deferred")
+            await self._audit(
+                "phase1a_noop", step=5, note="budget enforcement deferred to post-response",
+            )
+            available_skills = self._available_skill_names()
+            await self._audit(
+                "skill_availability_checked",
+                step=6,
+                available_skills=available_skills,
+                has_skills=bool(available_skills),
+            )
+            await self._audit(
+                "phase1a_noop", step=6.5, note="skill-aware toolset preparation deferred",
+            )
 
-        if self.turn_context.proxy is None:
-            raise RuntimeError("turn_context.proxy is required")
+            if self.turn_context.proxy is None:
+                raise RuntimeError("turn_context.proxy is required")
 
-        rendered_context = ""
-        if cm is not None:
-            rendered_context = cm.render(self.turn_context.scope_id, turn_number)
+            rendered_context = ""
+            if cm is not None:
+                rendered_context = cm.render(scope_id, turn_number)
 
-        routed = await run_structured_agent(
-            agent=self.turn_context.proxy,
-            prompt=self._build_proxy_prompt(message.text, rendered_context),
-            call_name="proxy",
-            default_context_profile=self.default_context_profile,
-        )
-        if not isinstance(routed, RouteDecision):
-            raise TypeError("proxy must return RouteDecision")
+            routed = await run_structured_agent(
+                agent=self.turn_context.proxy,
+                prompt=self._build_proxy_prompt(message.text, rendered_context),
+                call_name="proxy",
+                default_context_profile=self.default_context_profile,
+            )
+            if not isinstance(routed, RouteDecision):
+                raise TypeError("proxy must return RouteDecision")
 
-        if cm is not None:
-            cm.set_profile(self.turn_context.scope_id, routed.context_profile)
+            if cm is not None:
+                cm.set_profile(scope_id, routed.context_profile)
 
-        response_text = self._route_response_text(routed)
-        response_text = await self._handle_planner_route(routed, response_text, connection_id, turn_number)
-        response_text = self._prepend_high_confidence_suggestions(response_text, high_confidence_suggestions)
-        response_text, blocked_gate_names = await self._evaluate_output_gates(
-            response_text, signed.taint, message.sender_id, turn_number,
-        )
+            response_text = self._route_response_text(routed)
+            response_text = await self._handle_planner_route(
+                routed, response_text, connection_id, turn_number,
+            )
+            response_text = self._prepend_high_confidence_suggestions(
+                response_text, high_confidence_suggestions,
+            )
+            response_text, blocked_gate_names = await self._evaluate_output_gates(
+                response_text, signed.taint, message.sender_id, turn_number,
+            )
 
-        await self._audit("phase1a_noop", step=9, note="memory query processing skipped")
-        await self._audit("phase1a_noop", step=10, note="memory op processing skipped")
+            await self._audit("phase1a_noop", step=9, note="memory query processing skipped")
+            await self._audit("phase1a_noop", step=10, note="memory op processing skipped")
 
-        response_item = ContextItem(
-            ctx_id=f"chronicle:{turn_number}:resp:{uuid.uuid4().hex}",
-            zone=ContextZone.chronicle,
-            content=f"Silas: {response_text}",
-            token_count=_counter.count(response_text),
-            created_at=datetime.now(UTC),
-            turn_number=turn_number,
-            source="agent:proxy",
-            taint=TaintLevel.owner,
-            kind="message",
-        )
-        if cm is not None:
-            cm.add(self.turn_context.scope_id, response_item)
-        if self.turn_context.chronicle_store is not None:
-            await self.turn_context.chronicle_store.append(self.turn_context.scope_id, response_item)
+            response_item = ContextItem(
+                ctx_id=f"chronicle:{turn_number}:resp:{uuid.uuid4().hex}",
+                zone=ContextZone.chronicle,
+                content=f"Silas: {response_text}",
+                token_count=_counter.count(response_text),
+                created_at=datetime.now(UTC),
+                turn_number=turn_number,
+                source="agent:proxy",
+                taint=TaintLevel.owner,
+                kind="message",
+            )
+            if cm is not None:
+                cm.add(scope_id, response_item)
+            if self.turn_context.chronicle_store is not None:
+                await self.turn_context.chronicle_store.append(scope_id, response_item)
 
-        evicted_ctx_ids: list[str] = []
-        if cm is not None:
-            evicted_ctx_ids = cm.enforce_budget(self.turn_context.scope_id, turn_number=turn_number, current_goal=None)
-        if evicted_ctx_ids:
-            await self._audit("context_budget_enforced", turn_number=turn_number, evicted_ctx_ids=evicted_ctx_ids)
+            evicted_ctx_ids: list[str] = []
+            if cm is not None:
+                evicted_ctx_ids = cm.enforce_budget(
+                    scope_id, turn_number=turn_number, current_goal=None,
+                )
+            if evicted_ctx_ids:
+                await self._audit(
+                    "context_budget_enforced",
+                    turn_number=turn_number,
+                    evicted_ctx_ids=evicted_ctx_ids,
+                )
 
-        await self._audit("phase1a_noop", step=11.5, note="raw output ingest skipped")
-        await self.channel.send(connection_id, response_text, reply_to=message.reply_to)
-        await self._audit("phase1a_noop", step=14, note="access state updates skipped")
-        await self._record_autonomy_outcome(turn_number=turn_number, route=routed.route, blocked=bool(blocked_gate_names))
-        await self._audit("turn_processed", turn_number=turn_number, route=routed.route)
+            await self._audit("phase1a_noop", step=11.5, note="raw output ingest skipped")
+            await self.channel.send(connection_id, response_text, reply_to=message.reply_to)
+            await self._audit("phase1a_noop", step=14, note="access state updates skipped")
+            await self._record_autonomy_outcome(
+                turn_number=turn_number, route=routed.route, blocked=bool(blocked_gate_names),
+            )
+            await self._audit("turn_processed", turn_number=turn_number, route=routed.route)
 
-        return response_text
+            return response_text
 
     # ── Planner Route Handling ─────────────────────────────────────────
 

@@ -13,6 +13,7 @@ from silas.audit.sqlite_audit import SQLiteAuditLog
 from silas.channels.web import WebChannel
 from silas.config import SilasSettings, load_config
 from silas.core.context_manager import LiveContextManager
+from silas.core.logging import setup_logging
 from silas.core.stream import Stream
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
@@ -106,6 +107,7 @@ def build_stream(settings: SilasSettings) -> tuple[Stream, WebChannel]:
 @click.group()
 def cli() -> None:
     """Silas runtime CLI."""
+    setup_logging()
 
 
 @cli.command("init")
