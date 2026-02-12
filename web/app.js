@@ -90,6 +90,7 @@ const onboardingForm = document.getElementById("onboarding-form");
 const onboardingStepIndicator = document.getElementById("onboarding-step-indicator");
 const onboardingStepOne = document.getElementById("onboarding-step-1");
 const onboardingStepTwo = document.getElementById("onboarding-step-2");
+const onboardingOwnerNameInput = document.getElementById("onboarding-owner-name");
 const onboardingAgentNameInput = document.getElementById("onboarding-agent-name");
 const onboardingApiKeyInput = document.getElementById("onboarding-api-key");
 const onboardingNextBtn = document.getElementById("onboarding-next-btn");
@@ -269,16 +270,28 @@ function setOnboardingError(message) {
   onboardingError.classList.toggle("is-visible", text.length > 0);
 }
 
-function ownerNameForOnboarding() {
-  const storedOwner = readLocalStorageValue("silas_owner_name");
-  if (storedOwner && storedOwner.trim()) {
-    return storedOwner.trim();
+async function isRegistrationOpen() {
+  try {
+    const response = await fetch("/api/registration-status", { cache: "no-store" });
+    if (!response.ok) return true;
+    const payload = await response.json();
+    return payload?.open !== false;
+  } catch (_) {
+    return true;
   }
-  return "owner";
 }
 
 async function submitOnboarding() {
   if (onboardingBusy) return;
+
+  const normalizedOwnerName = (onboardingOwnerNameInput?.value || "").trim();
+  if (!normalizedOwnerName) {
+    setOnboardingStep(1);
+    setOnboardingError("Please enter your name.");
+    onboardingOwnerNameInput?.focus();
+    return;
+  }
+  if (onboardingOwnerNameInput) onboardingOwnerNameInput.value = normalizedOwnerName;
 
   const normalizedName = (onboardingAgentNameInput?.value || "").trim() || "Silas";
   if (onboardingAgentNameInput) onboardingAgentNameInput.value = normalizedName;
@@ -302,7 +315,7 @@ async function submitOnboarding() {
       body: JSON.stringify({
         agent_name: normalizedName,
         api_key: apiKey,
-        owner_name: ownerNameForOnboarding(),
+        owner_name: normalizedOwnerName,
       }),
     });
 
@@ -318,6 +331,7 @@ async function submitOnboarding() {
     }
 
     writeLocalStorageValue(ONBOARDING_FLAG_KEY, "true");
+    writeLocalStorageValue("silas_owner_name", normalizedOwnerName);
     setOnboardingOpen(false);
     focusComposer();
   } catch (error) {
@@ -328,7 +342,7 @@ async function submitOnboarding() {
   }
 }
 
-function initOnboarding() {
+async function initOnboarding() {
   if (
     !onboardingOverlay ||
     !onboardingCard ||
@@ -336,6 +350,7 @@ function initOnboarding() {
     !onboardingStepIndicator ||
     !onboardingStepOne ||
     !onboardingStepTwo ||
+    !onboardingOwnerNameInput ||
     !onboardingAgentNameInput ||
     !onboardingApiKeyInput
   ) {
@@ -345,6 +360,13 @@ function initOnboarding() {
   onboardingNextBtn?.addEventListener("click", () => {
     if (onboardingBusy) return;
 
+    const normalizedOwnerName = onboardingOwnerNameInput.value.trim();
+    if (!normalizedOwnerName) {
+      setOnboardingError("Please enter your name.");
+      onboardingOwnerNameInput.focus();
+      return;
+    }
+
     const normalizedName = onboardingAgentNameInput.value.trim();
     if (!normalizedName) {
       setOnboardingError("Please choose an agent name.");
@@ -352,6 +374,7 @@ function initOnboarding() {
       return;
     }
 
+    onboardingOwnerNameInput.value = normalizedOwnerName;
     onboardingAgentNameInput.value = normalizedName;
     setOnboardingError("");
     setOnboardingStep(2);
@@ -362,7 +385,7 @@ function initOnboarding() {
     if (onboardingBusy) return;
     setOnboardingError("");
     setOnboardingStep(1);
-    onboardingAgentNameInput.focus();
+    onboardingOwnerNameInput.focus();
   });
 
   onboardingForm.addEventListener("submit", (event) => {
@@ -378,6 +401,17 @@ function initOnboarding() {
   setOnboardingBusy(false);
   setOnboardingError("");
 
+  const storedOwnerName = (readLocalStorageValue("silas_owner_name") || "").trim();
+  if (!onboardingOwnerNameInput.value.trim() && storedOwnerName) {
+    onboardingOwnerNameInput.value = storedOwnerName;
+  }
+
+  const registrationOpen = await isRegistrationOpen();
+  if (!registrationOpen) {
+    setOnboardingOpen(false);
+    return true;
+  }
+
   if (isOnboardingComplete()) {
     setOnboardingOpen(false);
     return true;
@@ -387,10 +421,10 @@ function initOnboarding() {
   const focusDelay = prefersReducedMotion.matches ? 0 : MOTION.fast;
   setTimeout(() => {
     if (onboardingOpen) {
-      onboardingAgentNameInput.focus();
-      onboardingAgentNameInput.setSelectionRange(
-        onboardingAgentNameInput.value.length,
-        onboardingAgentNameInput.value.length,
+      onboardingOwnerNameInput.focus();
+      onboardingOwnerNameInput.setSelectionRange(
+        onboardingOwnerNameInput.value.length,
+        onboardingOwnerNameInput.value.length,
       );
     }
   }, focusDelay);
@@ -598,7 +632,7 @@ function connect(isReconnect = reconnectAttempt > 0) {
     // know the web channel is reachable and only once across reconnects.
     if (!onboardingInitialized) {
       onboardingInitialized = true;
-      initOnboarding();
+      void initOnboarding();
     }
   });
 

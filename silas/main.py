@@ -186,6 +186,8 @@ def _write_onboarding_config(
 
     silas_mapping["agent_name"] = agent_name
     silas_mapping["owner_name"] = owner_name
+    # First successful onboarding closes registration until manually reopened.
+    silas_mapping["registration_open"] = False
 
     # Store API key in SecretStore (§0.5 — never in config files)
     data_dir = Path(silas_mapping.get("data_dir", "./data"))

@@ -2,6 +2,7 @@ silas:
   owner_id: "owner"
   agent_name: "Silas"
   owner_name: ""
+  registration_open: true
   data_dir: "./data"
 
   models:

@@ -60,6 +60,7 @@ def test_init_writes_config_and_secret(config_file: Path, tmp_path: Path) -> Non
     loaded = yaml.safe_load(config_file.read_text())
     assert loaded["silas"]["agent_name"] == "TestBot"
     assert loaded["silas"]["owner_name"] == "Alice"
+    assert loaded["silas"]["registration_open"] is False
     # API key must NOT be in YAML — only a ref_id
     assert "api_key" not in loaded["silas"].get("models", {})
     assert loaded["silas"]["models"]["api_key_ref"] == "openrouter-api-key"
@@ -109,6 +110,18 @@ def web_channel(web_config_file: Path):
 
 
 @pytest.mark.anyio
+async def test_registration_status_open_by_default(web_channel) -> None:
+    """New installs must expose registration as open so first-run onboarding can proceed."""
+    from fastapi.testclient import TestClient
+
+    client = TestClient(web_channel.app)
+    resp = client.get("/api/registration-status")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"open": True}
+
+
+@pytest.mark.anyio
 async def test_onboard_endpoint_success(web_channel, web_config_file: Path) -> None:
     from fastapi.testclient import TestClient
 
@@ -125,6 +138,56 @@ async def test_onboard_endpoint_success(web_channel, web_config_file: Path) -> N
     # API key must NOT be in YAML
     assert "api_key" not in loaded["silas"].get("models", {})
     assert loaded["silas"]["models"]["api_key_ref"] == "openrouter-api-key"
+    # Why: first successful registration must close the gate for all later requests.
+    assert loaded["silas"]["registration_open"] is False
+
+
+@pytest.mark.anyio
+async def test_onboard_endpoint_closed_returns_403(web_channel, web_config_file: Path) -> None:
+    """Closed registration must hard-block onboarding requests."""
+    from fastapi.testclient import TestClient
+
+    web_config_file.write_text(
+        yaml.safe_dump(
+            {
+                "silas": {
+                    "owner_id": "owner",
+                    "data_dir": str(web_config_file.parent / "data"),
+                    "registration_open": False,
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    client = TestClient(web_channel.app)
+    resp = client.post(
+        "/api/onboard",
+        json={"agent_name": "Pal", "api_key": "sk-test", "owner_name": "Tester"},
+    )
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "Registration is closed"
+
+
+@pytest.mark.anyio
+async def test_registration_status_closed_after_onboard(web_channel) -> None:
+    """The status endpoint should reflect the persisted post-onboarding closed state."""
+    from fastapi.testclient import TestClient
+
+    client = TestClient(web_channel.app)
+    with patch.object(web_channel, "_validate_openrouter_key", new_callable=AsyncMock, return_value=True):
+        onboard_resp = client.post(
+            "/api/onboard",
+            json={"agent_name": "Pal", "api_key": "sk-test", "owner_name": "Tester"},
+        )
+    assert onboard_resp.status_code == 200
+
+    # Why: frontend relies on this endpoint to decide whether to show onboarding.
+    status_resp = client.get("/api/registration-status")
+    assert status_resp.status_code == 200
+    assert status_resp.json() == {"open": False}
 
 
 @pytest.mark.anyio
