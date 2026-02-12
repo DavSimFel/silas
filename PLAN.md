@@ -283,7 +283,7 @@
 - Card contract enforcement (§0.5.3 — standardized card anatomy: intent, risk_level, rationale, consequence_label, CTA ordering, max height, details expansion)
 - Three persistent PWA surfaces (§8.2 — Stream, Review queue, Activity log) with full surface architecture
 - Activity surface as human-readable audit timeline (§0.5.1)
-- `send_checkpoint` + WebSocket `checkpoint` message type (§4.1.1, §8.1 — RichCardChannel checkpoint method)
+- ✅ All 12 RichCardChannel methods implemented on WebChannel (PR #50) — card request-response infra, interactive cards for approvals, gates, suggestions, secure input, connections, drafts, decisions, batches, checkpoints, permission escalation, autonomy threshold review
 
 ### 8c: Safety + Reliability
 - Taint tracker implementation (§5.12 — propagation rules, constitutional memory protection)
