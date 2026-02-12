@@ -80,6 +80,7 @@ class WebChannel(ChannelAdapterCore):
         self._approval_response_handler: ApprovalResponseHandler | None = None
         self._pending_card_responses: dict[str, asyncio.Future[dict[str, object]]] = {}
         self._ws_lock = asyncio.Lock()
+        self._onboarding_lock = asyncio.Lock()
         self.supports_secure_input: bool = True
 
         self._push_subscriptions: dict[str, dict[str, object]] = {}
@@ -228,20 +229,30 @@ class WebChannel(ChannelAdapterCore):
             return JSONResponse({"ref_id": ref_id, "success": True})
 
     def _setup_onboarding_routes(self) -> None:
+        @self.app.get("/api/registration-status")
+        async def registration_status() -> JSONResponse:
+            return JSONResponse({"open": self._is_registration_open()})
+
         @self.app.post("/api/onboard")
         async def onboard(payload: OnboardPayload) -> JSONResponse:
-            is_valid_key = await self._validate_openrouter_key(payload.api_key)
-            if not is_valid_key:
-                raise HTTPException(status_code=400, detail="Invalid OpenRouter API key")
+            # Serialize onboarding writes so only the first successful registrant
+            # can claim ownership before registration is closed.
+            async with self._onboarding_lock:
+                if not self._is_registration_open():
+                    raise HTTPException(status_code=403, detail="Registration is closed")
 
-            try:
-                self._write_onboarding_config(payload)
-            except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
-                logger.warning("Failed to persist onboarding config", exc_info=True)
-                raise HTTPException(
-                    status_code=500,
-                    detail="Unable to persist onboarding settings",
-                ) from exc
+                is_valid_key = await self._validate_openrouter_key(payload.api_key)
+                if not is_valid_key:
+                    raise HTTPException(status_code=400, detail="Invalid OpenRouter API key")
+
+                try:
+                    self._write_onboarding_config(payload)
+                except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+                    logger.warning("Failed to persist onboarding config", exc_info=True)
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Unable to persist onboarding settings",
+                    ) from exc
 
             return JSONResponse({"status": "ok"})
 
@@ -274,6 +285,8 @@ class WebChannel(ChannelAdapterCore):
 
         silas_section["agent_name"] = payload.agent_name
         silas_section["owner_name"] = payload.owner_name
+        # Registration closes immediately after the first successful onboard.
+        silas_section["registration_open"] = False
 
         # Store API key in SecretStore (§0.5 — never in config files)
         from silas.secrets import SecretStore
@@ -287,6 +300,38 @@ class WebChannel(ChannelAdapterCore):
         self._config_path.parent.mkdir(parents=True, exist_ok=True)
         rendered = yaml.safe_dump(config_data, sort_keys=False)
         self._config_path.write_text(rendered, encoding="utf-8")
+
+    def _is_registration_open(self) -> bool:
+        """Read registration state from config on each request.
+
+        This supports manual reopen by editing config and avoids stale in-memory
+        state after the web process has started.
+        """
+        try:
+            config_data = self._load_config_mapping()
+        except (OSError, TypeError, ValueError, yaml.YAMLError):
+            logger.warning("Failed to read registration status from config", exc_info=True)
+            return True
+
+        silas_section = config_data.get("silas")
+        if silas_section is None:
+            silas_section = config_data
+        if not isinstance(silas_section, dict):
+            logger.warning("Invalid silas config section when reading registration status")
+            return True
+
+        registration_open = silas_section.get("registration_open", True)
+        if isinstance(registration_open, bool):
+            return registration_open
+        if isinstance(registration_open, str):
+            normalized = registration_open.strip().lower()
+            if normalized in {"true", "1", "yes", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "off"}:
+                return False
+
+        logger.warning("Invalid registration_open value; defaulting to open")
+        return True
 
     def _load_config_mapping(self) -> dict[str, object]:
         if not self._config_path.exists():
