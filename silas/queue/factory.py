@@ -12,6 +12,7 @@ graph explicit in the parameter list.
 from __future__ import annotations
 
 from silas.queue.bridge import QueueBridge
+from silas.queue.consult import ConsultPlannerManager
 from silas.queue.consumers import (
     ExecutorAgentProtocol,
     ExecutorConsumer,
@@ -21,6 +22,7 @@ from silas.queue.consumers import (
     ProxyConsumer,
 )
 from silas.queue.orchestrator import QueueOrchestrator
+from silas.queue.replan import ReplanManager
 from silas.queue.router import QueueRouter
 from silas.queue.store import DurableQueueStore
 
@@ -57,9 +59,19 @@ async def create_queue_system(
 
     router = QueueRouter(store)
 
+    # Wire the self-healing cascade (Principle #8) into the executor consumer.
+    # ConsultPlannerManager sends plan_request to planner_queue and polls for
+    # guidance; ReplanManager sends replan_request when consult-retry fails.
+    consult_manager = ConsultPlannerManager(store, router)
+    replan_manager = ReplanManager(router)
+
     proxy_consumer = ProxyConsumer(store, router, proxy_agent)
     planner_consumer = PlannerConsumer(store, router, planner_agent)
-    executor_consumer = ExecutorConsumer(store, router, executor_agent)
+    executor_consumer = ExecutorConsumer(
+        store, router, executor_agent,
+        consult_manager=consult_manager,
+        replan_manager=replan_manager,
+    )
 
     orchestrator = QueueOrchestrator(
         store=store,

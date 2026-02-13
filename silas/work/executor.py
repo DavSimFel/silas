@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
+import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from silas.execution.python_exec import PythonExecutor
 from silas.execution.sandbox_factory import create_sandbox_manager
@@ -26,7 +29,13 @@ from silas.protocols.execution import EphemeralExecutor
 from silas.protocols.work import VerificationRunner, WorkItemStore
 from silas.skills.executor import SkillExecutor
 
+if TYPE_CHECKING:
+    from silas.queue.consult import ConsultPlannerManager
+    from silas.queue.replan import ReplanManager
+
 _CHARS_PER_TOKEN = 3.5
+
+logger = logging.getLogger(__name__)
 
 _EXECUTION_ACTIONS: dict[WorkItemExecutorType, str] = {
     WorkItemExecutorType.shell: "shell_exec",
@@ -46,12 +55,16 @@ class LiveWorkItemExecutor:
         approval_verifier: ApprovalVerifier | None = None,
         verification_runner: VerificationRunner | None = None,
         audit: AuditLog | None = None,
+        consult_manager: ConsultPlannerManager | None = None,
+        replan_manager: ReplanManager | None = None,
     ) -> None:
         self._skill_executor = skill_executor
         self._work_item_store = work_item_store
         self._approval_verifier = approval_verifier
         self._verification_runner = verification_runner
         self._audit = audit
+        self._consult_manager = consult_manager
+        self._replan_manager = replan_manager
 
         sandbox_manager = create_sandbox_manager()
         self._executor_registry: dict[WorkItemExecutorType, object] = {
@@ -162,7 +175,8 @@ class LiveWorkItemExecutor:
                 work_item.budget_used = used.model_copy(deep=True)
                 await self._persist(work_item)
 
-                attempt_ok, attempt_error = await self._execute_attempt(work_item, used)
+                attempt_body = self._build_attempt_body(work_item, previous_error=last_error)
+                attempt_ok, attempt_error = await self._execute_attempt(work_item, used, attempt_body)
                 if not attempt_ok:
                     last_error = attempt_error or "execution attempt failed"
 
@@ -194,6 +208,10 @@ class LiveWorkItemExecutor:
                     last_error = last_error or "budget exhausted"
                     break
 
+            stuck_result = await self._attempt_stuck_recovery(work_item, used, last_error)
+            if stuck_result is not None:
+                return stuck_result
+
             work_item.status = WorkItemStatus.failed
             work_item.budget_used = used.model_copy(deep=True)
             await self._persist(work_item)
@@ -213,19 +231,21 @@ class LiveWorkItemExecutor:
         self,
         work_item: WorkItem,
         used: BudgetUsed,
+        attempt_body: str,
     ) -> tuple[bool, str | None]:
         if work_item.executor_type == WorkItemExecutorType.skill:
-            return await self._execute_skill_attempt(work_item, used)
+            return await self._execute_skill_attempt(work_item, used, attempt_body)
         return await self._execute_registered_attempt(work_item, used)
 
     async def _execute_skill_attempt(
         self,
         work_item: WorkItem,
         used: BudgetUsed,
+        attempt_body: str,
     ) -> tuple[bool, str | None]:
         if not work_item.skills:
             attempt_started = datetime.now(UTC)
-            used.tokens += self._estimate_tokens(work_item.body)
+            used.tokens += self._estimate_tokens(attempt_body)
             used.wall_time_seconds += (datetime.now(UTC) - attempt_started).total_seconds()
             return True, None
 
@@ -235,7 +255,7 @@ class LiveWorkItemExecutor:
                 {
                     "work_item_id": work_item.id,
                     "title": work_item.title,
-                    "body": work_item.body,
+                    "body": attempt_body,
                     "attempt": work_item.attempts,
                     "depends_on": work_item.depends_on,
                 },
@@ -268,6 +288,226 @@ class LiveWorkItemExecutor:
 
         error = result.error or f"{work_item.executor_type.value} execution failed"
         return False, error
+
+    def _build_attempt_body(
+        self,
+        work_item: WorkItem,
+        *,
+        previous_error: str | None,
+        planner_guidance: str | None = None,
+    ) -> str:
+        if work_item.executor_type != WorkItemExecutorType.skill:
+            return work_item.body
+
+        parts: list[str] = [work_item.body]
+        if work_item.attempts > 1 and previous_error:
+            parts.append(
+                f"Previous attempt {work_item.attempts - 1} failed:\n{previous_error}",
+            )
+        if planner_guidance:
+            parts.append(f"Planner guidance:\n{planner_guidance}")
+        return "\n\n".join(parts)
+
+    async def _attempt_stuck_recovery(
+        self,
+        work_item: WorkItem,
+        used: BudgetUsed,
+        last_error: str | None,
+    ) -> WorkItemResult | None:
+        if work_item.on_stuck != "consult_planner":
+            return None
+
+        failure_context = last_error or "unknown failure"
+        guidance, guidance_error = await self._consult_planner(work_item, used, failure_context)
+        if guidance is not None:
+            # The guided retry is the recovery mechanism AFTER the normal retry
+            # loop is exhausted (spec §5.2.1 step e). It bypasses the attempt
+            # budget — the planner call budget (max_planner_calls) is the guard
+            # for this path, not max_attempts.
+            guided_result = await self._execute_guided_retry(
+                work_item,
+                used,
+                last_error=failure_context,
+                guidance=guidance,
+            )
+            if guided_result.status == WorkItemStatus.done:
+                return guided_result
+            failure_context = guided_result.last_error or failure_context
+        elif guidance_error is not None:
+            failure_context = f"{failure_context}; {guidance_error}"
+
+        replan_result = await self._trigger_replan(work_item, used, failure_context)
+        if replan_result is not None:
+            return replan_result
+        return None
+
+    async def _execute_guided_retry(
+        self,
+        work_item: WorkItem,
+        used: BudgetUsed,
+        *,
+        last_error: str,
+        guidance: str,
+    ) -> WorkItemResult:
+        work_item.attempts += 1
+        used.attempts += 1
+        used.executor_runs += 1
+        work_item.status = WorkItemStatus.running
+        work_item.budget_used = used.model_copy(deep=True)
+        await self._persist(work_item)
+
+        attempt_body = self._build_attempt_body(
+            work_item,
+            previous_error=last_error,
+            planner_guidance=guidance,
+        )
+        attempt_ok, attempt_error = await self._execute_attempt(work_item, used, attempt_body)
+        if attempt_ok:
+            verification_ok, verification_results, verification_error = (
+                await self._run_external_verification(work_item)
+            )
+            work_item.verification_results = [
+                dict(result) for result in verification_results
+            ]
+            if verification_ok:
+                work_item.status = WorkItemStatus.done
+                work_item.budget_used = used.model_copy(deep=True)
+                await self._persist(work_item)
+                return WorkItemResult(
+                    work_item_id=work_item.id,
+                    status=WorkItemStatus.done,
+                    summary=f"Work item {work_item.id} completed with planner guidance.",
+                    verification_results=work_item.verification_results,
+                    budget_used=used.model_copy(deep=True),
+                )
+            error = verification_error or "verification failed"
+        else:
+            error = attempt_error or "execution attempt failed"
+
+        work_item.budget_used = used.model_copy(deep=True)
+        await self._persist(work_item)
+        return WorkItemResult(
+            work_item_id=work_item.id,
+            status=WorkItemStatus.failed,
+            summary=f"Work item {work_item.id} guided retry failed.",
+            last_error=error,
+            verification_results=work_item.verification_results,
+            budget_used=used.model_copy(deep=True),
+        )
+
+    async def _consult_planner(
+        self,
+        work_item: WorkItem,
+        used: BudgetUsed,
+        failure_context: str,
+    ) -> tuple[str | None, str | None]:
+        if self._consult_manager is None:
+            return None, None
+        if used.planner_calls >= work_item.budget.max_planner_calls:
+            await self._audit_event(
+                "consult_planner_budget_exhausted",
+                work_item_id=work_item.id,
+                planner_calls=used.planner_calls,
+                max_planner_calls=work_item.budget.max_planner_calls,
+            )
+            return None, "planner call budget exhausted"
+
+        used.planner_calls += 1
+        work_item.budget_used = used.model_copy(deep=True)
+        await self._persist(work_item)
+
+        try:
+            guidance = await self._consult_manager.consult(
+                work_item_id=work_item.id,
+                failure_context=failure_context,
+                trace_id=self._trace_id_for_work_item(work_item.id),
+            )
+        except (RuntimeError, ValueError, OSError, KeyError) as exc:
+            await self._audit_event(
+                "consult_planner_error",
+                work_item_id=work_item.id,
+                error=str(exc),
+            )
+            return None, f"planner consult error: {exc}"
+        if guidance is None:
+            await self._audit_event(
+                "consult_planner_timeout",
+                work_item_id=work_item.id,
+            )
+            return None, "planner consult timed out"
+        await self._audit_event(
+            "consult_planner_guidance_received",
+            work_item_id=work_item.id,
+        )
+        return guidance, None
+
+    async def _trigger_replan(
+        self,
+        work_item: WorkItem,
+        used: BudgetUsed,
+        failure_context: str,
+    ) -> WorkItemResult | None:
+        if self._replan_manager is None:
+            return None
+
+        try:
+            replan_enqueued = await self._replan_manager.trigger_replan(
+                work_item_id=work_item.id,
+                original_goal=work_item.body,
+                failure_history=[
+                    {
+                        "phase": "execution",
+                        "error": failure_context,
+                        "attempts": work_item.attempts,
+                    }
+                ],
+                trace_id=self._trace_id_for_work_item(work_item.id),
+                current_depth=0,
+            )
+        except (RuntimeError, ValueError, OSError, KeyError) as exc:
+            failure_context = f"{failure_context}; replan trigger error: {exc}"
+            replan_enqueued = False
+            await self._audit_event(
+                "replan_trigger_error",
+                work_item_id=work_item.id,
+                error=str(exc),
+            )
+
+        work_item.budget_used = used.model_copy(deep=True)
+        if replan_enqueued:
+            work_item.status = WorkItemStatus.stuck
+            await self._persist(work_item)
+            await self._audit_event(
+                "replan_triggered",
+                work_item_id=work_item.id,
+            )
+            return WorkItemResult(
+                work_item_id=work_item.id,
+                status=WorkItemStatus.stuck,
+                summary=f"Work item {work_item.id} stuck; replan requested.",
+                last_error=failure_context,
+                verification_results=work_item.verification_results,
+                budget_used=used.model_copy(deep=True),
+            )
+
+        work_item.status = WorkItemStatus.failed
+        await self._persist(work_item)
+        await self._audit_event(
+            "recovery_exhausted",
+            work_item_id=work_item.id,
+            failure_context=failure_context,
+        )
+        return WorkItemResult(
+            work_item_id=work_item.id,
+            status=WorkItemStatus.failed,
+            summary=f"Work item {work_item.id} failed after recovery exhausted.",
+            last_error=failure_context,
+            verification_results=work_item.verification_results,
+            budget_used=used.model_copy(deep=True),
+        )
+
+    def _trace_id_for_work_item(self, work_item_id: str) -> str:
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"silas:work-item:{work_item_id}"))
 
     def _resolve_executor(self, executor_type: WorkItemExecutorType) -> EphemeralExecutor | None:
         if executor_type == WorkItemExecutorType.skill:
@@ -408,6 +648,12 @@ class LiveWorkItemExecutor:
             work_item_id=work_item.id,
             reason=reason,
         )
+
+    async def _audit_event(self, event: str, **kwargs: object) -> None:
+        """Log an audit event if the audit log is available."""
+        if self._audit is None:
+            return
+        await self._audit.log(event, **kwargs)
 
     async def _mark_blocked(
         self,

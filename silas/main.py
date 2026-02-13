@@ -55,7 +55,11 @@ from silas.persistence.work_item_store import SQLiteWorkItemStore
 from silas.personality.engine import SilasPersonalityEngine
 from silas.proactivity import SimpleAutonomyCalibrator, SimpleSuggestionEngine
 from silas.queue.bridge import QueueBridge
+from silas.queue.consult import ConsultPlannerManager
 from silas.queue.factory import create_queue_system
+from silas.queue.replan import ReplanManager
+from silas.queue.router import QueueRouter
+from silas.queue.store import DurableQueueStore
 from silas.scheduler import SilasScheduler
 from silas.skills.executor import SkillExecutor, register_builtin_skills
 from silas.skills.loader import SilasSkillLoader
@@ -527,12 +531,23 @@ def build_stream(
         verify_dir=settings.data_dir / "sandbox" / "verify",
         project_dirs=[Path.cwd()],
     )
+    # Wire the self-healing cascade into the direct execution path.
+    # When queue_bridge is enabled, the ExecutorConsumer has its own cascade;
+    # this wiring covers the procedural (non-queue) path through LiveWorkItemExecutor.
+    queue_store = DurableQueueStore(db)
+    _run_awaitable_blocking(queue_store.initialize())
+    queue_router = QueueRouter(queue_store)
+    consult_manager = ConsultPlannerManager(queue_store, queue_router)
+    replan_manager_inst = ReplanManager(queue_router)
+
     work_executor = LiveWorkItemExecutor(
         skill_executor=skill_executor,
         work_item_store=work_item_store,
         approval_verifier=approval_verifier,
         verification_runner=verification_runner,
         audit=audit,
+        consult_manager=consult_manager,
+        replan_manager=replan_manager_inst,
     )
     scheduler = SilasScheduler()
     connection_manager = _LifecycleConnectionManagerAdapter(
