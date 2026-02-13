@@ -16,10 +16,11 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from silas.models.messages import TaintLevel
 from silas.queue.orchestrator import QueueOrchestrator
 from silas.queue.router import QueueRouter
 from silas.queue.store import DurableQueueStore
-from silas.queue.types import QueueMessage, TaintLevel
+from silas.queue.types import QueueMessage
 
 logger = logging.getLogger(__name__)
 

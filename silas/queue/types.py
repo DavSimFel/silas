@@ -19,6 +19,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from silas.models.messages import TaintLevel as TaintLevel
+
 # Why Literal over Enum for ErrorCode/MessageKind: these are wire-format
 # strings that appear in JSON payloads and SQLite columns. Literal keeps
 # them as plain strings without .value gymnastics.
@@ -53,19 +55,6 @@ Sender = Literal["user", "proxy", "planner", "executor", "runtime"]
 # Why a dedicated Literal for urgency: the spec (§2.1) defines exactly three
 # levels. A Literal constrains wire values without enum overhead.
 Urgency = Literal["background", "informational", "needs_attention"]
-
-
-class TaintLevel(enum.StrEnum):
-    """Security taint propagated through the message chain.
-
-    Per §2.1: taint tracks the trust level of the originating source.
-    Higher taint restricts which tools/actions are available downstream.
-    Uses StrEnum so values serialize as plain strings in JSON/SQLite.
-    """
-
-    owner = "owner"
-    trusted = "trusted"
-    untrusted = "untrusted"
 
 
 class ExecutionStatus(enum.StrEnum):

@@ -44,7 +44,7 @@ class TestQueueMessageTypedFields:
             message_kind="execution_request",
             sender="runtime",
             scope_id="scope-abc",
-            taint=TaintLevel.untrusted,
+            taint=TaintLevel.external,
             task_id="task-1",
             parent_task_id="task-0",
             work_item_id="wi-42",
@@ -52,7 +52,7 @@ class TestQueueMessageTypedFields:
             urgency="needs_attention",
         )
         assert msg.scope_id == "scope-abc"
-        assert msg.taint == TaintLevel.untrusted
+        assert msg.taint == TaintLevel.external
         assert msg.task_id == "task-1"
         assert msg.parent_task_id == "task-0"
         assert msg.work_item_id == "wi-42"
@@ -63,8 +63,8 @@ class TestQueueMessageTypedFields:
         """TaintLevel enum matches the spec's three levels."""
         assert set(TaintLevel) == {
             TaintLevel.owner,
-            TaintLevel.trusted,
-            TaintLevel.untrusted,
+            TaintLevel.auth,
+            TaintLevel.external,
         }
 
     def test_json_roundtrip_preserves_typed_fields(self) -> None:
@@ -73,14 +73,14 @@ class TestQueueMessageTypedFields:
             message_kind="user_message",
             sender="user",
             scope_id="s1",
-            taint=TaintLevel.trusted,
+            taint=TaintLevel.auth,
             task_id="t1",
             urgency="background",
         )
         data = msg.model_dump()
         restored = QueueMessage.model_validate(data)
         assert restored.scope_id == "s1"
-        assert restored.taint == TaintLevel.trusted
+        assert restored.taint == TaintLevel.auth
         assert restored.task_id == "t1"
         assert restored.urgency == "background"
 
@@ -201,7 +201,7 @@ class TestStoreMigration:
             sender="runtime",
             queue_name="executor_queue",
             scope_id="scope-test",
-            taint=TaintLevel.untrusted,
+            taint=TaintLevel.external,
             task_id="task-99",
             parent_task_id="task-0",
             work_item_id="wi-7",
@@ -213,7 +213,7 @@ class TestStoreMigration:
         leased = await store.lease("executor_queue")
         assert leased is not None
         assert leased.scope_id == "scope-test"
-        assert leased.taint == TaintLevel.untrusted
+        assert leased.taint == TaintLevel.external
         assert leased.task_id == "task-99"
         assert leased.parent_task_id == "task-0"
         assert leased.work_item_id == "wi-7"
