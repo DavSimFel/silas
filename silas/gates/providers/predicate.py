@@ -37,7 +37,11 @@ class PredicateChecker:
         base_dir = Path(working_directory).resolve() if working_directory is not None else Path.cwd().resolve()
         if permitted_roots is None:
             roots: list[Path] = [base_dir]
-            tmp_root = Path("/tmp").resolve()
+            # Why tempfile.gettempdir(): avoids hardcoding "/tmp" which triggers
+            # ruff S108 (insecure temp path). gettempdir() returns the platform-appropriate temp dir.
+            import tempfile
+
+            tmp_root = Path(tempfile.gettempdir()).resolve()
             if tmp_root not in roots:
                 roots.append(tmp_root)
             self._permitted_roots = roots
