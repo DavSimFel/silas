@@ -316,6 +316,51 @@ class DurableQueueStore:
             )
             await db.commit()
 
+    async def lease_filtered(
+        self,
+        queue_name: str,
+        filter_trace_id: str,
+        filter_message_kind: str,
+        lease_duration_s: int = 60,
+    ) -> QueueMessage | None:
+        """Lease the oldest message matching specific trace_id and message_kind.
+
+        Why a separate method instead of adding params to lease(): the generic
+        lease() is used by consumers that process ANY message from a queue.
+        Filtered lease serves a different access pattern — polling for a
+        specific response — and mixing both into one method would make the
+        SQL and call sites harder to reason about.
+        """
+        now = _now_utc()
+        now_str = _dt_to_str(now)
+        lease_id = str(uuid.uuid4())
+        expires_str = _dt_to_str(
+            now + __import__("datetime").timedelta(seconds=lease_duration_s)
+        )
+
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """UPDATE queue_messages
+                   SET lease_id = ?, lease_expires_at = ?
+                   WHERE id = (
+                       SELECT id FROM queue_messages
+                       WHERE queue_name = ?
+                         AND trace_id = ?
+                         AND message_kind = ?
+                         AND (lease_id IS NULL OR lease_expires_at < ?)
+                       ORDER BY created_at
+                       LIMIT 1
+                   )
+                   RETURNING *""",
+                (lease_id, expires_str, queue_name, filter_trace_id, filter_message_kind, now_str),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            await db.commit()
+            return _row_to_message(row)
+
     async def pending_count(self, queue_name: str) -> int:
         """Count unleased messages in a queue. Used for telemetry/monitoring."""
         async with aiosqlite.connect(self.db_path) as db:

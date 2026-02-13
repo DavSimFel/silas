@@ -118,17 +118,19 @@ class QueueBridge:
         """
         elapsed = 0.0
         while elapsed < timeout_s:
-            # Why lease instead of a custom query: we reuse the existing
-            # lease mechanism to atomically grab messages. If the message
-            # doesn't match our trace_id, we nack it back for others.
-            msg = await self._store.lease("proxy_queue", lease_duration_s=5)
+            # Why lease_filtered instead of lease+nack: the old pattern leased
+            # ANY message then nacked non-matches back, which is O(n) in queue
+            # depth and causes message reordering under concurrent traces.
+            # Filtered lease only touches messages belonging to this trace.
+            msg = await self._store.lease_filtered(
+                queue_name="proxy_queue",
+                filter_trace_id=trace_id,
+                filter_message_kind="agent_response",
+                lease_duration_s=5,
+            )
             if msg is not None:
-                if msg.trace_id == trace_id and msg.message_kind == "agent_response":
-                    await self._store.ack(msg.id)
-                    return msg
-                # Why nack: this message belongs to a different trace or
-                # is a different kind. Put it back for the right consumer.
-                await self._store.nack(msg.id)
+                await self._store.ack(msg.id)
+                return msg
 
             await asyncio.sleep(_POLL_INTERVAL_S)
             elapsed += _POLL_INTERVAL_S

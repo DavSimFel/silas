@@ -276,3 +276,120 @@ class TestMessageTypes:
         assert msg.attempt_count == 0
         assert msg.lease_id is None
         assert isinstance(msg.created_at, datetime)
+
+
+class TestLeaseFiltered:
+    """Filtered lease only touches messages matching trace_id + message_kind."""
+
+    async def test_returns_matching_message(self, store: DurableQueueStore) -> None:
+        """Filtered lease finds the right message by trace_id and kind."""
+        msg = QueueMessage(
+            queue_name="proxy_queue",
+            message_kind="agent_response",
+            sender="proxy",
+            trace_id="trace-abc",
+        )
+        await store.enqueue(msg)
+
+        leased = await store.lease_filtered(
+            "proxy_queue", filter_trace_id="trace-abc", filter_message_kind="agent_response",
+        )
+        assert leased is not None
+        assert leased.trace_id == "trace-abc"
+        assert leased.message_kind == "agent_response"
+
+    async def test_ignores_non_matching_trace(self, store: DurableQueueStore) -> None:
+        """Messages with different trace_ids stay pending and untouched."""
+        other = QueueMessage(
+            queue_name="proxy_queue",
+            message_kind="agent_response",
+            sender="proxy",
+            trace_id="trace-other",
+        )
+        await store.enqueue(other)
+
+        # No match for trace-mine — should return None without leasing anything
+        result = await store.lease_filtered(
+            "proxy_queue", filter_trace_id="trace-mine", filter_message_kind="agent_response",
+        )
+        assert result is None
+
+        # The other message must still be pending (unleased)
+        count = await store.pending_count("proxy_queue")
+        assert count == 1
+
+    async def test_ignores_non_matching_kind(self, store: DurableQueueStore) -> None:
+        """Messages with different message_kind stay pending."""
+        msg = QueueMessage(
+            queue_name="proxy_queue",
+            message_kind="user_message",
+            sender="proxy",
+            trace_id="trace-abc",
+        )
+        await store.enqueue(msg)
+
+        result = await store.lease_filtered(
+            "proxy_queue", filter_trace_id="trace-abc", filter_message_kind="agent_response",
+        )
+        assert result is None
+
+    async def test_concurrent_traces_no_interference(self, store: DurableQueueStore) -> None:
+        """Two concurrent collect_response calls with different trace_ids each
+        get only their own message, without touching the other's."""
+        for tid in ("trace-1", "trace-2"):
+            await store.enqueue(QueueMessage(
+                queue_name="proxy_queue",
+                message_kind="agent_response",
+                sender="proxy",
+                trace_id=tid,
+            ))
+
+        r1, r2 = await asyncio.gather(
+            store.lease_filtered("proxy_queue", filter_trace_id="trace-1", filter_message_kind="agent_response"),
+            store.lease_filtered("proxy_queue", filter_trace_id="trace-2", filter_message_kind="agent_response"),
+        )
+        assert r1 is not None
+        assert r1.trace_id == "trace-1"
+        assert r2 is not None
+        assert r2.trace_id == "trace-2"
+
+
+class TestBridgeCollectFiltered:
+    """Bridge.collect_response uses filtered lease — no nacks."""
+
+    async def test_collect_response_no_nack(self, store: DurableQueueStore) -> None:
+        """collect_response returns the matching response and leaves
+        unrelated messages completely untouched (no nack, no reordering)."""
+        from unittest.mock import AsyncMock
+
+        from silas.queue.bridge import QueueBridge
+
+        bridge = QueueBridge(
+            orchestrator=AsyncMock(),
+            router=AsyncMock(),
+            store=store,
+        )
+
+        # Enqueue an unrelated message and the target response
+        unrelated = QueueMessage(
+            queue_name="proxy_queue",
+            message_kind="agent_response",
+            sender="proxy",
+            trace_id="trace-other",
+        )
+        target = QueueMessage(
+            queue_name="proxy_queue",
+            message_kind="agent_response",
+            sender="proxy",
+            trace_id="trace-mine",
+        )
+        await store.enqueue(unrelated)
+        await store.enqueue(target)
+
+        result = await bridge.collect_response("trace-mine", timeout_s=1.0)
+        assert result is not None
+        assert result.trace_id == "trace-mine"
+
+        # Unrelated message must still be pending — never leased or nacked
+        count = await store.pending_count("proxy_queue")
+        assert count == 1
