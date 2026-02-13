@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
+from silas.gates.guardrails_provider import GuardrailsChecker
 from silas.gates.predicates import PredicateChecker
 from silas.gates.script import ScriptChecker
 from silas.models.gates import (
@@ -37,6 +38,8 @@ class SilasGateRunner(GateRunner):
         self.register_provider(GateProvider.script, script_checker or ScriptChecker())
         if llm_checker is not None:
             self.register_provider(GateProvider.llm, llm_checker)
+        # Guardrails AI — always registered; fails clearly at check time if lib missing
+        self.register_provider(GateProvider.guardrails_ai, GuardrailsChecker())
         if providers:
             for provider_name, provider in providers.items():
                 self.register_provider(provider_name, provider)
