@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 
 from silas.execution.python_exec import PythonExecutor
-from silas.execution.sandbox import SubprocessSandboxManager
+from silas.execution.sandbox_factory import create_sandbox_manager
 from silas.execution.shell import ShellExecutor
 from silas.models.execution import (
     ExecutionEnvelope,
@@ -53,7 +53,7 @@ class LiveWorkItemExecutor:
         self._verification_runner = verification_runner
         self._audit = audit
 
-        sandbox_manager = SubprocessSandboxManager()
+        sandbox_manager = create_sandbox_manager()
         self._executor_registry: dict[WorkItemExecutorType, object] = {
             WorkItemExecutorType.skill: skill_executor,
             WorkItemExecutorType.shell: shell_executor or ShellExecutor(sandbox_manager),
