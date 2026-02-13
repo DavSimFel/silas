@@ -39,6 +39,14 @@ class SkillDefinition(BaseModel):
     verified_hash: str | None = None
     max_retries: int = 0
     timeout_seconds: int = 30
+    taint_level: str | None = None
+
+    @field_validator("taint_level")
+    @classmethod
+    def _validate_taint_level(cls, value: str | None) -> str | None:
+        if value is not None and value not in ("owner", "auth", "external"):
+            raise ValueError("taint_level must be 'owner', 'auth', or 'external'")
+        return value
 
     @field_validator("max_retries")
     @classmethod

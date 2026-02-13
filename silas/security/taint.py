@@ -51,6 +51,10 @@ class TaintTracker:
         item.taint = out_taint                 # stamp on ContextItem / MemoryItem
     """
 
+    # Dynamic registry for skill-declared tool taints.  Checked before
+    # the hardcoded sets below, allowing skills to override defaults.
+    _dynamic_tool_taints: ClassVar[dict[str, TaintLevel]] = {}
+
     # Tools with known taint ceilings.  Anything not listed defaults to owner
     # (i.e. internal tools don't escalate taint on their own).
     EXTERNAL_TOOLS: ClassVar[frozenset[str]] = frozenset({
@@ -100,8 +104,20 @@ class TaintTracker:
         """
         _current_taint.set(TaintLevel.owner)
 
+    @classmethod
+    def add_tool_taint(cls, tool_name: str, taint: TaintLevel) -> None:
+        """Register a dynamic taint level for a tool (e.g. from a loaded skill)."""
+        cls._dynamic_tool_taints[tool_name] = taint
+
     def _tool_taint(self, tool_name: str) -> TaintLevel:
-        """Determine a tool's inherent taint ceiling based on its category."""
+        """Determine a tool's inherent taint ceiling based on its category.
+
+        Checks the dynamic registry first (populated by skill loading),
+        then falls back to the hardcoded category sets.
+        """
+        dynamic = self._dynamic_tool_taints.get(tool_name)
+        if dynamic is not None:
+            return dynamic
         if tool_name in self.EXTERNAL_TOOLS:
             return TaintLevel.external
         if tool_name in self.AUTH_TOOLS:
