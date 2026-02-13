@@ -1336,6 +1336,7 @@ class Stream:
         tc: TurnContext,
         connection_id: str,
         message: ChannelMessage,
+        taint_tracker: object | None = None,
     ) -> str:
         """Dispatch a turn through the queue bridge instead of direct agent calls.
 

@@ -961,3 +961,66 @@ async def test_planner_tool_call_dispatches_via_skill_executor_run_tool(
 
     assert "Executed skill 'tool_skill'." in result
     assert call_values == ["from_tool_call"]
+
+
+# --- Regression: _process_turn_via_queue accepts taint_tracker kwarg ---
+
+
+class _StubOrchestrator:
+    running = True
+
+    async def health_check(self):
+        return {"healthy": True}
+
+
+class _StubQueueBridge:
+    """Minimal QueueBridge stub that returns a canned response."""
+
+    def __init__(self, response_text: str = "queue response") -> None:
+        self._response_text = response_text
+        self.dispatched: list[str] = []
+        self._orchestrator = _StubOrchestrator()
+
+    @property
+    def orchestrator(self):
+        return self._orchestrator
+
+    async def dispatch_turn(self, user_message: str, trace_id: str, **kwargs) -> None:
+        self.dispatched.append(user_message)
+
+    async def collect_response(self, trace_id: str, timeout_s: float = 30.0):
+        from types import SimpleNamespace
+        return SimpleNamespace(payload={"text": self._response_text})
+
+
+@pytest.mark.asyncio
+async def test_process_turn_via_queue_accepts_taint_tracker_kwarg():
+    """Regression: _process_turn_via_queue must accept taint_tracker keyword."""
+    from silas.core.stream import Stream
+    from silas.core.turn_context import TurnContext
+    from tests.fakes import TestModel as _TestModel
+
+    bridge = _StubQueueBridge("ok from queue")
+    stream = Stream(
+        channel=InMemoryChannel(),
+        turn_context=TurnContext(
+            scope_id="owner",
+            proxy=_TestModel(),
+        ),
+        owner_id="owner",
+        default_context_profile="conversation",
+        queue_bridge=bridge,
+    )
+
+    result = await stream._process_turn(
+        ChannelMessage(
+            channel="web",
+            sender_id="owner",
+            text="hello via queue",
+            timestamp=datetime.now(UTC),
+            is_authenticated=True,
+        ),
+    )
+
+    assert bridge.dispatched == ["hello via queue"]
+    assert "ok from queue" in result
