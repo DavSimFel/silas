@@ -6,6 +6,7 @@ from pathlib import Path
 
 from silas.models.skills import SkillMetadata
 from silas.protocols.skills import SkillLoader
+from silas.skills.hasher import SkillHasher
 from silas.skills.loader import SilasSkillLoader
 
 
@@ -52,6 +53,9 @@ class SkillInstaller:
             shutil.rmtree(destination)
         shutil.copytree(source_dir, destination)
 
+        # Compute hash at install time so we can detect post-install tampering.
+        content_hash = SkillHasher.compute_hash(destination)
+
         indexed = self._loader.scan()
         return {
             "installed": True,
@@ -61,6 +65,7 @@ class SkillInstaller:
             "indexed_count": len(indexed),
             "destination": str(destination),
             "installed_at": datetime.now(UTC).isoformat(),
+            "verified_hash": content_hash,
         }
 
     def uninstall(self, skill_name: str) -> bool:
