@@ -377,3 +377,184 @@ class TestBackwardCompatibility:
         fields = {f.name: f for f in dataclasses.fields(Stream)}
         assert "queue_bridge" in fields
         assert fields["queue_bridge"].default is None
+
+
+# ── Queue as Default Path ──────────────────────────────────────────────
+
+
+class TestQueueDefaultPath:
+    """Queue path is the default when bridge is configured and healthy."""
+
+    def test_should_use_queue_when_bridge_set_and_running(
+        self, store: DurableQueueStore, router: QueueRouter,
+    ) -> None:
+        """_should_use_queue_path returns True when orchestrator is running."""
+        from types import SimpleNamespace
+
+        from silas.core.stream import Stream
+
+        proxy = MockProxyAgent()
+        consumers = [ProxyConsumer(store, router, proxy)]
+        orchestrator = QueueOrchestrator(store, router, consumers)
+        bridge = QueueBridge(orchestrator=orchestrator, router=router, store=store)
+        # Simulate running state without actually starting async tasks.
+        orchestrator._running = True
+
+        tc = SimpleNamespace(
+            scope_id="owner", config=None, proxy=None, planner=None,
+            work_executor=None, gate_runner=None, embedder=None,
+            personality_engine=None, skill_loader=None, skill_resolver=None,
+            skill_registry=None, skill_executor=None, approval_manager=None,
+            suggestion_engine=None, autonomy_calibrator=None, audit=None,
+            memory_store=None, chronicle_store=None, context_manager=None,
+            live_context_manager=None, turn_number=0,
+        )
+        channel = SimpleNamespace(send=None, listen=None)
+        stream = Stream(
+            channel=channel,  # type: ignore[arg-type]
+            turn_context=tc,  # type: ignore[arg-type]
+            queue_bridge=bridge,
+        )
+        assert stream._should_use_queue_path() is True
+
+    def test_falls_back_when_orchestrator_not_running(
+        self, store: DurableQueueStore, router: QueueRouter,
+    ) -> None:
+        """Falls back to procedural when orchestrator hasn't started."""
+        from types import SimpleNamespace
+
+        from silas.core.stream import Stream
+
+        proxy = MockProxyAgent()
+        consumers = [ProxyConsumer(store, router, proxy)]
+        orchestrator = QueueOrchestrator(store, router, consumers)
+        bridge = QueueBridge(orchestrator=orchestrator, router=router, store=store)
+        # orchestrator._running is False by default
+
+        tc = SimpleNamespace(
+            scope_id="owner", config=None, proxy=None, planner=None,
+            work_executor=None, gate_runner=None, embedder=None,
+            personality_engine=None, skill_loader=None, skill_resolver=None,
+            skill_registry=None, skill_executor=None, approval_manager=None,
+            suggestion_engine=None, autonomy_calibrator=None, audit=None,
+            memory_store=None, chronicle_store=None, context_manager=None,
+            live_context_manager=None, turn_number=0,
+        )
+        channel = SimpleNamespace(send=None, listen=None)
+        stream = Stream(
+            channel=channel,  # type: ignore[arg-type]
+            turn_context=tc,  # type: ignore[arg-type]
+            queue_bridge=bridge,
+        )
+        assert stream._should_use_queue_path() is False
+
+    def test_falls_back_when_no_bridge(self) -> None:
+        """Procedural path when no queue_bridge is configured."""
+        from types import SimpleNamespace
+
+        from silas.core.stream import Stream
+
+        tc = SimpleNamespace(
+            scope_id="owner", config=None, proxy=None, planner=None,
+            work_executor=None, gate_runner=None, embedder=None,
+            personality_engine=None, skill_loader=None, skill_resolver=None,
+            skill_registry=None, skill_executor=None, approval_manager=None,
+            suggestion_engine=None, autonomy_calibrator=None, audit=None,
+            memory_store=None, chronicle_store=None, context_manager=None,
+            live_context_manager=None, turn_number=0,
+        )
+        channel = SimpleNamespace(send=None, listen=None)
+        stream = Stream(
+            channel=channel,  # type: ignore[arg-type]
+            turn_context=tc,  # type: ignore[arg-type]
+        )
+        assert stream._should_use_queue_path() is False
+
+    def test_config_flag_disables_queue_path(
+        self, store: DurableQueueStore, router: QueueRouter,
+    ) -> None:
+        """use_queue_path=False in config forces procedural path."""
+        from types import SimpleNamespace
+
+        from silas.core.stream import Stream
+
+        proxy = MockProxyAgent()
+        consumers = [ProxyConsumer(store, router, proxy)]
+        orchestrator = QueueOrchestrator(store, router, consumers)
+        bridge = QueueBridge(orchestrator=orchestrator, router=router, store=store)
+        orchestrator._running = True
+
+        # Config with execution.use_queue_path = False
+        config = SimpleNamespace(
+            execution=SimpleNamespace(use_queue_path=False),
+        )
+        tc = SimpleNamespace(
+            scope_id="owner", config=config, proxy=None, planner=None,
+            work_executor=None, gate_runner=None, embedder=None,
+            personality_engine=None, skill_loader=None, skill_resolver=None,
+            skill_registry=None, skill_executor=None, approval_manager=None,
+            suggestion_engine=None, autonomy_calibrator=None, audit=None,
+            memory_store=None, chronicle_store=None, context_manager=None,
+            live_context_manager=None, turn_number=0,
+        )
+        channel = SimpleNamespace(send=None, listen=None)
+        stream = Stream(
+            channel=channel,  # type: ignore[arg-type]
+            turn_context=tc,  # type: ignore[arg-type]
+            queue_bridge=bridge,
+        )
+        assert stream._should_use_queue_path() is False
+
+
+class TestQueueOrchestratorLifecycle:
+    """Orchestrator start/stop is called during Stream lifecycle."""
+
+    @pytest.mark.asyncio
+    async def test_start_calls_orchestrator_start(
+        self, store: DurableQueueStore, router: QueueRouter,
+    ) -> None:
+        """Stream._start_queue_orchestrator starts the orchestrator."""
+        from types import SimpleNamespace
+
+        from silas.core.stream import Stream
+
+        proxy = MockProxyAgent()
+        consumers = [ProxyConsumer(store, router, proxy)]
+        orchestrator = QueueOrchestrator(store, router, consumers)
+        bridge = QueueBridge(orchestrator=orchestrator, router=router, store=store)
+
+        tc = SimpleNamespace(
+            scope_id="owner", config=None, proxy=None, planner=None,
+            work_executor=None, gate_runner=None, embedder=None,
+            personality_engine=None, skill_loader=None, skill_resolver=None,
+            skill_registry=None, skill_executor=None, approval_manager=None,
+            suggestion_engine=None, autonomy_calibrator=None, audit=None,
+            memory_store=None, chronicle_store=None, context_manager=None,
+            live_context_manager=None, turn_number=0,
+        )
+        channel = SimpleNamespace(send=None, listen=None)
+        stream = Stream(
+            channel=channel,  # type: ignore[arg-type]
+            turn_context=tc,  # type: ignore[arg-type]
+            queue_bridge=bridge,
+        )
+
+        await stream._start_queue_orchestrator()
+        assert orchestrator.running is True
+
+        await stream._stop_queue_orchestrator()
+        assert orchestrator.running is False
+
+
+class TestExecutionConfig:
+    """ExecutionConfig defaults and validation."""
+
+    def test_default_use_queue_path_true(self) -> None:
+        from silas.config import ExecutionConfig
+        config = ExecutionConfig()
+        assert config.use_queue_path is True
+
+    def test_silas_settings_includes_execution(self) -> None:
+        from silas.config import SilasSettings
+        settings = SilasSettings()
+        assert settings.execution.use_queue_path is True

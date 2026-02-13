@@ -119,8 +119,8 @@ class Stream:
     connection_manager: ConnectionManager | None = None
     suggestion_engine: SuggestionEngine | None = None
     autonomy_calibrator: AutonomyCalibrator | None = None
-    # Why optional: when None, Stream uses the legacy direct-call path.
-    # When set, dispatch_turn routes through the queue system instead.
+    # Why optional: queue infra is initialized by default when config.execution.use_queue_path
+    # is True (the default). Falls back to procedural path if init fails or is disabled.
     queue_bridge: QueueBridge | None = None
     owner_id: str = "owner"
     default_context_profile: str = "conversation"
@@ -282,6 +282,7 @@ class Stream:
     async def start(self) -> None:
         """Initialize startup orchestration before accepting live messages."""
         self._ensure_session_id()
+        await self._start_queue_orchestrator()
         await self._rehydrate()
         await self._audit("stream_started", started_at=datetime.now(UTC).isoformat())
         await self._run_connection_health_checks()
@@ -290,6 +291,11 @@ class Stream:
 
         listeners = [self._listen_channel(channel) for channel in self._iter_channels()]
         await asyncio.gather(*listeners)
+
+    async def stop(self) -> None:
+        """Graceful shutdown — stops queue orchestrator if running."""
+        await self._stop_queue_orchestrator()
+        await self._audit("stream_stopped", stopped_at=datetime.now(UTC).isoformat())
 
     async def _rehydrate(self) -> None:
         """Restore state from previous run (spec §5.1.3)."""
@@ -1045,9 +1051,9 @@ class Stream:
                 note="skill-aware toolset preparation deferred",
             )
 
-            # Why check queue_bridge: if set, dispatch through queue system
-            # instead of direct agent calls. This is the WI-4 integration seam.
-            if self.queue_bridge is not None:
+            # Why queue-first: queue consumers are the primary execution path.
+            # Procedural path is the fallback for when queue infra is unavailable.
+            if self._should_use_queue_path():
                 return await self._process_turn_via_queue(
                     processed_message_text, turn_id, turn_number,
                     scope_id, cm, tc, connection_id, message,
@@ -2096,6 +2102,54 @@ class Stream:
         if audit_log is None:
             return
         await audit_log.log(event, **data)
+
+    def _should_use_queue_path(self) -> bool:
+        """Determine whether this turn should use queue-based execution.
+
+        Why health check here: even if queue_bridge is set, consumers may
+        have crashed. Falling back to procedural prevents silent failures.
+        """
+        if self.queue_bridge is None:
+            return False
+
+        # Config kill-switch: allows disabling queue path without removing bridge.
+        use_queue = self._config_value("execution", "use_queue_path", default=True)
+        if use_queue is False or use_queue == 0:
+            return False
+
+        orchestrator = self.queue_bridge.orchestrator
+        if not orchestrator.running:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Queue orchestrator not running — falling back to procedural path"
+            )
+            return False
+
+        return True
+
+    async def _start_queue_orchestrator(self) -> None:
+        """Start queue consumers if a bridge is configured."""
+        if self.queue_bridge is None:
+            return
+        try:
+            await self.queue_bridge.orchestrator.start()
+            await self._audit("queue_orchestrator_started")
+        except Exception as exc:
+            await self._audit(
+                "queue_orchestrator_start_failed", error=str(exc),
+            )
+
+    async def _stop_queue_orchestrator(self) -> None:
+        """Stop queue consumers during shutdown."""
+        if self.queue_bridge is None:
+            return
+        try:
+            await self.queue_bridge.orchestrator.stop()
+            await self._audit("queue_orchestrator_stopped")
+        except Exception as exc:
+            await self._audit(
+                "queue_orchestrator_stop_failed", error=str(exc),
+            )
 
     def _get_context_manager(self) -> LiveContextManager | None:
         if self.context_manager is not None:

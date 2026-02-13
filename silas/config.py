@@ -123,6 +123,17 @@ class SkillsConfig(BaseModel):
     custom_dir: Path = Path("./silas/skills/custom")
 
 
+class ExecutionConfig(BaseModel):
+    """Controls which execution path Stream uses for turn processing.
+
+    Why a separate config: the queue path is now the default, but we need
+    a kill-switch for environments where queue infra can't be initialized
+    (minimal tests, single-process deployments).
+    """
+
+    use_queue_path: bool = True
+
+
 class StreamConfig(BaseModel):
     streaming_enabled: bool = True
     chunk_size: int = Field(default=50, ge=1)
@@ -139,6 +150,7 @@ class SilasSettings(BaseSettings):
     context: ContextConfig = Field(default_factory=ContextConfig)
     stream: StreamConfig = Field(default_factory=StreamConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     output_gates: list[Gate] = Field(default_factory=list)
 
     model_config = SettingsConfigDict(
@@ -198,6 +210,7 @@ def load_config(path: str | Path = "config/silas.yaml") -> SilasSettings:
 __all__ = [
     "ChannelsConfig",
     "ContextConfig",
+    "ExecutionConfig",
     "ModelsConfig",
     "SilasSettings",
     "StreamConfig",
