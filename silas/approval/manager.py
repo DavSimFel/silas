@@ -8,6 +8,7 @@ from silas.approval.fatigue import (
     DecisionRecord,
     FatigueAnalysis,
 )
+from silas.approval.review_queue import ApprovalRequest, ReviewQueue
 from silas.models.approval import (
     ApprovalDecision,
     ApprovalScope,
@@ -32,6 +33,12 @@ class LiveApprovalManager:
         self._fatigue = ApprovalFatigueMitigator()
         # Resolved decisions for fatigue tracking
         self._decision_log: list[DecisionRecord] = []
+        # Batch review surface — polls draw from this queue.
+        self._review_queue = ReviewQueue()
+
+    def get_review_queue(self) -> ReviewQueue:
+        """Accessor so external consumers can poll/resolve pending reviews."""
+        return self._review_queue
 
     def get_fatigue_analysis(self, *, window_minutes: int = 30) -> FatigueAnalysis:
         """Snapshot of current fatigue state for the approval queue."""
@@ -84,6 +91,16 @@ class LiveApprovalManager:
         self._pending[token.token_id] = PendingApproval(
             token=token,
             requested_at=now,
+        )
+
+        # Feed the review queue so batch polling surfaces pick it up.
+        self._review_queue.enqueue(
+            ApprovalRequest(
+                request_id=token.token_id,
+                work_item_id=work_item.id,
+                plan_hash=work_item.plan_hash(),
+                scope=scope,
+            )
         )
         return token
 
