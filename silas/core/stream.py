@@ -1795,7 +1795,7 @@ class Stream:
         inputs = extract_skill_inputs(action)
         skill_executor.set_work_item(work_item)
         try:
-            result = await skill_executor.execute(skill_name, inputs)
+            result = await skill_executor.run_tool(skill_name, inputs)
         finally:
             skill_executor.set_work_item(None)
 

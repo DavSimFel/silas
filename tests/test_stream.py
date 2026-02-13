@@ -240,6 +240,29 @@ class PlannerSkillModel:
         )
 
 
+class PlannerToolCallModel:
+    async def run(self, prompt: str) -> RunResult:
+        del prompt
+        return RunResult(
+            output=RouteDecision(
+                route="planner",
+                reason="execute tool call",
+                response=None,
+                interaction_register=InteractionRegister.execution,
+                interaction_mode=InteractionMode.default_and_offer,
+                context_profile="planning",
+                plan_actions=[
+                    {
+                        "tool_call": {
+                            "name": "tool_skill",
+                            "arguments": {"value": "from_tool_call"},
+                        }
+                    }
+                ],
+            )
+        )
+
+
 def _approval_token_payload(work_item_id: str) -> dict[str, object]:
     now = datetime.now(UTC)
     token = ApprovalToken(
@@ -822,3 +845,41 @@ async def test_planner_skill_skips_execution_when_declined(
     assert not any(item.source_kind == "skill:memory_store" for item in memory_store.items.values())
     event_names = [event["event"] for event in audit_log.events]
     assert "skill_execution_skipped_approval" in event_names
+
+
+@pytest.mark.asyncio
+async def test_planner_tool_call_dispatches_via_skill_executor_run_tool(
+    channel: InMemoryChannel,
+    turn_context,
+) -> None:
+    turn_context.proxy = PlannerRouteModel()
+    turn_context.planner = PlannerToolCallModel()
+
+    skill_registry = SkillRegistry()
+    skill_registry.register(
+        SkillDefinition(
+            name="tool_skill",
+            description="tool-call dispatch test",
+            version="1.0.0",
+            input_schema={"type": "object"},
+            output_schema={"type": "object"},
+            requires_approval=False,
+            timeout_seconds=5,
+        )
+    )
+    skill_executor = SkillExecutor(skill_registry=skill_registry)
+    call_values: list[str] = []
+
+    async def _tool_handler(inputs: dict[str, object]) -> dict[str, object]:
+        call_values.append(str(inputs["value"]))
+        return {"ok": True}
+
+    skill_executor.register_handler("tool_skill", _tool_handler)
+    turn_context.skill_registry = skill_registry
+    turn_context.skill_executor = skill_executor
+
+    stream = _stream(channel, turn_context)
+    result = await stream._process_turn(_msg("run a tool call"))
+
+    assert "Executed skill 'tool_skill'." in result
+    assert call_values == ["from_tool_call"]

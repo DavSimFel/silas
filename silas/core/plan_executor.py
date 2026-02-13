@@ -164,6 +164,16 @@ def order_work_items(work_items: list[WorkItem]) -> list[WorkItem]:
 
 def extract_skill_name(action: dict[str, object]) -> str | None:
     """Extract skill name from a plan action dict."""
+    tool_call = action.get("tool_call")
+    if isinstance(tool_call, dict):
+        nested_candidate = (
+            tool_call.get("tool_name")
+            or tool_call.get("tool")
+            or tool_call.get("name")
+        )
+        if isinstance(nested_candidate, str) and nested_candidate.strip():
+            return nested_candidate
+
     candidate = (
         action.get("skill_name")
         or action.get("skill")
@@ -176,6 +186,12 @@ def extract_skill_name(action: dict[str, object]) -> str | None:
 
 def extract_skill_inputs(action: dict[str, object]) -> dict[str, object]:
     """Extract skill input arguments from a plan action dict."""
+    tool_call = action.get("tool_call")
+    if isinstance(tool_call, dict):
+        nested_args = tool_call.get("arguments")
+        if isinstance(nested_args, dict):
+            return dict(nested_args)
+
     for key in ("inputs", "args", "arguments"):
         value = action.get(key)
         if isinstance(value, dict):
