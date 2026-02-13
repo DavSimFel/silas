@@ -25,6 +25,7 @@ class LiveApprovalManager:
         self,
         timeout: timedelta = timedelta(hours=1),
         ux_metrics: UXMetricsCollector | None = None,
+        goal_manager: object | None = None,
     ) -> None:
         self._timeout = timeout
         self._pending: dict[str, PendingApproval] = {}
@@ -35,10 +36,16 @@ class LiveApprovalManager:
         self._decision_log: list[DecisionRecord] = []
         # Batch review surface — polls draw from this queue.
         self._review_queue = ReviewQueue()
+        # Optional dependency used for standing approval lookups on spawned work.
+        self._goal_manager = goal_manager
 
     def get_review_queue(self) -> ReviewQueue:
         """Accessor so external consumers can poll/resolve pending reviews."""
         return self._review_queue
+
+    def bind_goal_manager(self, goal_manager: object | None) -> None:
+        """Attach goal manager dependency used for standing approval lookups."""
+        self._goal_manager = goal_manager
 
     def get_fatigue_analysis(self, *, window_minutes: int = 30) -> FatigueAnalysis:
         """Snapshot of current fatigue state for the approval queue."""
@@ -47,6 +54,20 @@ class LiveApprovalManager:
         )
 
     def request_approval(self, work_item: WorkItem, scope: ApprovalScope) -> ApprovalToken:
+        if work_item.spawned_by is not None:
+            standing_token = self.check_standing_approval(work_item, self._goal_manager)
+            if standing_token is not None:
+                now = datetime.now(UTC)
+                decision = ApprovalDecision(verdict=ApprovalVerdict.approved)
+                self._pending[standing_token.token_id] = PendingApproval(
+                    token=standing_token,
+                    requested_at=now,
+                    decision=decision,
+                    resolved_at=now,
+                    resolved_by="standing_auto",
+                )
+                return standing_token
+
         self._prune_expired()
         analysis = self.get_fatigue_analysis()
 
@@ -103,6 +124,50 @@ class LiveApprovalManager:
             )
         )
         return token
+
+    def check_standing_approval(
+        self, work_item: WorkItem, goal_manager: object,
+    ) -> ApprovalToken | None:
+        """Resolve a standing token for goal-spawned work when still active."""
+        goal_id = work_item.spawned_by
+        if goal_id is None:
+            return None
+
+        get_standing = getattr(goal_manager, "get_standing_approval", None)
+        if not callable(get_standing):
+            return None
+
+        try:
+            approval = get_standing(goal_id, work_item.plan_hash())
+        except (TypeError, ValueError, RuntimeError):
+            return None
+        if approval is None:
+            return None
+
+        return self._extract_active_standing_token(approval)
+
+    def _extract_active_standing_token(self, approval: object) -> ApprovalToken | None:
+        """Normalize untyped goal-manager payloads and ensure token usability."""
+        token = getattr(approval, "approval_token", None)
+        if not isinstance(token, ApprovalToken):
+            return None
+
+        now = datetime.now(UTC)
+        expires_at = getattr(approval, "expires_at", None)
+        if isinstance(expires_at, datetime) and expires_at <= now:
+            return None
+
+        uses_remaining = getattr(approval, "uses_remaining", None)
+        if isinstance(uses_remaining, int) and uses_remaining <= 0:
+            return None
+
+        if token.expires_at <= now:
+            return None
+        if token.executions_used >= token.max_executions:
+            return None
+        if token.scope != ApprovalScope.standing:
+            return None
+        return token.model_copy(deep=True)
 
     def check_approval(self, token_id: str) -> ApprovalDecision | None:
         self._prune_expired()
