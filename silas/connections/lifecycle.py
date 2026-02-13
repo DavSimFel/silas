@@ -19,6 +19,8 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, Field
 
+from silas.connections.skill_adapter import ConnectionSkillAdapter
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -46,6 +48,8 @@ class ConnectionConfig(BaseModel):
     token: str | None = None
     refresh_token: str | None = None
     token_expires_at: datetime | None = None
+    # Optional backing skill — when set, lifecycle ops delegate to the skill system
+    skill_id: str | None = None
 
 
 class HealthStatusLevel(StrEnum):
@@ -101,7 +105,12 @@ class LiveConnectionManager:
       - Schedule periodic checks via SilasScheduler or plain asyncio tasks
     """
 
-    def __init__(self, scheduler: Any | None = None, http_client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        scheduler: Any | None = None,
+        http_client: httpx.AsyncClient | None = None,
+        skill_executor: Any | None = None,
+    ) -> None:
         self._connections: dict[str, _ConnectionState] = {}
         self._scheduler = scheduler  # optional SilasScheduler
         # Allow injection for testing; created lazily otherwise
@@ -109,6 +118,9 @@ class LiveConnectionManager:
         self._owns_http_client = http_client is None
         # Callback hook for credential refresh — tests can override
         self.on_refresh: Any | None = None
+        # Optional SkillExecutor for skill-backed connections
+        self._skill_executor = skill_executor
+        self._skill_adapters: dict[str, ConnectionSkillAdapter] = {}
 
     # -- registration -------------------------------------------------------
 
@@ -118,8 +130,14 @@ class LiveConnectionManager:
         state = _ConnectionState(handle)
         self._connections[connection_id] = state
 
+        # Create skill adapter if this connection is skill-backed
+        if config.skill_id and self._skill_executor is not None:
+            self._skill_adapters[connection_id] = ConnectionSkillAdapter(
+                skill_id=config.skill_id, executor=self._skill_executor
+            )
+
         # Kick off periodic health checks if we have an endpoint or token to watch
-        if config.endpoint or config.auth_strategy == AuthStrategy.oauth2:
+        if config.endpoint or config.auth_strategy == AuthStrategy.oauth2 or config.skill_id:
             self._schedule_health_checks(state)
 
         return handle
@@ -134,7 +152,14 @@ class LiveConnectionManager:
         if not state.handle.active:
             return HealthStatus(level=HealthStatusLevel.unhealthy, message="connection deactivated")
 
-        passed = await self._run_single_check(state)
+        # Delegate to skill adapter if available
+        adapter = self._skill_adapters.get(connection_id)
+        if adapter is not None:
+            probe_result = await adapter.probe()
+            passed = bool(probe_result.get("healthy", False))
+        else:
+            passed = await self._run_single_check(state)
+
         state.health_history.append(passed)
 
         level = self._compute_level(state.health_history)
@@ -147,10 +172,19 @@ class LiveConnectionManager:
     # -- credential refresh -------------------------------------------------
 
     async def refresh_credentials(self, connection_id: str) -> bool:
-        """Attempt an OAuth token refresh.  Returns True on success."""
+        """Attempt a credential refresh.  Returns True on success."""
         state = self._connections.get(connection_id)
         if state is None:
             return False
+
+        # Delegate to skill adapter if available
+        adapter = self._skill_adapters.get(connection_id)
+        if adapter is not None:
+            try:
+                await adapter.refresh()
+                return True
+            except RuntimeError:
+                return False
 
         config = state.handle.config
         if config.auth_strategy != AuthStrategy.oauth2 or not config.refresh_token:
@@ -183,6 +217,11 @@ class LiveConnectionManager:
         state = self._connections.get(connection_id)
         if state is None:
             return
+
+        # Notify skill adapter of deactivation
+        adapter = self._skill_adapters.pop(connection_id, None)
+        if adapter is not None:
+            await adapter.deactivate()
 
         state.handle.active = False
         state.handle.status = HealthStatusLevel.unhealthy
