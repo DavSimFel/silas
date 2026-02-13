@@ -11,7 +11,9 @@ import asyncio
 import tempfile
 from dataclasses import dataclass
 
+import aiosqlite
 import pytest
+from silas.models.work import WorkItemResult, WorkItemStatus
 from silas.queue.consult import ConsultPlannerManager
 from silas.queue.consumers import (
     BaseConsumer,
@@ -118,6 +120,25 @@ class MockExecutorAgent:
                 )
             )
         return MockExecutorResult(output=MockExecutorOutput())
+
+
+class MockWorkItemExecutor:
+    """Mock work-item executor that returns a configurable result."""
+
+    def __init__(self, result_status: WorkItemStatus = WorkItemStatus.done) -> None:
+        self._result_status = result_status
+        self.call_count = 0
+        self.work_item_ids: list[str] = []
+
+    async def execute(self, item) -> WorkItemResult:
+        self.call_count += 1
+        self.work_item_ids.append(item.id)
+        return WorkItemResult(
+            work_item_id=item.id,
+            status=self._result_status,
+            summary=f"Executed {item.id}",
+            last_error=None if self._result_status == WorkItemStatus.done else "execution failed",
+        )
 
 
 class FailingConsumer(BaseConsumer):
@@ -433,6 +454,93 @@ async def test_executor_consumer_research_request(
     assert leased is not None
     assert leased.message_kind == "research_result"
     assert leased.payload["query"] == "what is X?"
+
+
+@pytest.mark.asyncio
+async def test_executor_consumer_execution_request_with_work_item_payload(
+    store: DurableQueueStore, router: QueueRouter,
+) -> None:
+    """execution_request with work_item payload runs WorkItemExecutor.execute."""
+    executor = MockExecutorAgent()
+    work_executor = MockWorkItemExecutor()
+    consumer = ExecutorConsumer(store, router, executor, work_executor=work_executor)
+
+    msg = QueueMessage(
+        message_kind="execution_request",
+        sender="planner",
+        payload={
+            "work_item": {
+                "id": "wi-work-exec-1",
+                "type": "task",
+                "title": "Execute queued work item",
+                "body": "Run queued task.",
+                "skills": [],
+            }
+        },
+    )
+    await router.route(msg)
+    await consumer.poll_once()
+
+    assert work_executor.call_count == 1
+    assert work_executor.work_item_ids == ["wi-work-exec-1"]
+    assert executor.call_count == 0
+
+    leased = await store.lease("proxy_queue")
+    assert leased is not None
+    assert leased.message_kind == "execution_status"
+    assert leased.payload["status"] == "done"
+    assert leased.payload["work_item_id"] == "wi-work-exec-1"
+
+
+@pytest.mark.asyncio
+async def test_executor_consumer_invalid_work_item_nacks_then_dead_letters(
+    store: DurableQueueStore, router: QueueRouter,
+) -> None:
+    """Invalid work_item payload is retried, then dead-lettered at max attempts."""
+    executor = MockExecutorAgent()
+    work_executor = MockWorkItemExecutor()
+    consumer = ExecutorConsumer(
+        store,
+        router,
+        executor,
+        work_executor=work_executor,
+        max_attempts=1,
+    )
+
+    msg = QueueMessage(
+        message_kind="execution_request",
+        sender="planner",
+        payload={"work_item": {"id": "invalid-only-id"}},
+    )
+    await router.route(msg)
+
+    # First pass: validation error -> nack (attempt_count increments).
+    await consumer.poll_once()
+    leased_retry = await store.lease("executor_queue")
+    assert leased_retry is not None
+    assert leased_retry.attempt_count == 1
+    await store.ack(leased_retry.id)
+
+    # Re-enqueue equivalent message already at max attempts to verify dead-letter behavior.
+    dead_letter_candidate = QueueMessage(
+        message_kind="execution_request",
+        sender="planner",
+        payload={"work_item": {"id": "invalid-only-id"}},
+    )
+    dead_letter_candidate.attempt_count = 1
+    await router.route(dead_letter_candidate)
+    await consumer.poll_once()
+
+    assert await store.pending_count("executor_queue") == 0
+
+    async with aiosqlite.connect(store.db_path) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM dead_letters WHERE id = ?",
+            (dead_letter_candidate.id,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row[0] == 1
 
 
 # ── ConsultPlannerManager Tests ─────────────────────────────────────

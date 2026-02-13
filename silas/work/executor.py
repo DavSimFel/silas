@@ -4,6 +4,8 @@ import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
 
+from pydantic import ValidationError
+
 from silas.execution.python_exec import PythonExecutor
 from silas.execution.sandbox_factory import create_sandbox_manager
 from silas.execution.shell import ShellExecutor
@@ -32,6 +34,24 @@ _EXECUTION_ACTIONS: dict[WorkItemExecutorType, str] = {
     WorkItemExecutorType.shell: "shell_exec",
     WorkItemExecutorType.python: "python_exec",
 }
+
+
+def work_item_from_execution_payload(payload: dict[str, object]) -> WorkItem | None:
+    """Extract and validate a serialized WorkItem from an execution payload.
+
+    Returns ``None`` when no work-item envelope is present.
+    Raises ``ValueError`` when a work-item envelope exists but is invalid.
+    """
+    raw_work_item = payload.get("work_item")
+    if raw_work_item is None:
+        return None
+    if not isinstance(raw_work_item, dict):
+        raise ValueError("execution_request payload.work_item must be an object")
+
+    try:
+        return WorkItem.model_validate(raw_work_item)
+    except ValidationError as exc:
+        raise ValueError("invalid execution_request work_item payload") from exc
 
 
 class LiveWorkItemExecutor:
@@ -527,4 +547,4 @@ class LiveWorkItemExecutor:
         return max(1, int(len(combined) / _CHARS_PER_TOKEN))
 
 
-__all__ = ["LiveWorkItemExecutor"]
+__all__ = ["LiveWorkItemExecutor", "work_item_from_execution_payload"]
