@@ -12,6 +12,7 @@ from silas.models.agents import (
     RouteDecision,
 )
 from silas.models.gates import GateTrigger
+from silas.tools.resolver import LiveSkillResolver
 
 from tests.fakes import TestModel
 
@@ -107,3 +108,16 @@ def test_build_stream_injects_signing_key_into_stream(
 
     assert stream._signing_key is signing_key
     assert stream._nonce_store is not None
+
+
+def test_build_stream_wires_skill_loader_and_live_resolver(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = SilasSettings.model_validate({"data_dir": str(tmp_path / "data")})
+    monkeypatch.setattr("silas.main.build_proxy_agent", lambda model, default_context_profile: TestModel())
+
+    stream, _ = build_stream(settings)
+
+    assert stream.turn_context.skill_loader is not None
+    assert isinstance(stream.turn_context.skill_resolver, LiveSkillResolver)

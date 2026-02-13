@@ -45,6 +45,8 @@ from silas.memory.sqlite_store import SQLiteMemoryStore
 from silas.models.approval import ApprovalToken
 from silas.models.connections import Connection, HealthCheckResult, SetupStep, SetupStepResponse
 from silas.models.personality import AxisProfile, PersonaPreset, VoiceConfig
+from silas.models.skills import SkillMetadata
+from silas.models.work import WorkItem
 from silas.persistence.chronicle_store import SQLiteChronicleStore
 from silas.persistence.migrations import run_migrations
 from silas.persistence.nonce_store import SQLiteNonceStore
@@ -56,7 +58,9 @@ from silas.queue.bridge import QueueBridge
 from silas.queue.factory import create_queue_system
 from silas.scheduler import SilasScheduler
 from silas.skills.executor import SkillExecutor, register_builtin_skills
+from silas.skills.loader import SilasSkillLoader
 from silas.skills.registry import SkillRegistry
+from silas.tools.resolver import LiveSkillResolver
 from silas.work.executor import LiveWorkItemExecutor
 
 logger = logging.getLogger(__name__)
@@ -232,6 +236,60 @@ class _LifecycleConnectionManagerAdapter:
 
         connections.sort(key=lambda item: item.connection_id)
         return connections
+
+
+class _CompositeSkillLoader:
+    """Chain multiple skill loaders while preferring custom skills over shipped."""
+
+    def __init__(self, *loaders: SilasSkillLoader) -> None:
+        self._loaders = tuple(loaders)
+
+    def scan(self) -> list[SkillMetadata]:
+        merged: dict[str, SkillMetadata] = {}
+        for loader in self._loaders:
+            for metadata in loader.scan():
+                if metadata.name in merged:
+                    continue
+                merged[metadata.name] = metadata
+        return [item.model_copy(deep=True) for item in merged.values()]
+
+    def load_metadata(self, skill_name: str) -> SkillMetadata:
+        for loader in self._loaders:
+            try:
+                metadata = loader.load_metadata(skill_name)
+                return metadata.model_copy(deep=True)
+            except ValueError:
+                continue
+        raise ValueError(f"skill not found: {skill_name}")
+
+    def load_full(self, skill_name: str) -> str:
+        for loader in self._loaders:
+            try:
+                return loader.load_full(skill_name)
+            except ValueError:
+                continue
+        raise ValueError(f"skill not found: {skill_name}")
+
+    def resolve_script(self, skill_name: str, script_path: str) -> str:
+        for loader in self._loaders:
+            try:
+                return loader.resolve_script(skill_name, script_path)
+            except ValueError:
+                continue
+        raise ValueError(f"skill not found: {skill_name}")
+
+    def validate(self, skill_name: str) -> dict[str, object]:
+        for loader in self._loaders:
+            try:
+                return loader.validate(skill_name)
+            except ValueError:
+                continue
+        return {"valid": False, "errors": [f"skill not found: {skill_name}"], "warnings": []}
+
+    def import_external(self, source: str, format_hint: str | None = None) -> dict[str, object]:
+        if not self._loaders:
+            raise ValueError("no skill loaders configured")
+        return self._loaders[0].import_external(source, format_hint=format_hint)
 
 
 def _run_awaitable_blocking(awaitable: Awaitable[Any]) -> Any:
@@ -425,6 +483,19 @@ def build_stream(
     memory_store = SQLiteMemoryStore(db)
     chronicle_store = SQLiteChronicleStore(db)
     work_item_store = SQLiteWorkItemStore(db)
+    skill_loader = _CompositeSkillLoader(
+        SilasSkillLoader(settings.skills.custom_dir),
+        SilasSkillLoader(settings.skills.shipped_dir),
+    )
+
+    def _lookup_work_item(work_item_id: str) -> WorkItem | None:
+        return _run_awaitable_blocking(work_item_store.get(work_item_id))
+
+    skill_resolver = LiveSkillResolver(
+        skill_loader=skill_loader,
+        work_item_lookup=_lookup_work_item,
+    )
+
     persona_store = SQLitePersonaStore(db)
     audit = SQLiteAuditLog(db)
     nonce_store = SQLiteNonceStore(db)
@@ -496,6 +567,8 @@ def build_stream(
         work_executor=work_executor,
         gate_runner=gate_runner,
         personality_engine=personality_engine,
+        skill_loader=skill_loader,
+        skill_resolver=skill_resolver,
         skill_registry=skill_registry,
         skill_executor=skill_executor,
         approval_manager=approval_manager,
