@@ -28,7 +28,12 @@ class _Escalation:
 
 
 class OutputGateRunner:
-    """Deterministic output-gate evaluator for the Stream response path."""
+    """Deterministic output-gate evaluator for the Stream response path.
+
+    .. deprecated::
+        Use ``SilasGateRunner.evaluate_output`` instead. This class exists
+        only for backward compatibility and will be removed in a future release.
+    """
 
     def __init__(
         self,

@@ -83,11 +83,12 @@ class BlockingOutputGateRunner:
     def __init__(self) -> None:
         self.calls: list[tuple[str, TaintLevel, str]] = []
 
-    def evaluate(
+    def evaluate_output(
         self,
         response_text: str,
         response_taint: TaintLevel,
         sender_id: str,
+        gates: list[object] | None = None,
     ) -> tuple[str, list[GateResult]]:
         self.calls.append((response_text, response_taint, sender_id))
         return response_text, [
