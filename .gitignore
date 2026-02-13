@@ -31,3 +31,5 @@ Thumbs.db
 silas/skills/custom/*/
 data/.secrets.enc
 *.secrets.enc
+GAP_ANALYSIS.md
+GAP_ANALYSIS_V2.md
