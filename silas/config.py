@@ -138,6 +138,7 @@ class ExecutionConfig(BaseModel):
 class StreamConfig(BaseModel):
     streaming_enabled: bool = True
     chunk_size: int = Field(default=50, ge=1)
+    max_memory_ops_per_turn: int = Field(default=10, ge=1)
 
 
 class SilasSettings(BaseSettings):
