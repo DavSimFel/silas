@@ -6,8 +6,6 @@ memory retrieval, context profile setting, and edge cases.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -24,7 +22,6 @@ from silas.models.messages import (
     ChannelMessage,
     SignedMessage,
     TaintLevel,
-    signed_message_canonical_bytes,
 )
 from silas.models.skills import SkillDefinition
 from silas.models.work import WorkItemStatus
@@ -43,12 +40,15 @@ from tests.fakes import (
 )
 
 
-def _msg(text: str, sender_id: str = "owner") -> ChannelMessage:
+def _msg(
+    text: str, sender_id: str = "owner", *, is_authenticated: bool = True,
+) -> ChannelMessage:
     return ChannelMessage(
         channel="web",
         sender_id=sender_id,
         text=text,
         timestamp=datetime.now(UTC),
+        is_authenticated=is_authenticated,
     )
 
 
@@ -338,103 +338,70 @@ async def test_external_taint_classification(
 ) -> None:
     """Non-owner sender should produce external taint."""
     stream = _stream(channel, turn_context)
-    await stream._process_turn(_msg("hi", sender_id="stranger"))
+    await stream._process_turn(_msg("hi", sender_id="stranger", is_authenticated=False))
     chronicle = context_manager.get_zone("owner", ContextZone.chronicle)
     assert chronicle[0].taint == TaintLevel.external
 
 
 @pytest.mark.asyncio
-async def test_verify_inbound_accepts_ed25519_signature_and_consumes_nonce(
+async def test_verify_inbound_trusts_authenticated_channel(
     channel: InMemoryChannel,
     turn_context,
 ) -> None:
-    signing_key = Ed25519PrivateKey.generate()
-    nonce_store = _InMemoryNonceStore()
+    """Channel-authenticated messages are trusted — no self-signing needed."""
     stream = Stream(
         channel=channel,
         turn_context=turn_context,
-        _signing_key=signing_key,
-        _nonce_store=nonce_store,
+        _signing_key=Ed25519PrivateKey.generate(),
+        _nonce_store=_InMemoryNonceStore(),
     )
-    message = _msg("verify this", sender_id="owner")
-    nonce = "nonce-ed25519"
-    signature = signing_key.sign(signed_message_canonical_bytes(message, nonce))
-    signed = SignedMessage(message=message, signature=signature, nonce=nonce)
+    message = _msg("verify this", sender_id="owner", is_authenticated=True)
+    signed = SignedMessage(message=message, signature=b"", nonce="n1")
 
     is_valid, reason = await stream.verify_inbound(signed)
-    replay_valid, replay_reason = await stream.verify_inbound(signed)
 
     assert is_valid is True
-    assert reason == "ok"
-    assert replay_valid is False
-    assert replay_reason == "nonce_replay"
+    assert reason == "authenticated_session"
 
 
 @pytest.mark.asyncio
-async def test_verify_inbound_rejects_invalid_ed25519_signature(
+async def test_verify_inbound_rejects_unauthenticated_channel(
     channel: InMemoryChannel,
     turn_context,
 ) -> None:
-    signing_key = Ed25519PrivateKey.generate()
-    nonce_store = _InMemoryNonceStore()
+    """Unauthenticated messages are untrusted until client-side signing exists."""
     stream = Stream(
         channel=channel,
         turn_context=turn_context,
-        _signing_key=signing_key,
-        _nonce_store=nonce_store,
+        _signing_key=Ed25519PrivateKey.generate(),
+        _nonce_store=_InMemoryNonceStore(),
     )
-    message = _msg("tamper test", sender_id="owner")
-    nonce = "nonce-invalid"
-    signature = signing_key.sign(signed_message_canonical_bytes(_msg("different"), nonce))
-    signed = SignedMessage(message=message, signature=signature, nonce=nonce)
+    message = _msg("untrusted", sender_id="owner", is_authenticated=False)
+    signed = SignedMessage(message=message, signature=b"", nonce="n2")
 
     is_valid, reason = await stream.verify_inbound(signed)
 
     assert is_valid is False
-    assert reason == "invalid_signature"
-    assert await nonce_store.is_used("msg", nonce) is False
+    assert reason == "no_client_signature"
 
 
-@pytest.mark.asyncio
-async def test_verify_inbound_falls_back_to_hmac_for_raw_bytes_signing_key(
+def test_create_inbound_signed_message_does_not_self_sign(
     channel: InMemoryChannel,
     turn_context,
 ) -> None:
-    signing_key = b"legacy-test-signing-key"
-    nonce_store = _InMemoryNonceStore()
+    """Inbound messages must NOT be signed by the stream's own key (that's circular)."""
     stream = Stream(
         channel=channel,
         turn_context=turn_context,
-        _signing_key=signing_key,
-        _nonce_store=nonce_store,
-    )
-    message = _msg("legacy compatibility", sender_id="owner")
-    nonce = "nonce-hmac"
-    canonical_payload = signed_message_canonical_bytes(message, nonce)
-    signature = hmac.new(signing_key, canonical_payload, hashlib.sha256).digest()
-    signed = SignedMessage(message=message, signature=signature, nonce=nonce)
-
-    is_valid, reason = await stream.verify_inbound(signed)
-
-    assert is_valid is True
-    assert reason == "ok"
-
-
-def test_sign_inbound_message_uses_ed25519_signature_when_key_is_present(
-    channel: InMemoryChannel,
-    turn_context,
-) -> None:
-    signing_key = Ed25519PrivateKey.generate()
-    stream = Stream(
-        channel=channel,
-        turn_context=turn_context,
-        _signing_key=signing_key,
+        _signing_key=Ed25519PrivateKey.generate(),
         _nonce_store=_InMemoryNonceStore(),
     )
 
-    signed = stream._sign_inbound_message(_msg("ed25519"), "ed25519")
+    signed = stream._create_inbound_signed_message(_msg("test"), "test")
 
-    assert len(signed.signature) == 64
+    # Empty signature — stream doesn't self-sign inbound messages
+    assert signed.signature == b""
+    assert signed.nonce  # nonce still generated for uniqueness
 
 
 @pytest.mark.asyncio

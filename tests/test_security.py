@@ -102,12 +102,15 @@ def _goal(goal_id: str = "goal-sec") -> Goal:
     )
 
 
-def _msg(text: str, sender_id: str = "owner") -> ChannelMessage:
+def _msg(
+    text: str, sender_id: str = "owner", *, is_authenticated: bool = True,
+) -> ChannelMessage:
     return ChannelMessage(
         channel="web",
         sender_id=sender_id,
         text=text,
         timestamp=_utc_now(),
+        is_authenticated=is_authenticated,
     )
 
 
