@@ -5,6 +5,7 @@ Verifies the full self-healing flow wired into ExecutorConsumer:
 - consult timeout → replan trigger
 - max_replan_depth exceeded → user escalation
 - budget attribution (consult tokens charge to plan budget)
+- factory wiring injects managers into ExecutorConsumer
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from dataclasses import dataclass
 import pytest
 from silas.queue.consult import ConsultPlannerManager
 from silas.queue.consumers import ExecutorConsumer
+from silas.queue.factory import create_queue_system
 from silas.queue.replan import MAX_REPLAN_DEPTH, ReplanManager
 from silas.queue.router import QueueRouter
 from silas.queue.store import DurableQueueStore
@@ -384,3 +386,42 @@ class TestGuidedRetryAlsoFails:
         assert result.payload["status"] == "stuck"
         assert executor.call_count == 2  # initial + guided retry
         assert "Replan triggered" in str(result.payload["summary"])
+
+
+class TestFactoryWiresConsultReplanIntoExecutorConsumer:
+    """create_queue_system must inject ConsultPlannerManager and ReplanManager.
+
+    Without this wiring, ExecutorConsumer._consult and ._replan are None
+    and the cascade degrades to plain failure passthrough.
+    """
+
+    @pytest.mark.asyncio
+    async def test_factory_injects_cascade_managers(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+
+        # Minimal agent stubs — we only need to inspect the consumer's attributes.
+        executor = MockExecutorAgent(fail_count=0)
+        proxy = MockExecutorAgent(fail_count=0)
+        planner = MockExecutorAgent(fail_count=0)
+
+        orchestrator, _bridge = await create_queue_system(
+            db_path=db_path,
+            proxy_agent=proxy,
+            planner_agent=planner,
+            executor_agent=executor,
+        )
+
+        # Find the ExecutorConsumer in the orchestrator's consumers.
+        executor_consumers = [
+            c for c in orchestrator._consumers
+            if isinstance(c, ExecutorConsumer)
+        ]
+        assert len(executor_consumers) == 1
+        ec = executor_consumers[0]
+
+        # Verify managers were injected.
+        assert ec._consult is not None, "ConsultPlannerManager not wired"
+        assert ec._replan is not None, "ReplanManager not wired"
+        assert isinstance(ec._consult, ConsultPlannerManager)
+        assert isinstance(ec._replan, ReplanManager)

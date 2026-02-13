@@ -160,6 +160,48 @@ class _StubEphemeralExecutor:
         )
 
 
+class _StubConsultPlannerManager:
+    def __init__(self, guidance: str | None = None) -> None:
+        self._guidance = guidance
+        self.calls: list[tuple[str, str, str]] = []
+
+    async def consult(
+        self,
+        work_item_id: str,
+        failure_context: str,
+        trace_id: str,
+        timeout_s: float = 90.0,
+    ) -> str | None:
+        del timeout_s
+        self.calls.append((work_item_id, failure_context, trace_id))
+        return self._guidance
+
+
+class _StubReplanManager:
+    def __init__(self, *, enqueued: bool = True) -> None:
+        self._enqueued = enqueued
+        self.calls: list[dict[str, object]] = []
+
+    async def trigger_replan(
+        self,
+        work_item_id: str,
+        original_goal: str,
+        failure_history: list[dict[str, object]],
+        trace_id: str,
+        current_depth: int = 0,
+    ) -> bool:
+        self.calls.append(
+            {
+                "work_item_id": work_item_id,
+                "original_goal": original_goal,
+                "failure_history": failure_history,
+                "trace_id": trace_id,
+                "current_depth": current_depth,
+            }
+        )
+        return self._enqueued
+
+
 @pytest.fixture
 def work_store() -> InMemoryWorkItemStore:
     return InMemoryWorkItemStore()
@@ -734,3 +776,384 @@ async def test_verify_checks_fail_when_runner_unavailable(
     loaded = await work_store.get("task-verify-no-runner")
     assert loaded is not None
     assert loaded.status == WorkItemStatus.failed
+
+
+@pytest.mark.asyncio
+async def test_on_stuck_consult_planner_triggers_consult_and_replan(
+    work_store: InMemoryWorkItemStore,
+    skill_registry: SkillRegistry,
+    skill_executor: SkillExecutor,
+) -> None:
+    _register_skill(skill_registry, "skill_a")
+    verification_runner = _StubVerificationRunner(
+        all_passed=False,
+        fail_reason="expected marker missing",
+    )
+    consult_manager = _StubConsultPlannerManager(guidance=None)
+    replan_manager = _StubReplanManager(enqueued=True)
+    work_executor = LiveWorkItemExecutor(
+        skill_executor=skill_executor,
+        work_item_store=work_store,
+        approval_verifier=_StubApprovalVerifier(valid=True, reason="ok"),
+        verification_runner=verification_runner,
+        consult_manager=consult_manager,
+        replan_manager=replan_manager,
+    )
+
+    async def _skill_a(_inputs: dict[str, object]) -> dict[str, object]:
+        return {"ok": True}
+
+    skill_executor.register_handler("skill_a", _skill_a)
+    item = _work_item(
+        "task-verify-stuck",
+        skills=["skill_a"],
+        verify=[
+            VerificationCheck(
+                name="smoke",
+                run="echo mismatch",
+                expect=Expectation(contains="ok"),
+            )
+        ],
+        budget=Budget(max_attempts=1),
+    )
+
+    result = await work_executor.execute(item)
+
+    assert result.status == WorkItemStatus.stuck
+    assert consult_manager.calls
+    assert replan_manager.calls
+    loaded = await work_store.get("task-verify-stuck")
+    assert loaded is not None
+    assert loaded.status == WorkItemStatus.stuck
+
+
+@pytest.mark.asyncio
+async def test_on_stuck_non_consult_does_not_trigger_recovery_cascade(
+    work_store: InMemoryWorkItemStore,
+    skill_registry: SkillRegistry,
+    skill_executor: SkillExecutor,
+) -> None:
+    _register_skill(skill_registry, "skill_a")
+    verification_runner = _StubVerificationRunner(
+        all_passed=False,
+        fail_reason="expected marker missing",
+    )
+    consult_manager = _StubConsultPlannerManager(guidance="any")
+    replan_manager = _StubReplanManager(enqueued=True)
+    work_executor = LiveWorkItemExecutor(
+        skill_executor=skill_executor,
+        work_item_store=work_store,
+        approval_verifier=_StubApprovalVerifier(valid=True, reason="ok"),
+        verification_runner=verification_runner,
+        consult_manager=consult_manager,
+        replan_manager=replan_manager,
+    )
+
+    async def _skill_a(_inputs: dict[str, object]) -> dict[str, object]:
+        return {"ok": True}
+
+    skill_executor.register_handler("skill_a", _skill_a)
+    item = _work_item(
+        "task-no-cascade",
+        skills=["skill_a"],
+        verify=[
+            VerificationCheck(
+                name="smoke",
+                run="echo mismatch",
+                expect=Expectation(contains="ok"),
+            )
+        ],
+        budget=Budget(max_attempts=1),
+    ).model_copy(update={"on_stuck": "report"})
+
+    result = await work_executor.execute(item)
+
+    assert result.status == WorkItemStatus.failed
+    assert consult_manager.calls == []
+    assert replan_manager.calls == []
+
+
+# ── Consult/Replan Cascade: LiveWorkItemExecutor Path ──────────────
+
+
+class _StubAuditLog:
+    """Audit log that records events for assertion."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, object]]] = []
+
+    async def log(self, event: str, **kwargs: object) -> None:
+        self.events.append((event, dict(kwargs)))
+
+    def event_names(self) -> list[str]:
+        return [name for name, _ in self.events]
+
+
+class _VariableConsultManager:
+    """ConsultPlannerManager stub that returns different guidance per call."""
+
+    def __init__(self, responses: list[str | None]) -> None:
+        self._responses = list(responses)
+        self._index = 0
+        self.calls: list[tuple[str, str, str]] = []
+
+    async def consult(
+        self,
+        work_item_id: str,
+        failure_context: str,
+        trace_id: str,
+        timeout_s: float = 90.0,
+    ) -> str | None:
+        del timeout_s
+        self.calls.append((work_item_id, failure_context, trace_id))
+        if self._index < len(self._responses):
+            result = self._responses[self._index]
+            self._index += 1
+            return result
+        return None
+
+
+class _CountingSkillExecutor(SkillExecutor):
+    """SkillExecutor that fails N times then succeeds."""
+
+    def __init__(
+        self,
+        registry: SkillRegistry,
+        *,
+        fail_count: int = 0,
+    ) -> None:
+        super().__init__(skill_registry=registry)
+        self._fail_count = fail_count
+        self._call_count = 0
+
+    async def execute(
+        self,
+        skill_name: str,
+        inputs: dict[str, object],
+    ) -> object:
+        self._call_count += 1
+        if self._call_count <= self._fail_count:
+            # Return a failure-like result
+            return type(
+                "_FailResult",
+                (),
+                {"success": False, "error": f"attempt {self._call_count} failed",
+                 "output": "", "duration_ms": 10.0},
+            )()
+        return type(
+            "_OkResult",
+            (),
+            {"success": True, "error": None,
+             "output": "done", "duration_ms": 10.0},
+        )()
+
+    @property
+    def call_count(self) -> int:
+        return self._call_count
+
+
+@pytest.mark.asyncio
+async def test_consult_guidance_enables_guided_retry_success(
+    work_store: InMemoryWorkItemStore,
+    skill_registry: SkillRegistry,
+    skill_executor: SkillExecutor,
+) -> None:
+    """Consult returns guidance → guided retry succeeds → done."""
+    _register_skill(skill_registry, "flaky")
+    attempts = {"count": 0}
+
+    async def _flaky(_inputs: dict[str, object]) -> dict[str, object]:
+        attempts["count"] += 1
+        # Fail on first attempt (normal retry loop exhausts with 1 attempt),
+        # succeed on second (guided retry from cascade).
+        if attempts["count"] <= 1:
+            raise RuntimeError("transient failure")
+        return {"ok": True}
+
+    skill_executor.register_handler("flaky", _flaky)
+
+    consult_manager = _StubConsultPlannerManager(guidance="Try a different strategy")
+    replan_manager = _StubReplanManager(enqueued=True)
+    work_executor = LiveWorkItemExecutor(
+        skill_executor=skill_executor,
+        work_item_store=work_store,
+        approval_verifier=_StubApprovalVerifier(valid=True, reason="ok"),
+        consult_manager=consult_manager,
+        replan_manager=replan_manager,
+    )
+
+    # max_attempts=1: retry loop exhausts after 1 failure, cascade
+    # consults planner → guided retry succeeds (attempt #2).
+    item = _work_item(
+        "task-guided-success",
+        skills=["flaky"],
+        budget=Budget(max_attempts=1),
+    )
+
+    result = await work_executor.execute(item)
+
+    assert result.status == WorkItemStatus.done
+    # execute() wraps single-item results; verify the cascade path ran
+    assert attempts["count"] == 2  # 1 normal + 1 guided retry
+    # Consult was called once
+    assert len(consult_manager.calls) == 1
+    # Replan was NOT triggered (guided retry succeeded)
+    assert replan_manager.calls == []
+
+
+@pytest.mark.asyncio
+async def test_guided_retry_fails_triggers_replan(
+    work_store: InMemoryWorkItemStore,
+    skill_registry: SkillRegistry,
+    skill_executor: SkillExecutor,
+) -> None:
+    """Consult returns guidance → guided retry fails → replan triggered → stuck."""
+    _register_skill(skill_registry, "always_fail")
+
+    async def _always_fail(_inputs: dict[str, object]) -> dict[str, object]:
+        raise RuntimeError("persistent failure")
+
+    skill_executor.register_handler("always_fail", _always_fail)
+
+    consult_manager = _StubConsultPlannerManager(guidance="Try XYZ approach")
+    replan_manager = _StubReplanManager(enqueued=True)
+    work_executor = LiveWorkItemExecutor(
+        skill_executor=skill_executor,
+        work_item_store=work_store,
+        approval_verifier=_StubApprovalVerifier(valid=True, reason="ok"),
+        consult_manager=consult_manager,
+        replan_manager=replan_manager,
+    )
+
+    item = _work_item(
+        "task-guided-fail-replan",
+        skills=["always_fail"],
+        budget=Budget(max_attempts=1),
+    )
+
+    result = await work_executor.execute(item)
+
+    assert result.status == WorkItemStatus.stuck
+    assert len(consult_manager.calls) == 1
+    assert len(replan_manager.calls) == 1
+    loaded = await work_store.get("task-guided-fail-replan")
+    assert loaded is not None
+    assert loaded.status == WorkItemStatus.stuck
+
+
+@pytest.mark.asyncio
+async def test_replan_not_enqueued_marks_failed(
+    work_store: InMemoryWorkItemStore,
+    skill_registry: SkillRegistry,
+    skill_executor: SkillExecutor,
+) -> None:
+    """Replan manager returns False (max depth) → failed with recovery exhausted."""
+    _register_skill(skill_registry, "always_fail")
+
+    async def _always_fail(_inputs: dict[str, object]) -> dict[str, object]:
+        raise RuntimeError("persistent failure")
+
+    skill_executor.register_handler("always_fail", _always_fail)
+
+    consult_manager = _StubConsultPlannerManager(guidance=None)
+    replan_manager = _StubReplanManager(enqueued=False)
+    work_executor = LiveWorkItemExecutor(
+        skill_executor=skill_executor,
+        work_item_store=work_store,
+        approval_verifier=_StubApprovalVerifier(valid=True, reason="ok"),
+        consult_manager=consult_manager,
+        replan_manager=replan_manager,
+    )
+
+    item = _work_item(
+        "task-replan-exhausted",
+        skills=["always_fail"],
+        budget=Budget(max_attempts=1),
+    )
+
+    result = await work_executor.execute(item)
+
+    assert result.status == WorkItemStatus.failed
+    assert "recovery exhausted" in result.summary.lower()
+    loaded = await work_store.get("task-replan-exhausted")
+    assert loaded is not None
+    assert loaded.status == WorkItemStatus.failed
+
+
+@pytest.mark.asyncio
+async def test_cascade_audit_events_logged(
+    work_store: InMemoryWorkItemStore,
+    skill_registry: SkillRegistry,
+    skill_executor: SkillExecutor,
+) -> None:
+    """Verify audit events are emitted during the cascade."""
+    _register_skill(skill_registry, "always_fail")
+
+    async def _always_fail(_inputs: dict[str, object]) -> dict[str, object]:
+        raise RuntimeError("boom")
+
+    skill_executor.register_handler("always_fail", _always_fail)
+
+    audit = _StubAuditLog()
+    consult_manager = _StubConsultPlannerManager(guidance=None)
+    replan_manager = _StubReplanManager(enqueued=True)
+    work_executor = LiveWorkItemExecutor(
+        skill_executor=skill_executor,
+        work_item_store=work_store,
+        approval_verifier=_StubApprovalVerifier(valid=True, reason="ok"),
+        audit=audit,
+        consult_manager=consult_manager,
+        replan_manager=replan_manager,
+    )
+
+    item = _work_item(
+        "task-audit-cascade",
+        skills=["always_fail"],
+        budget=Budget(max_attempts=1),
+    )
+
+    await work_executor.execute(item)
+
+    event_names = audit.event_names()
+    # Consult timed out → audit event
+    assert "consult_planner_timeout" in event_names
+    # Replan was triggered → audit event
+    assert "replan_triggered" in event_names
+
+
+@pytest.mark.asyncio
+async def test_planner_budget_exhausted_audit_event(
+    work_store: InMemoryWorkItemStore,
+    skill_registry: SkillRegistry,
+    skill_executor: SkillExecutor,
+) -> None:
+    """Verify audit event fires when planner call budget is exhausted."""
+    _register_skill(skill_registry, "always_fail")
+
+    async def _always_fail(_inputs: dict[str, object]) -> dict[str, object]:
+        raise RuntimeError("boom")
+
+    skill_executor.register_handler("always_fail", _always_fail)
+
+    audit = _StubAuditLog()
+    consult_manager = _StubConsultPlannerManager(guidance=None)
+    replan_manager = _StubReplanManager(enqueued=True)
+    work_executor = LiveWorkItemExecutor(
+        skill_executor=skill_executor,
+        work_item_store=work_store,
+        approval_verifier=_StubApprovalVerifier(valid=True, reason="ok"),
+        audit=audit,
+        consult_manager=consult_manager,
+        replan_manager=replan_manager,
+    )
+
+    item = _work_item(
+        "task-budget-exhaust",
+        skills=["always_fail"],
+        budget=Budget(max_attempts=3, max_planner_calls=0),
+    )
+
+    await work_executor.execute(item)
+
+    event_names = audit.event_names()
+    assert "consult_planner_budget_exhausted" in event_names
