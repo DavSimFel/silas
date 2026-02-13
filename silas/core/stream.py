@@ -58,6 +58,7 @@ from silas.protocols.connections import ConnectionManager
 from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
 from silas.protocols.scheduler import TaskScheduler
 from silas.protocols.work import PlanParser, WorkItemStore
+from silas.security.taint import TaintTracker
 
 if TYPE_CHECKING:
     from silas.queue.bridge import QueueBridge
@@ -974,6 +975,10 @@ class Stream:
         turn_number = tc.turn_number
         turn_id = f"{scope_id}:{turn_number}"
 
+        # Reset taint tracker at turn boundary so prior-turn taint doesn't leak
+        taint_tracker = TaintTracker()
+        taint_tracker.reset()
+
         with correlation_scope(turn_id=turn_id, scope_id=scope_id):
             active_gates = self._precompile_active_gates()
             await self._audit(
@@ -1003,6 +1008,8 @@ class Stream:
                 processed_message_text=processed_message_text,
                 turn_number=turn_number,
             )
+            # Record inbound taint so tool outputs inherit it via propagation
+            taint_tracker.on_tool_input(signed.taint)
             cm = self._get_context_manager()
 
             chronicle_item = ContextItem(
