@@ -26,3 +26,8 @@ Thumbs.db
 *.db-journal
 *.db-wal
 .silas/
+
+# Custom skills (user-installed, promote to shipped/ to version)
+silas/skills/custom/*/
+data/.secrets.enc
+*.secrets.enc

@@ -1,0 +1,476 @@
+"""SQLite-backed durable queue with lease semantics for crash recovery.
+
+Implements the DurableQueueStore contract from specs/agent-loop-architecture.md
+§2.2. Messages are persisted to SQLite so they survive process restarts.
+Lease-based consumption ensures at-least-once delivery: if a consumer crashes
+mid-processing, the lease expires and another consumer can pick up the message.
+
+Why SQLite: Silas is a single-process runtime. SQLite gives us ACID durability
+without an external broker dependency. The aiosqlite wrapper provides async
+compatibility with the rest of the codebase.
+
+Why a single connection per operation (context manager pattern): matches the
+existing persistence stores (work_item_store, chronicle_store). For the
+expected throughput (<100 msgs/sec), connection-per-op is fine and avoids
+connection lifecycle complexity.
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import UTC, datetime
+
+import aiosqlite
+
+from silas.queue.types import QueueMessage, TaintLevel
+
+# Why ISO format with 'T' separator: SQLite stores datetimes as text,
+# and ISO 8601 sorts lexicographically which matters for ORDER BY created_at.
+_DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S.%f%z"
+
+
+def _now_utc() -> datetime:
+    """Timezone-aware UTC now."""
+    return datetime.now(UTC)
+
+
+def _dt_to_str(dt: datetime) -> str:
+    """Serialize datetime to ISO 8601 string for SQLite storage."""
+    return dt.strftime(_DATETIME_FORMAT)
+
+
+def _str_to_dt(s: str) -> datetime:
+    """Deserialize ISO 8601 string from SQLite back to datetime."""
+    return datetime.fromisoformat(s)
+
+
+def _row_to_message(row: aiosqlite.Row) -> QueueMessage:
+    """Reconstruct a QueueMessage from a SQLite row.
+
+    Why manual reconstruction instead of model_validate: we need to handle
+    the JSON-encoded payload and datetime string conversions explicitly.
+    Handles both old rows (without new columns) and new rows gracefully.
+    """
+    # Why dict-based access with defaults: rows from pre-migration DBs
+    # won't have the new columns. Using dict.get() avoids KeyError.
+    row_dict = dict(row)
+    taint_raw = row_dict.get("taint")
+    return QueueMessage(
+        id=row["id"],
+        queue_name=row["queue_name"],
+        message_kind=row["message_kind"],
+        sender=row["sender"],
+        trace_id=row["trace_id"],
+        payload=json.loads(row["payload"]),
+        created_at=_str_to_dt(row["created_at"]),
+        lease_id=row["lease_id"],
+        lease_expires_at=_str_to_dt(row["lease_expires_at"]) if row["lease_expires_at"] else None,
+        attempt_count=row["attempt_count"],
+        scope_id=row_dict.get("scope_id"),
+        taint=TaintLevel(taint_raw) if taint_raw else None,
+        task_id=row_dict.get("task_id"),
+        parent_task_id=row_dict.get("parent_task_id"),
+        work_item_id=row_dict.get("work_item_id"),
+        approval_token=row_dict.get("approval_token"),
+        urgency=row_dict.get("urgency", "informational"),
+    )
+
+
+class DurableQueueStore:
+    """Persistent message queue backed by SQLite with lease-based consumption.
+
+    Lifecycle: enqueue → lease → (ack | nack) → (dead_letter if max attempts).
+    On startup, call initialize() to create tables and requeue_expired() to
+    recover from any previous crash.
+
+    Each queue is identified by name (e.g., 'proxy_queue', 'planner_queue').
+    Messages are ordered FIFO by created_at within each queue.
+    """
+
+    def __init__(self, db_path: str) -> None:
+        self.db_path = db_path
+
+    async def initialize(self) -> None:
+        """Create queue tables if they don't exist, and migrate schema.
+
+        Called once on runtime startup. Idempotent via IF NOT EXISTS.
+        Migration adds §2.1 first-class fields (scope_id, taint, etc.)
+        to existing databases without data loss.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            # Why separate tables for queue_messages vs dead_letters: dead
+            # letters are kept indefinitely for debugging, while queue_messages
+            # are deleted on ack. Mixing them would complicate lease queries.
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS queue_messages (
+                    id TEXT PRIMARY KEY,
+                    queue_name TEXT NOT NULL,
+                    message_kind TEXT NOT NULL,
+                    sender TEXT NOT NULL,
+                    trace_id TEXT NOT NULL,
+                    payload TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    lease_id TEXT,
+                    lease_expires_at TEXT,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    max_attempts INTEGER NOT NULL DEFAULT 5,
+                    scope_id TEXT,
+                    taint TEXT,
+                    task_id TEXT,
+                    parent_task_id TEXT,
+                    work_item_id TEXT,
+                    approval_token TEXT,
+                    urgency TEXT NOT NULL DEFAULT 'informational'
+                )
+            """)
+            # Why index on queue_name + lease: the lease query filters by
+            # queue_name and lease state, so this index makes it efficient.
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_queue_messages_lease
+                ON queue_messages (queue_name, lease_id, lease_expires_at, created_at)
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS dead_letters (
+                    id TEXT PRIMARY KEY,
+                    queue_name TEXT NOT NULL,
+                    message_kind TEXT NOT NULL,
+                    sender TEXT NOT NULL,
+                    trace_id TEXT NOT NULL,
+                    payload TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    lease_id TEXT,
+                    lease_expires_at TEXT,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    max_attempts INTEGER NOT NULL DEFAULT 5,
+                    dead_letter_reason TEXT NOT NULL,
+                    dead_lettered_at TEXT NOT NULL,
+                    scope_id TEXT,
+                    taint TEXT
+                )
+            """)
+            # Migrate existing DBs: add columns if missing. ALTER TABLE
+            # ADD COLUMN is idempotent-safe via the pragma check below.
+            await self._migrate_add_columns(db)
+            # Why unique constraint on (consumer, message_id): the idempotency
+            # contract (§2.2.1) requires exactly-once processing per consumer.
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS processed_messages (
+                    consumer TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    processed_at TEXT NOT NULL,
+                    PRIMARY KEY (consumer, message_id)
+                )
+            """)
+            await db.commit()
+
+    @staticmethod
+    async def _migrate_add_columns(db: aiosqlite.Connection) -> None:
+        """Add §2.1 columns to pre-existing tables. Idempotent.
+
+        Why ALTER TABLE instead of recreate: preserves in-flight messages
+        during upgrades. SQLite ADD COLUMN is always append-only and safe.
+        """
+        # Introspect existing columns to avoid duplicate ALTER TABLE errors
+        cursor = await db.execute("PRAGMA table_info(queue_messages)")
+        existing = {row[1] for row in await cursor.fetchall()}
+
+        new_columns: list[tuple[str, str]] = [
+            ("scope_id", "TEXT"),
+            ("taint", "TEXT"),
+            ("task_id", "TEXT"),
+            ("parent_task_id", "TEXT"),
+            ("work_item_id", "TEXT"),
+            ("approval_token", "TEXT"),
+            ("urgency", "TEXT NOT NULL DEFAULT 'informational'"),
+        ]
+        for col_name, col_def in new_columns:
+            if col_name not in existing:
+                await db.execute(
+                    f"ALTER TABLE queue_messages ADD COLUMN {col_name} {col_def}"
+                )
+
+        # Also migrate dead_letters for debugging visibility
+        cursor = await db.execute("PRAGMA table_info(dead_letters)")
+        dl_existing = {row[1] for row in await cursor.fetchall()}
+        for col_name in ("scope_id", "taint"):
+            if col_name not in dl_existing:
+                await db.execute(
+                    f"ALTER TABLE dead_letters ADD COLUMN {col_name} TEXT"
+                )
+
+        # Why index here (after columns exist): handles both fresh and migrated DBs
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_queue_messages_scope
+            ON queue_messages (scope_id)
+        """)
+        await db.commit()
+
+    async def enqueue(self, msg: QueueMessage) -> None:
+        """Insert a message into the queue.
+
+        The message's queue_name must already be set (by the router or caller).
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """INSERT INTO queue_messages
+                   (id, queue_name, message_kind, sender, trace_id, payload,
+                    created_at, lease_id, lease_expires_at, attempt_count, max_attempts,
+                    scope_id, taint, task_id, parent_task_id, work_item_id,
+                    approval_token, urgency)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    msg.id,
+                    msg.queue_name,
+                    msg.message_kind,
+                    msg.sender,
+                    msg.trace_id,
+                    json.dumps(msg.payload),
+                    _dt_to_str(msg.created_at),
+                    None,
+                    None,
+                    msg.attempt_count,
+                    5,
+                    msg.scope_id,
+                    msg.taint.value if msg.taint else None,
+                    msg.task_id,
+                    msg.parent_task_id,
+                    msg.work_item_id,
+                    msg.approval_token,
+                    msg.urgency,
+                ),
+            )
+            await db.commit()
+
+    async def lease(
+        self, queue_name: str, lease_duration_s: int = 60
+    ) -> QueueMessage | None:
+        """Atomically lease the oldest available message from a queue.
+
+        A message is available if it has no lease or its lease has expired.
+        Returns None if no messages are available.
+
+        Why UPDATE+RETURNING instead of SELECT+UPDATE: atomic lease prevents
+        two consumers from grabbing the same message in concurrent scenarios.
+        SQLite serializes writes, so this is safe even with multiple coroutines.
+        """
+        now = _now_utc()
+        now_str = _dt_to_str(now)
+        lease_id = str(uuid.uuid4())
+        expires_str = _dt_to_str(
+            now + __import__("datetime").timedelta(seconds=lease_duration_s)
+        )
+
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            # Why subquery with MIN(rowid): SQLite doesn't support
+            # UPDATE ... ORDER BY ... LIMIT 1 RETURNING in all versions.
+            # Using a subquery to find the target row is universally supported.
+            cursor = await db.execute(
+                """UPDATE queue_messages
+                   SET lease_id = ?, lease_expires_at = ?
+                   WHERE id = (
+                       SELECT id FROM queue_messages
+                       WHERE queue_name = ?
+                         AND (lease_id IS NULL OR lease_expires_at < ?)
+                       ORDER BY created_at
+                       LIMIT 1
+                   )
+                   RETURNING *""",
+                (lease_id, expires_str, queue_name, now_str),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            await db.commit()
+            return _row_to_message(row)
+
+    async def ack(self, message_id: str) -> None:
+        """Remove a successfully processed message from the queue.
+
+        Per §2.2: ack means the consumer has finished all side effects
+        and called mark_processed. The message is permanently deleted.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM queue_messages WHERE id = ?", (message_id,))
+            await db.commit()
+
+    async def nack(self, message_id: str) -> None:
+        """Release a message's lease and increment its attempt count.
+
+        The message returns to the queue for another consumer to pick up.
+        If the consumer failed to process it, nack allows retry.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """UPDATE queue_messages
+                   SET lease_id = NULL, lease_expires_at = NULL,
+                       attempt_count = attempt_count + 1
+                   WHERE id = ?""",
+                (message_id,),
+            )
+            await db.commit()
+
+    async def dead_letter(self, message_id: str, reason: str) -> None:
+        """Move a message to the dead letter table.
+
+        Called when a message has exceeded max_attempts or is otherwise
+        unprocessable. Preserves the full message for debugging.
+        """
+        now_str = _dt_to_str(_now_utc())
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM queue_messages WHERE id = ?", (message_id,)
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return
+            row_dict = dict(row)
+            await db.execute(
+                """INSERT INTO dead_letters
+                   (id, queue_name, message_kind, sender, trace_id, payload,
+                    created_at, lease_id, lease_expires_at, attempt_count,
+                    max_attempts, dead_letter_reason, dead_lettered_at,
+                    scope_id, taint)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    row["id"],
+                    row["queue_name"],
+                    row["message_kind"],
+                    row["sender"],
+                    row["trace_id"],
+                    row["payload"],
+                    row["created_at"],
+                    row["lease_id"],
+                    row["lease_expires_at"],
+                    row["attempt_count"],
+                    row["max_attempts"],
+                    reason,
+                    now_str,
+                    row_dict.get("scope_id"),
+                    row_dict.get("taint"),
+                ),
+            )
+            await db.execute("DELETE FROM queue_messages WHERE id = ?", (message_id,))
+            await db.commit()
+
+    async def heartbeat(self, message_id: str, extend_s: int = 60) -> None:
+        """Extend a message's lease to prevent expiry during long processing.
+
+        Per §2.2.2: consumers with runs longer than lease_duration/3 must
+        send periodic heartbeats to signal they're still alive.
+        """
+        new_expires = _dt_to_str(
+            _now_utc() + __import__("datetime").timedelta(seconds=extend_s)
+        )
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE queue_messages SET lease_expires_at = ? WHERE id = ?",
+                (new_expires, message_id),
+            )
+            await db.commit()
+
+    async def has_processed(self, consumer: str, message_id: str) -> bool:
+        """Check if a consumer has already processed a message.
+
+        Per §2.2.1: every consumer must check this before executing side
+        effects to ensure exactly-once processing semantics.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "SELECT 1 FROM processed_messages WHERE consumer = ? AND message_id = ?",
+                (consumer, message_id),
+            )
+            return await cursor.fetchone() is not None
+
+    async def mark_processed(self, consumer: str, message_id: str) -> None:
+        """Record that a consumer has successfully processed a message.
+
+        Must be called after side effects succeed but before ack, per §2.2.1.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """INSERT OR IGNORE INTO processed_messages (consumer, message_id, processed_at)
+                   VALUES (?, ?, ?)""",
+                (consumer, message_id, _dt_to_str(_now_utc())),
+            )
+            await db.commit()
+
+    async def lease_filtered(
+        self,
+        queue_name: str,
+        filter_trace_id: str,
+        filter_message_kind: str,
+        lease_duration_s: int = 60,
+    ) -> QueueMessage | None:
+        """Lease the oldest message matching specific trace_id and message_kind.
+
+        Why a separate method instead of adding params to lease(): the generic
+        lease() is used by consumers that process ANY message from a queue.
+        Filtered lease serves a different access pattern — polling for a
+        specific response — and mixing both into one method would make the
+        SQL and call sites harder to reason about.
+        """
+        now = _now_utc()
+        now_str = _dt_to_str(now)
+        lease_id = str(uuid.uuid4())
+        expires_str = _dt_to_str(
+            now + __import__("datetime").timedelta(seconds=lease_duration_s)
+        )
+
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """UPDATE queue_messages
+                   SET lease_id = ?, lease_expires_at = ?
+                   WHERE id = (
+                       SELECT id FROM queue_messages
+                       WHERE queue_name = ?
+                         AND trace_id = ?
+                         AND message_kind = ?
+                         AND (lease_id IS NULL OR lease_expires_at < ?)
+                       ORDER BY created_at
+                       LIMIT 1
+                   )
+                   RETURNING *""",
+                (lease_id, expires_str, queue_name, filter_trace_id, filter_message_kind, now_str),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            await db.commit()
+            return _row_to_message(row)
+
+    async def pending_count(self, queue_name: str) -> int:
+        """Count unleased messages in a queue. Used for telemetry/monitoring."""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                """SELECT COUNT(*) FROM queue_messages
+                   WHERE queue_name = ? AND lease_id IS NULL""",
+                (queue_name,),
+            )
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def requeue_expired(self) -> int:
+        """Release all expired leases. Called on startup for crash recovery.
+
+        Any message whose lease has expired is assumed to be from a crashed
+        consumer. We clear the lease so it can be picked up again.
+        Returns the number of messages requeued.
+        """
+        now_str = _dt_to_str(_now_utc())
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                """UPDATE queue_messages
+                   SET lease_id = NULL, lease_expires_at = NULL
+                   WHERE lease_id IS NOT NULL AND lease_expires_at < ?""",
+                (now_str,),
+            )
+            count = cursor.rowcount
+            await db.commit()
+            return count
+
+
+__all__ = ["DurableQueueStore"]
