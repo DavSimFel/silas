@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 
 import aiosqlite
 
-from silas.queue.types import QueueMessage
+from silas.queue.types import QueueMessage, TaintLevel
 
 # Why ISO format with 'T' separator: SQLite stores datetimes as text,
 # and ISO 8601 sorts lexicographically which matters for ORDER BY created_at.
@@ -50,7 +50,12 @@ def _row_to_message(row: aiosqlite.Row) -> QueueMessage:
 
     Why manual reconstruction instead of model_validate: we need to handle
     the JSON-encoded payload and datetime string conversions explicitly.
+    Handles both old rows (without new columns) and new rows gracefully.
     """
+    # Why dict-based access with defaults: rows from pre-migration DBs
+    # won't have the new columns. Using dict.get() avoids KeyError.
+    row_dict = dict(row)
+    taint_raw = row_dict.get("taint")
     return QueueMessage(
         id=row["id"],
         queue_name=row["queue_name"],
@@ -62,6 +67,13 @@ def _row_to_message(row: aiosqlite.Row) -> QueueMessage:
         lease_id=row["lease_id"],
         lease_expires_at=_str_to_dt(row["lease_expires_at"]) if row["lease_expires_at"] else None,
         attempt_count=row["attempt_count"],
+        scope_id=row_dict.get("scope_id"),
+        taint=TaintLevel(taint_raw) if taint_raw else None,
+        task_id=row_dict.get("task_id"),
+        parent_task_id=row_dict.get("parent_task_id"),
+        work_item_id=row_dict.get("work_item_id"),
+        approval_token=row_dict.get("approval_token"),
+        urgency=row_dict.get("urgency", "informational"),
     )
 
 
@@ -80,9 +92,11 @@ class DurableQueueStore:
         self.db_path = db_path
 
     async def initialize(self) -> None:
-        """Create queue tables if they don't exist.
+        """Create queue tables if they don't exist, and migrate schema.
 
         Called once on runtime startup. Idempotent via IF NOT EXISTS.
+        Migration adds §2.1 first-class fields (scope_id, taint, etc.)
+        to existing databases without data loss.
         """
         async with aiosqlite.connect(self.db_path) as db:
             # Why separate tables for queue_messages vs dead_letters: dead
@@ -100,7 +114,14 @@ class DurableQueueStore:
                     lease_id TEXT,
                     lease_expires_at TEXT,
                     attempt_count INTEGER NOT NULL DEFAULT 0,
-                    max_attempts INTEGER NOT NULL DEFAULT 5
+                    max_attempts INTEGER NOT NULL DEFAULT 5,
+                    scope_id TEXT,
+                    taint TEXT,
+                    task_id TEXT,
+                    parent_task_id TEXT,
+                    work_item_id TEXT,
+                    approval_token TEXT,
+                    urgency TEXT NOT NULL DEFAULT 'informational'
                 )
             """)
             # Why index on queue_name + lease: the lease query filters by
@@ -123,9 +144,14 @@ class DurableQueueStore:
                     attempt_count INTEGER NOT NULL DEFAULT 0,
                     max_attempts INTEGER NOT NULL DEFAULT 5,
                     dead_letter_reason TEXT NOT NULL,
-                    dead_lettered_at TEXT NOT NULL
+                    dead_lettered_at TEXT NOT NULL,
+                    scope_id TEXT,
+                    taint TEXT
                 )
             """)
+            # Migrate existing DBs: add columns if missing. ALTER TABLE
+            # ADD COLUMN is idempotent-safe via the pragma check below.
+            await self._migrate_add_columns(db)
             # Why unique constraint on (consumer, message_id): the idempotency
             # contract (§2.2.1) requires exactly-once processing per consumer.
             await db.execute("""
@@ -138,6 +164,48 @@ class DurableQueueStore:
             """)
             await db.commit()
 
+    @staticmethod
+    async def _migrate_add_columns(db: aiosqlite.Connection) -> None:
+        """Add §2.1 columns to pre-existing tables. Idempotent.
+
+        Why ALTER TABLE instead of recreate: preserves in-flight messages
+        during upgrades. SQLite ADD COLUMN is always append-only and safe.
+        """
+        # Introspect existing columns to avoid duplicate ALTER TABLE errors
+        cursor = await db.execute("PRAGMA table_info(queue_messages)")
+        existing = {row[1] for row in await cursor.fetchall()}
+
+        new_columns: list[tuple[str, str]] = [
+            ("scope_id", "TEXT"),
+            ("taint", "TEXT"),
+            ("task_id", "TEXT"),
+            ("parent_task_id", "TEXT"),
+            ("work_item_id", "TEXT"),
+            ("approval_token", "TEXT"),
+            ("urgency", "TEXT NOT NULL DEFAULT 'informational'"),
+        ]
+        for col_name, col_def in new_columns:
+            if col_name not in existing:
+                await db.execute(
+                    f"ALTER TABLE queue_messages ADD COLUMN {col_name} {col_def}"
+                )
+
+        # Also migrate dead_letters for debugging visibility
+        cursor = await db.execute("PRAGMA table_info(dead_letters)")
+        dl_existing = {row[1] for row in await cursor.fetchall()}
+        for col_name in ("scope_id", "taint"):
+            if col_name not in dl_existing:
+                await db.execute(
+                    f"ALTER TABLE dead_letters ADD COLUMN {col_name} TEXT"
+                )
+
+        # Why index here (after columns exist): handles both fresh and migrated DBs
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_queue_messages_scope
+            ON queue_messages (scope_id)
+        """)
+        await db.commit()
+
     async def enqueue(self, msg: QueueMessage) -> None:
         """Insert a message into the queue.
 
@@ -147,8 +215,10 @@ class DurableQueueStore:
             await db.execute(
                 """INSERT INTO queue_messages
                    (id, queue_name, message_kind, sender, trace_id, payload,
-                    created_at, lease_id, lease_expires_at, attempt_count, max_attempts)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    created_at, lease_id, lease_expires_at, attempt_count, max_attempts,
+                    scope_id, taint, task_id, parent_task_id, work_item_id,
+                    approval_token, urgency)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     msg.id,
                     msg.queue_name,
@@ -161,6 +231,13 @@ class DurableQueueStore:
                     None,
                     msg.attempt_count,
                     5,
+                    msg.scope_id,
+                    msg.taint.value if msg.taint else None,
+                    msg.task_id,
+                    msg.parent_task_id,
+                    msg.work_item_id,
+                    msg.approval_token,
+                    msg.urgency,
                 ),
             )
             await db.commit()
@@ -249,12 +326,14 @@ class DurableQueueStore:
             row = await cursor.fetchone()
             if row is None:
                 return
+            row_dict = dict(row)
             await db.execute(
                 """INSERT INTO dead_letters
                    (id, queue_name, message_kind, sender, trace_id, payload,
                     created_at, lease_id, lease_expires_at, attempt_count,
-                    max_attempts, dead_letter_reason, dead_lettered_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    max_attempts, dead_letter_reason, dead_lettered_at,
+                    scope_id, taint)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     row["id"],
                     row["queue_name"],
@@ -269,6 +348,8 @@ class DurableQueueStore:
                     row["max_attempts"],
                     reason,
                     now_str,
+                    row_dict.get("scope_id"),
+                    row_dict.get("taint"),
                 ),
             )
             await db.execute("DELETE FROM queue_messages WHERE id = ?", (message_id,))
