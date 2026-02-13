@@ -3,8 +3,16 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from silas.models.messages import TaintLevel
 from silas.models.skills import SkillDefinition
+from silas.security.taint import TaintTracker
 from silas.skills.hasher import SkillHasher
+
+_TAINT_LEVEL_MAP: dict[str, TaintLevel] = {
+    "owner": TaintLevel.owner,
+    "auth": TaintLevel.auth,
+    "external": TaintLevel.external,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +23,9 @@ class SkillRegistry:
 
     def register(self, skill: SkillDefinition) -> None:
         self._skills[skill.name] = skill.model_copy(deep=True)
+        if skill.taint_level is not None:
+            taint = _TAINT_LEVEL_MAP[skill.taint_level]
+            TaintTracker.add_tool_taint(skill.name, taint)
 
     def get(self, name: str) -> SkillDefinition | None:
         skill = self._skills.get(name)
