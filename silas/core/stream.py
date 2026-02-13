@@ -36,6 +36,7 @@ from silas.core.plan_executor import (
     extract_skill_inputs,
     extract_skill_name,
     plan_action_to_work_item,
+    resolve_work_item_approval,
 )
 from silas.core.plan_parser import MarkdownPlanParser
 from silas.core.token_counter import HeuristicTokenCounter
@@ -50,7 +51,7 @@ from silas.models.agents import (
     PlanAction,
     RouteDecision,
 )
-from silas.models.approval import ApprovalScope, ApprovalVerdict
+from silas.models.approval import ApprovalScope, ApprovalToken, ApprovalVerdict
 from silas.models.connections import ConnectionFailure
 from silas.models.context import ContextItem, ContextSubscription, ContextZone
 from silas.models.gates import Gate, GateResult, GateTrigger
@@ -147,6 +148,7 @@ class Stream:
     scheduler: TaskScheduler | None = None
     plan_parser: PlanParser | None = None
     work_item_store: WorkItemStore | None = None
+    goal_manager: object | None = None
     connection_manager: ConnectionManager | None = None
     suggestion_engine: SuggestionEngine | None = None
     autonomy_calibrator: AutonomyCalibrator | None = None
@@ -1748,36 +1750,62 @@ class Stream:
                 continue
 
             skill_name = extract_skill_name(action) or "plan_action"
-            decision, token = await self._approval_flow.request_skill_approval(
-                work_item=work_item,
-                scope=ApprovalScope.full_plan,
-                skill_name=skill_name,
-                connection_id=connection_id,
+            prepared_work_item = await resolve_work_item_approval(
+                work_item,
+                standing_approval_resolver=self._resolve_standing_approval_token,
+                manual_approval_requester=lambda unresolved, skill_name=skill_name, connection_id=connection_id: self._approval_flow.request_skill_approval(
+                    work_item=unresolved,
+                    scope=ApprovalScope.full_plan,
+                    skill_name=skill_name,
+                    connection_id=connection_id,
+                ),
             )
-            if decision is None or decision.verdict != ApprovalVerdict.approved or token is None:
+            if (
+                prepared_work_item is None
+                or prepared_work_item.approval_token is None
+            ):
                 await self._audit(
                     "planner_action_approval_declined",
                     turn_number=turn_number,
                     action_index=index,
                     skill_name=skill_name,
-                    verdict=decision.verdict.value if decision is not None else "timed_out",
+                    verdict="declined_or_missing",
                 )
                 continue
+
+            if prepared_work_item.approval_token.scope == ApprovalScope.standing:
+                await self._audit(
+                    "planner_action_standing_approval_attached",
+                    turn_number=turn_number,
+                    action_index=index,
+                    skill_name=skill_name,
+                )
+            else:
+                await self._audit(
+                    "planner_action_approval_attached",
+                    turn_number=turn_number,
+                    action_index=index,
+                    skill_name=skill_name,
+                )
 
             approved_actions.append(
                 {
                     **action,
-                    "approval_token": token.model_dump(mode="python"),
+                    "approval_token": prepared_work_item.approval_token.model_dump(mode="python"),
                 }
-            )
-            await self._audit(
-                "planner_action_approval_attached",
-                turn_number=turn_number,
-                action_index=index,
-                skill_name=skill_name,
             )
 
         return approved_actions
+
+    def _resolve_standing_approval_token(self, work_item: WorkItem) -> ApprovalToken | None:
+        """Resolve standing approval for spawned items so manual review can be skipped."""
+        approval_manager = self._turn_context().approval_manager
+        if approval_manager is None:
+            return None
+        check_standing = getattr(approval_manager, "check_standing_approval", None)
+        if not callable(check_standing):
+            return None
+        return check_standing(work_item, self.goal_manager)
 
     async def _execute_planner_skill_actions(
         self,

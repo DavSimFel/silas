@@ -7,16 +7,21 @@ dependency ordering, and work item execution orchestration.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Protocol
 
 from silas.core.plan_parser import MarkdownPlanParser
 from silas.models.agents import InteractionMode
+from silas.models.approval import ApprovalDecision, ApprovalToken, ApprovalVerdict
 from silas.models.work import WorkItem, WorkItemResult, WorkItemStatus, WorkItemType
 
 
 class WorkExecutorProtocol(Protocol):
     async def execute(self, work_item: WorkItem) -> WorkItemResult: ...
+
+
+StandingApprovalResolver = Callable[[WorkItem], ApprovalToken | None]
+ManualApprovalRequester = Callable[[WorkItem], Awaitable[tuple[ApprovalDecision | None, ApprovalToken | None]]]
 
 
 async def execute_plan_actions(
@@ -57,6 +62,46 @@ async def execute_plan_actions(
             f"First failure: {f.work_item_id} ({f.last_error or f.summary})."
         )
     return f"Plan execution summary: {done_count} done, 0 failed."
+
+
+async def resolve_work_item_approval(
+    work_item: WorkItem,
+    *,
+    standing_approval_resolver: StandingApprovalResolver | None = None,
+    manual_approval_requester: ManualApprovalRequester | None = None,
+) -> WorkItem | None:
+    """Attach standing or manual approval token and return execution-ready work item."""
+    if work_item.approval_token is not None:
+        return work_item
+
+    standing_token: ApprovalToken | None = None
+    if standing_approval_resolver is not None:
+        standing_token = standing_approval_resolver(work_item)
+    if standing_token is not None:
+        return work_item.model_copy(
+            update={
+                "approval_token": standing_token.model_copy(deep=True),
+                "needs_approval": False,
+            }
+        )
+
+    if manual_approval_requester is None:
+        return work_item
+
+    decision, manual_token = await manual_approval_requester(work_item)
+    if (
+        decision is None
+        or decision.verdict != ApprovalVerdict.approved
+        or manual_token is None
+    ):
+        return None
+
+    return work_item.model_copy(
+        update={
+            "approval_token": manual_token.model_copy(deep=True),
+            "needs_approval": False,
+        }
+    )
 
 
 def plan_actions_to_work_items(
@@ -234,4 +279,5 @@ __all__ = [
     "order_work_items",
     "plan_action_to_work_item",
     "plan_actions_to_work_items",
+    "resolve_work_item_approval",
 ]
