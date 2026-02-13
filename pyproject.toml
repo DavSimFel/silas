@@ -28,6 +28,9 @@ dependencies = [
   "pydantic-ai-backend>=0.1.6",
 ]
 
+[project.optional-dependencies]
+guardrails = ["guardrails-ai"]
+
 [project.scripts]
 silas = "silas.main:cli"
 
