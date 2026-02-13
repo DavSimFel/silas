@@ -24,6 +24,9 @@ class ChannelMessage(BaseModel):
     timestamp: datetime = Field(default_factory=utc_now)
     attachments: list[str] = Field(default_factory=list)
     reply_to: str | None = None
+    # Whether the channel validated the sender's identity (e.g. WebSocket session token).
+    # Set by the channel layer, NOT by the stream — this is the root of inbound trust.
+    is_authenticated: bool = False
 
     @field_validator("timestamp")
     @classmethod

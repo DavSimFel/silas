@@ -56,7 +56,6 @@ from silas.models.messages import (
     ChannelMessage,
     SignedMessage,
     TaintLevel,
-    signed_message_canonical_bytes,
 )
 from silas.models.proactivity import SuggestionProposal
 from silas.models.work import WorkItem, WorkItemStatus, WorkItemType
@@ -1167,23 +1166,28 @@ class Stream:
             return response_text
 
     async def verify_inbound(self, signed_message: SignedMessage) -> tuple[bool, str]:
-        """Validate inbound message trust before owner-level actions rely on it.
+        """Check whether an inbound message is trustworthy.
 
-        Why: the stream's taint boundary depends on cryptographic provenance and
-        single-use nonces so replayed or forged payloads cannot escalate trust.
+        Trust model: The channel layer is responsible for authenticating senders
+        (e.g. validating a WebSocket session token). The stream does NOT self-sign
+        messages — that would be circular (signing and verifying with the same key
+        always passes). Instead we check:
+
+        1. Did the channel authenticate this sender? (is_authenticated flag)
+        2. If a client-side signature is present (future), verify it with the
+           client's public key and consume the nonce for replay protection.
+
+        When client-side signing is added, this method will also verify Ed25519
+        signatures against registered client public keys — not the stream's own key.
         """
-        payload = signed_message_canonical_bytes(signed_message.message, signed_message.nonce)
-        if not self._is_valid_signature(payload, signed_message.signature):
-            return False, "invalid_signature"
+        msg = signed_message.message
 
-        nonce_store = self._nonce_store
-        if nonce_store is None:
-            return False, "nonce_store_unavailable"
+        # Future: if signature is non-empty, verify against client public key + nonce.
+        # For now, trust depends entirely on channel authentication.
+        if msg.is_authenticated:
+            return True, "authenticated_session"
 
-        if await nonce_store.is_used("msg", signed_message.nonce):
-            return False, "nonce_replay"
-        await nonce_store.record("msg", signed_message.nonce)
-        return True, "ok"
+        return False, "no_client_signature"
 
     async def _prepare_signed_inbound_message(
         self,
@@ -1192,7 +1196,13 @@ class Stream:
         processed_message_text: str,
         turn_number: int,
     ) -> SignedMessage:
-        signed = self._sign_inbound_message(message, processed_message_text)
+        """Build a SignedMessage using channel-level trust, not self-signing.
+
+        The old approach signed messages with the stream's own key then verified
+        with the same key — a tautology that always passed. Now trust derives from
+        the channel's authentication state (set before the message reaches the stream).
+        """
+        signed = self._create_inbound_signed_message(message, processed_message_text)
         is_verified, verify_reason = await self.verify_inbound(signed)
         if not is_verified:
             await self._audit(
@@ -1204,23 +1214,28 @@ class Stream:
         taint = self._resolve_inbound_taint(message.sender_id, is_verified)
         return signed.model_copy(update={"taint": taint})
 
-    def _sign_inbound_message(
+    def _create_inbound_signed_message(
         self,
         message: ChannelMessage,
         processed_message_text: str,
     ) -> SignedMessage:
-        nonce = uuid.uuid4().hex
+        """Wrap an inbound message without self-signing.
+
+        Signature is empty — the stream must not sign-then-verify its own messages.
+        When client-side crypto is added, the client will provide the signature and
+        nonce; the stream will only verify. The Ed25519 key infrastructure is kept
+        for that future use and for signing outbound attestations.
+        """
         message_payload = message.model_copy(update={"text": processed_message_text})
-        canonical_payload = signed_message_canonical_bytes(message_payload, nonce)
-        signature = self._sign_payload(canonical_payload)
         return SignedMessage(
             message=message_payload,
-            signature=signature,
-            nonce=nonce,
+            signature=b"",
+            nonce=uuid.uuid4().hex,
             taint=TaintLevel.external,
         )
 
     def _sign_payload(self, canonical_payload: bytes) -> bytes:
+        """Sign a payload with the stream's key (used for outbound attestations, not inbound)."""
         signing_key = self._signing_key
         if isinstance(signing_key, Ed25519PrivateKey):
             return signing_key.sign(canonical_payload)
@@ -1229,6 +1244,7 @@ class Stream:
         raise RuntimeError("stream signing key is not configured")
 
     def _is_valid_signature(self, canonical_payload: bytes, signature: bytes) -> bool:
+        """Verify a signature against the stream's key (kept for outbound/future client use)."""
         signing_key = self._signing_key
         if isinstance(signing_key, Ed25519PrivateKey):
             try:
@@ -1242,6 +1258,12 @@ class Stream:
         return False
 
     def _resolve_inbound_taint(self, sender_id: str, is_verified: bool) -> TaintLevel:
+        """Determine trust level from channel authentication and sender identity.
+
+        Owner taint requires BOTH: the channel authenticated the sender AND the
+        sender_id matches the stream owner. This prevents privilege escalation
+        from authenticated-but-non-owner users.
+        """
         if is_verified and sender_id == self.owner_id:
             return TaintLevel.owner
         return TaintLevel.external
