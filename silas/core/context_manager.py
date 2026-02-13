@@ -1,9 +1,10 @@
-"""Live ContextManager implementation (Phase 1c)."""
+"""Live ContextManager implementation (Phase 1c + tier-2 scorer)."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from silas.context.scorer import ContextScorer
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.models.context import (
     ContextItem,
@@ -33,9 +34,18 @@ _FALLBACK_PROFILE = ContextProfile(
 
 
 class LiveContextManager:
-    def __init__(self, token_budget: TokenBudget, token_counter: HeuristicTokenCounter):
+    def __init__(
+        self,
+        token_budget: TokenBudget,
+        token_counter: HeuristicTokenCounter,
+        *,
+        use_scorer: bool = True,
+        scorer: ContextScorer | None = None,
+    ):
         self._token_budget = token_budget
         self._token_counter = token_counter
+        self._use_scorer = use_scorer
+        self._scorer = scorer or ContextScorer()
 
         # Context storage by scope.
         self.by_scope: dict[str, list[ContextItem]] = {}
@@ -93,7 +103,6 @@ class LiveContextManager:
         return "\n\n".join(blocks)
 
     def enforce_budget(self, scope_id: str, turn_number: int, current_goal: str | None) -> list[str]:
-        del current_goal  # Phase 1c: heuristic-only eviction (no scorer context).
         self._apply_observation_masking(scope_id, turn_number)
 
         usage = self.token_usage(scope_id)
@@ -103,18 +112,58 @@ class LiveContextManager:
         for zone in _EVICTABLE_ZONES:
             zone_key = zone.value
             zone_budget = budgets[zone_key]
-            while usage[zone_key] > zone_budget:
-                candidate = self._pick_eviction_candidate(scope_id, zone)
-                if candidate is None:
-                    break
 
-                removed = self._remove_item(scope_id, candidate.ctx_id)
-                if removed is None:
-                    break
+            if usage[zone_key] <= zone_budget:
+                continue
 
-                evicted.append(removed.ctx_id)
-                usage[zone_key] -= removed.token_count
+            # Tier-2: rank candidates by relevance score so we evict the
+            # least-valuable items first, not just the oldest.
+            if self._use_scorer:
+                evicted += self._evict_scored(
+                    scope_id, zone, zone_budget, usage, current_goal or "",
+                )
+            else:
+                # Tier-1 fallback: pure heuristic (FIFO + relevance).
+                while usage[zone_key] > zone_budget:
+                    candidate = self._pick_eviction_candidate(scope_id, zone)
+                    if candidate is None:
+                        break
+                    removed = self._remove_item(scope_id, candidate.ctx_id)
+                    if removed is None:
+                        break
+                    evicted.append(removed.ctx_id)
+                    usage[zone_key] -= removed.token_count
 
+        return evicted
+
+    def _evict_scored(
+        self,
+        scope_id: str,
+        zone: ContextZone,
+        zone_budget: int,
+        usage: dict[str, int],
+        current_query: str,
+    ) -> list[str]:
+        """Evict lowest-scored items in *zone* until under budget."""
+        zone_key = zone.value
+        candidates = [
+            item
+            for item in self.by_scope.get(scope_id, [])
+            if item.zone == zone and not item.pinned
+        ]
+        # Score ascending — worst candidates first for eviction.
+        scored = self._scorer.score_items(candidates, current_query)
+        scored.sort(key=lambda pair: pair[1])
+
+        evicted: list[str] = []
+        for item, _score in scored:
+            if usage[zone_key] <= zone_budget:
+                break
+            removed = self._remove_item(scope_id, item.ctx_id)
+            if removed is None:
+                continue
+            evicted.append(removed.ctx_id)
+            usage[zone_key] -= removed.token_count
         return evicted
 
     def token_usage(self, scope_id: str) -> dict[str, int]:

@@ -87,6 +87,7 @@ class ContextConfig(BaseModel):
     max_subscription_tokens: int = 2_000
     subscription_ttl_turns: int = 10
     observation_mask_after_turns: int = 5
+    use_scorer: bool = True
     default_profile: str = "conversation"
     profiles: dict[str, ContextProfile] = Field(default_factory=dict)
 
