@@ -72,7 +72,7 @@ def build_stream(
 
     memory_store = SQLiteMemoryStore(db)
     chronicle_store = SQLiteChronicleStore(db)
-    work_item_store = SQLiteWorkItemStore(db)  # noqa: F841 — wired in Phase 3
+    work_item_store = SQLiteWorkItemStore(db)
     audit = SQLiteAuditLog(db)
     nonce_store = SQLiteNonceStore(db)
     token_counter = HeuristicTokenCounter()
@@ -114,6 +114,7 @@ def build_stream(
         channel=channel,
         turn_context=turn_context,
         context_manager=context_manager,
+        work_item_store=work_item_store,
         owner_id=settings.owner_id,
         default_context_profile=settings.context.default_profile,
         output_gate_runner=output_gate_runner,
