@@ -47,4 +47,13 @@ class UndoEntry(BaseModel):
         return now_utc <= self.expires_at
 
 
-__all__ = ["UndoEntry"]
+class UndoResult(BaseModel):
+    """Outcome of an undo attempt — typed so callers don't guess."""
+
+    success: bool
+    message: str
+    expired: bool = False
+    entry_id: str | None = None
+
+
+__all__ = ["UndoEntry", "UndoResult"]

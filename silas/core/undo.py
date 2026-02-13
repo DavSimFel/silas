@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from silas.models.undo import UndoEntry
+from silas.models.undo import UndoEntry, UndoResult
 
 
 def _utc_now() -> datetime:
@@ -95,6 +95,65 @@ class UndoManager:
 
         self._entries_by_scope[scope_id][entry_id] = entry.model_copy(update={"undone_at": now_utc})
         return True
+
+    def is_undoable(self, scope_id: str, entry_id: str, *, now: datetime | None = None) -> bool:
+        """Quick check whether an action can still be reversed."""
+        now_utc = now if now is not None else _utc_now()
+        _require_timezone_aware(now_utc, "now")
+        entry = self._entries_by_scope.get(scope_id, {}).get(entry_id)
+        if entry is None:
+            return False
+        return entry.can_undo(now_utc)
+
+    def execute_undo(
+        self,
+        scope_id: str,
+        entry_id: str,
+        *,
+        apply_reverse_action: Callable[[dict[str, object]], None] | None = None,
+        now: datetime | None = None,
+    ) -> UndoResult:
+        """Typed undo — returns structured result instead of bare bool.
+
+        Why: callers (approval surface, API) need to distinguish between
+        expired, not-found, already-undone, and success without inspecting
+        the entry themselves.
+        """
+        now_utc = now if now is not None else _utc_now()
+        _require_timezone_aware(now_utc, "now")
+
+        entry = self._entries_by_scope.get(scope_id, {}).get(entry_id)
+        if entry is None:
+            return UndoResult(
+                success=False,
+                message=f"No undo entry found for {entry_id}",
+                entry_id=entry_id,
+            )
+        if entry.undone_at is not None:
+            return UndoResult(
+                success=False,
+                message="Action was already undone",
+                entry_id=entry_id,
+            )
+        if now_utc > entry.expires_at:
+            return UndoResult(
+                success=False,
+                message="Undo window has expired",
+                expired=True,
+                entry_id=entry_id,
+            )
+
+        # Apply reverse actions in LIFO order — last effect reversed first
+        for action in reversed(entry.reverse_actions):
+            if apply_reverse_action is not None:
+                apply_reverse_action(dict(action))
+
+        self._entries_by_scope[scope_id][entry_id] = entry.model_copy(update={"undone_at": now_utc})
+        return UndoResult(
+            success=True,
+            message=f"Undone: {entry.summary}" if entry.summary else "Action undone",
+            entry_id=entry_id,
+        )
 
     def build_post_execution_card(
         self,
