@@ -3,6 +3,11 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from silas.approval.fatigue import (
+    ApprovalFatigueMitigator,
+    DecisionRecord,
+    FatigueAnalysis,
+)
 from silas.models.approval import (
     ApprovalDecision,
     ApprovalScope,
@@ -24,9 +29,45 @@ class LiveApprovalManager:
         self._pending: dict[str, PendingApproval] = {}
         # Optional — callers that don't care about metrics can omit it.
         self._ux_metrics = ux_metrics
+        self._fatigue = ApprovalFatigueMitigator()
+        # Resolved decisions for fatigue tracking
+        self._decision_log: list[DecisionRecord] = []
+
+    def get_fatigue_analysis(self, *, window_minutes: int = 30) -> FatigueAnalysis:
+        """Snapshot of current fatigue state for the approval queue."""
+        return self._fatigue.analyze_fatigue(
+            self._decision_log, window_minutes=window_minutes
+        )
 
     def request_approval(self, work_item: WorkItem, scope: ApprovalScope) -> ApprovalToken:
         self._prune_expired()
+        analysis = self.get_fatigue_analysis()
+
+        # High fatigue: auto-approve low-risk scopes so the human
+        # only sees decisions that actually need attention.
+        if self._fatigue.should_auto_approve(analysis, scope):
+            now = datetime.now(UTC)
+            token = ApprovalToken(
+                token_id=uuid.uuid4().hex,
+                plan_hash=work_item.plan_hash(),
+                work_item_id=work_item.id,
+                scope=scope,
+                verdict=ApprovalVerdict.approved,
+                signature=b"auto-fatigue",
+                issued_at=now,
+                expires_at=now + self._timeout,
+                nonce=uuid.uuid4().hex,
+            )
+            decision = ApprovalDecision(verdict=ApprovalVerdict.approved)
+            self._pending[token.token_id] = PendingApproval(
+                token=token,
+                requested_at=now,
+                decision=decision,
+                resolved_at=now,
+                resolved_by="fatigue_auto",
+            )
+            return token
+
         now = datetime.now(UTC)
         token = ApprovalToken(
             token_id=uuid.uuid4().hex,
@@ -38,6 +79,7 @@ class LiveApprovalManager:
             issued_at=now,
             expires_at=now + self._timeout,
             nonce=uuid.uuid4().hex,
+            conditions={"fatigue_level": analysis.fatigue_level.value},
         )
         self._pending[token.token_id] = PendingApproval(
             token=token,
@@ -84,6 +126,15 @@ class LiveApprovalManager:
                 duration_ms=duration_ms,
             )
 
+        # Feed timing data back to fatigue tracker
+        elapsed_ms = (now - pending.requested_at).total_seconds() * 1000
+        self._decision_log.append(
+            DecisionRecord(
+                decided_at=now,
+                decision_time_ms=elapsed_ms,
+                scope=pending.token.scope,
+            )
+        )
         return decision
 
     def list_pending(self) -> list[PendingApproval]:
