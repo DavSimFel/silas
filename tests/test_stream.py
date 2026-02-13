@@ -731,6 +731,36 @@ class PlannerRouteWithPlanActionsModel:
         return RunResult(output=routed)
 
 
+class PlannerRouteWithUnapprovedActionsModel:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def run(self, prompt: str) -> RunResult:
+        self.calls.append(prompt)
+        routed = RouteDecision(
+            route="planner",
+            reason="execute plan actions requiring approval",
+            response=None,
+            interaction_register=InteractionRegister.execution,
+            interaction_mode=InteractionMode.act_and_report,
+            context_profile="planning",
+        )
+        object.__setattr__(
+            routed,
+            "plan_actions",
+            [
+                {
+                    "id": "plan-approve-a",
+                    "type": "task",
+                    "title": "Run approved action",
+                    "body": "Execute approved planner action.",
+                    "skills": ["skill_a"],
+                }
+            ],
+        )
+        return RunResult(output=routed)
+
+
 @pytest.mark.asyncio
 async def test_planner_route_executes_plan_actions_and_returns_summary(
     channel: InMemoryChannel,
@@ -775,6 +805,54 @@ async def test_planner_route_executes_plan_actions_and_returns_summary(
     assert plan_a.status == WorkItemStatus.done
     assert plan_b is not None
     assert plan_b.status == WorkItemStatus.done
+
+
+@pytest.mark.asyncio
+async def test_planner_route_requests_approval_then_executes_work_items(
+    turn_context,
+) -> None:
+    channel = ApprovalDecisionChannel(ApprovalVerdict.approved)
+    planner_model = PlannerRouteWithUnapprovedActionsModel()
+    turn_context.proxy = PlannerRouteModel()
+    turn_context.planner = planner_model
+    turn_context.approval_manager = LiveApprovalManager()
+
+    skill_registry = SkillRegistry()
+    skill_registry.register(
+        SkillDefinition(
+            name="skill_a",
+            description="test skill a",
+            version="1.0.0",
+            input_schema={"type": "object"},
+            output_schema={"type": "object"},
+            requires_approval=False,
+            timeout_seconds=5,
+        )
+    )
+    skill_executor = SkillExecutor(skill_registry=skill_registry)
+    executed_ids: list[str] = []
+
+    async def _skill_a(inputs: dict[str, object]) -> dict[str, object]:
+        executed_ids.append(str(inputs["work_item_id"]))
+        return {"ok": True}
+
+    skill_executor.register_handler("skill_a", _skill_a)
+    work_store = InMemoryWorkItemStore()
+    turn_context.skill_registry = skill_registry
+    turn_context.skill_executor = skill_executor
+    turn_context.work_executor = LiveWorkItemExecutor(
+        skill_executor=skill_executor,
+        work_item_store=work_store,
+        approval_verifier=_StreamAllowAllApprovalVerifier(),
+    )
+
+    stream = _stream(channel, turn_context)
+    result = await stream._process_turn(_msg("run approved plan"))
+
+    assert result == "Plan execution summary: 1 done, 0 failed."
+    assert planner_model.calls
+    assert len(channel.cards) == 1
+    assert executed_ids == ["plan-approve-a"]
 
 
 @pytest.mark.asyncio

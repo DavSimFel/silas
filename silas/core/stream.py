@@ -35,7 +35,9 @@ from silas.core.plan_executor import (
     execute_plan_actions,
     extract_skill_inputs,
     extract_skill_name,
+    plan_action_to_work_item,
 )
+from silas.core.plan_parser import MarkdownPlanParser
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
 from silas.gates import SilasGateRunner
@@ -1409,6 +1411,7 @@ class Stream:
                     turn_number,
                     continuation_of,
                     interaction_mode,
+                    connection_id,
                 )
                 if work_exec_summary is not None:
                     response_text = work_exec_summary
@@ -1687,6 +1690,7 @@ class Stream:
         turn_number: int,
         continuation_of: str | None,
         interaction_mode: InteractionMode,
+        connection_id: str,
     ) -> str | None:
         """Try executing plan actions via work executor. Returns summary or None."""
         executor = self._turn_context().work_executor
@@ -1697,14 +1701,83 @@ class Stream:
             {**action, "interaction_mode": interaction_mode.value}
             for action in plan_actions
         ]
-        summary = await execute_plan_actions(
+        approved_actions = await self._ensure_plan_action_approvals(
             plan_actions_with_mode,
+            turn_number=turn_number,
+            connection_id=connection_id,
+        )
+        if not approved_actions:
+            return "Plan execution skipped: approval was not granted."
+
+        summary = await execute_plan_actions(
+            approved_actions,
             executor,
             turn_number=turn_number,
             continuation_of=continuation_of,
         )
         await self._audit("planner_actions_executed", turn_number=turn_number, summary=summary)
         return summary
+
+    async def _ensure_plan_action_approvals(
+        self,
+        plan_actions: list[dict[str, object]],
+        *,
+        turn_number: int,
+        connection_id: str,
+    ) -> list[dict[str, object]]:
+        """Attach approval tokens to plan actions when required and available."""
+        if self._approval_flow is None:
+            return plan_actions
+
+        approved_actions: list[dict[str, object]] = []
+        parser = MarkdownPlanParser()
+        for index, action in enumerate(plan_actions):
+            if action.get("approval_token") is not None:
+                approved_actions.append(action)
+                continue
+
+            try:
+                work_item = plan_action_to_work_item(
+                    action,
+                    parser=parser,
+                    index=index,
+                    turn_number=turn_number,
+                )
+            except ValueError:
+                approved_actions.append(action)
+                continue
+
+            skill_name = extract_skill_name(action) or "plan_action"
+            decision, token = await self._approval_flow.request_skill_approval(
+                work_item=work_item,
+                scope=ApprovalScope.full_plan,
+                skill_name=skill_name,
+                connection_id=connection_id,
+            )
+            if decision is None or decision.verdict != ApprovalVerdict.approved or token is None:
+                await self._audit(
+                    "planner_action_approval_declined",
+                    turn_number=turn_number,
+                    action_index=index,
+                    skill_name=skill_name,
+                    verdict=decision.verdict.value if decision is not None else "timed_out",
+                )
+                continue
+
+            approved_actions.append(
+                {
+                    **action,
+                    "approval_token": token.model_dump(mode="python"),
+                }
+            )
+            await self._audit(
+                "planner_action_approval_attached",
+                turn_number=turn_number,
+                action_index=index,
+                skill_name=skill_name,
+            )
+
+        return approved_actions
 
     async def _execute_planner_skill_actions(
         self,
