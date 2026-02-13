@@ -18,6 +18,7 @@ from typing import Protocol, runtime_checkable
 
 from silas.queue.consult import ConsultPlannerManager
 from silas.queue.replan import ReplanManager
+from silas.queue.research import ResearchStateMachine
 from silas.queue.router import QueueRouter
 from silas.queue.status_router import route_to_surface
 from silas.queue.store import DurableQueueStore
@@ -228,9 +229,8 @@ class PlannerConsumer(BaseConsumer):
 
     Handles: plan_request, research_result, replan_request.
 
-    For plan_request: runs planner → produces plan → enqueues plan_result.
-    For research_result: feeds result into planner's research state machine.
-    For replan_request: runs planner with failure context → enqueues revised plan_result.
+    Uses ResearchStateMachine (§4.8) to track multi-step research flows:
+    planner runs → requests research → executor responds → planner finalizes.
     """
 
     def __init__(
@@ -240,9 +240,18 @@ class PlannerConsumer(BaseConsumer):
         planner_agent: PlannerAgentProtocol,
         *,
         max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
+        research_sm: ResearchStateMachine | None = None,
     ) -> None:
         super().__init__(store, router, "planner_queue", max_attempts=max_attempts)
         self._planner = planner_agent
+        # Why injectable: tests can provide a pre-configured state machine
+        # with custom caps/timeouts without monkey-patching.
+        self._research = research_sm or ResearchStateMachine()
+
+    @property
+    def research_sm(self) -> ResearchStateMachine:
+        """Expose state machine for testing and introspection."""
+        return self._research
 
     async def _process(self, msg: QueueMessage) -> QueueMessage | None:
         """Dispatch planner messages and produce plan_result responses."""
@@ -255,46 +264,87 @@ class PlannerConsumer(BaseConsumer):
         if kind == "research_result":
             return await self._handle_research_result(msg)
 
-        # Unknown kinds get logged and dropped.
         logger.warning("PlannerConsumer received unexpected kind: %s", kind)
         return None
 
-    async def _handle_plan_request(self, msg: QueueMessage) -> QueueMessage:
-        """Run planner on user request and produce a plan_result."""
+    async def _handle_plan_request(self, msg: QueueMessage) -> QueueMessage | None:
+        """Run planner and check if it requests research before finalizing.
+
+        Why nullable return: if the planner requests research, we dispatch
+        research_request messages via the router but don't produce a
+        plan_result yet — that comes when research completes.
+        """
+        self._research.reset()
         user_request = str(msg.payload.get("user_request", ""))
         result = await self._planner.run(user_request)
         output = getattr(result, "output", None)
 
-        plan_markdown = ""
-        message = ""
-        if output is not None:
-            plan_action = getattr(output, "plan_action", None)
-            if plan_action is not None:
-                plan_markdown = getattr(plan_action, "plan_markdown", "") or ""
-            message = getattr(output, "message", "") or ""
+        # Check if planner's response includes research requests
+        research_requests = self._extract_research_requests(output)
 
-        return QueueMessage(
-            message_kind="plan_result",
-            sender="planner",
-            trace_id=msg.trace_id,
-            payload={
-                "plan_markdown": plan_markdown,
-                "message": message,
-                "user_request": user_request,
-            },
-        )
+        if research_requests:
+            return await self._dispatch_research(research_requests, msg)
+
+        return self._build_plan_result(output, msg, user_request)
+
+    def _extract_research_requests(self, output: object) -> list[dict[str, object]]:
+        """Pull research requests from planner output if present.
+
+        Why getattr chain: planner output is accessed via protocol, so we
+        can't assume concrete types. Research requests are an optional list
+        on the output object.
+        """
+        if output is None:
+            return []
+        requests = getattr(output, "research_requests", None)
+        if isinstance(requests, list):
+            return [r if isinstance(r, dict) else vars(r) for r in requests]
+        return []
+
+    async def _dispatch_research(
+        self, requests: list[dict[str, object]], origin_msg: QueueMessage
+    ) -> QueueMessage | None:
+        """Enqueue research requests to executor_queue via state machine.
+
+        Returns None because plan_result comes later when research completes.
+        """
+        for req in requests:
+            request_id = str(req.get("request_id", ""))
+            query = str(req.get("query", ""))
+            return_format = str(req.get("return_format", ""))
+            max_tokens = int(req.get("max_tokens", 500))
+
+            accepted = self._research.request_research(
+                request_id=request_id,
+                query=query,
+                return_format=return_format,
+                max_tokens=max_tokens,
+            )
+
+            if accepted:
+                research_msg = QueueMessage(
+                    message_kind="research_request",
+                    sender="planner",
+                    trace_id=origin_msg.trace_id,
+                    payload={
+                        "request_id": request_id,
+                        "query": query,
+                        "return_format": return_format,
+                        "max_tokens": max_tokens,
+                        "original_request": str(
+                            origin_msg.payload.get("user_request", "")
+                        ),
+                        "research_mode": True,
+                    },
+                )
+                await self._router.route(research_msg)
+
+        return None
 
     async def _handle_replan_request(self, msg: QueueMessage) -> QueueMessage:
-        """Run planner with failure context to produce a revised plan.
-
-        Why separate from plan_request: the prompt includes failure history
-        so the planner knows what was already tried and must produce an
-        alternative strategy, not retry the same approach.
-        """
+        """Run planner with failure context to produce a revised plan."""
         original_goal = str(msg.payload.get("original_goal", ""))
         failure_history = msg.payload.get("failure_history", [])
-        # Why explicit prompt construction: the planner needs to see the
-        # full failure context to generate a meaningfully different plan.
         prompt = (
             f"REPLAN REQUEST — previous approach failed.\n\n"
             f"Original goal: {original_goal}\n\n"
@@ -325,35 +375,102 @@ class PlannerConsumer(BaseConsumer):
         )
 
     async def _handle_research_result(self, msg: QueueMessage) -> QueueMessage | None:
-        """Feed research results back into the planner.
+        """Feed research result into state machine; finalize if all results are in.
 
-        Research results complete an in-flight research request. The planner
-        may need to integrate this into an ongoing plan. For now, we re-run
-        the planner with the research context appended.
+        Why check state: if the SM is already expired or finalized, late
+        results are ignored per §4.8 cancel semantics.
         """
+        request_id = str(msg.payload.get("request_id", ""))
         research_data = str(msg.payload.get("result", ""))
-        original_request = str(msg.payload.get("original_request", ""))
+
+        accepted = self._research.receive_result(
+            request_id=request_id,
+            result=research_data,
+            message_id=msg.id,
+        )
+
+        if not accepted:
+            return None
+
+        # Check timeouts on remaining in-flight requests
+        self._research.check_timeouts()
+
+        from silas.queue.research import ResearchState
+
+        if self._research.state in (
+            ResearchState.ready_to_finalize,
+            ResearchState.expired,
+        ):
+            return await self._finalize_with_research(msg)
+
+        # Still waiting for more results
+        return None
+
+    async def _finalize_with_research(self, msg: QueueMessage) -> QueueMessage:
+        """Re-run planner with collected research results to produce final plan."""
+        from silas.queue.research import ResearchState
+
+        is_expired = self._research.state == ResearchState.expired
+        results = self._research.finalize()
+        is_partial = is_expired or self._research.last_finalize_was_partial
+
+        # Build research context for the planner
+        research_context = "\n\n".join(
+            f"[Research {rid}]:\n{text}" for rid, text in results.items()
+        )
 
         prompt = (
-            f"Research result received for request: {original_request}\n\n"
-            f"Result:\n{research_data}\n\n"
-            f"Integrate this into the current plan."
+            f"Finalize plan with research results"
+            f"{' (PARTIAL — some research timed out)' if is_partial else ''}:\n\n"
+            f"{research_context}\n\n"
+            f"Produce the final plan now."
         )
+
         result = await self._planner.run(prompt)
         output = getattr(result, "output", None)
 
         plan_action = getattr(output, "plan_action", None) if output else None
-        plan_markdown = getattr(plan_action, "plan_markdown", "") or "" if plan_action else ""
+        plan_markdown = (
+            getattr(plan_action, "plan_markdown", "") or "" if plan_action else ""
+        )
         message_text = getattr(output, "message", "") or "" if output else ""
 
-        if plan_markdown:
-            return QueueMessage(
-                message_kind="plan_result",
-                sender="planner",
-                trace_id=msg.trace_id,
-                payload={"plan_markdown": plan_markdown, "message": message_text},
-            )
-        return None
+        return QueueMessage(
+            message_kind="plan_result",
+            sender="planner",
+            trace_id=msg.trace_id,
+            payload={
+                "plan_markdown": plan_markdown,
+                "message": message_text,
+                "partial_research": is_partial,
+            },
+        )
+
+    def _build_plan_result(
+        self,
+        output: object,
+        msg: QueueMessage,
+        user_request: str,
+    ) -> QueueMessage:
+        """Extract plan from planner output and build plan_result message."""
+        plan_markdown = ""
+        message = ""
+        if output is not None:
+            plan_action = getattr(output, "plan_action", None)
+            if plan_action is not None:
+                plan_markdown = getattr(plan_action, "plan_markdown", "") or ""
+            message = getattr(output, "message", "") or ""
+
+        return QueueMessage(
+            message_kind="plan_result",
+            sender="planner",
+            trace_id=msg.trace_id,
+            payload={
+                "plan_markdown": plan_markdown,
+                "message": message,
+                "user_request": user_request,
+            },
+        )
 
 
 class ExecutorConsumer(BaseConsumer):
