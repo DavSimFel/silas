@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -77,6 +78,8 @@ class LiveWorkItemExecutor:
         audit: AuditLog | None = None,
         consult_manager: ConsultPlannerManager | None = None,
         replan_manager: ReplanManager | None = None,
+        pool: object | None = None,
+        scope_id: str | None = None,
     ) -> None:
         self._skill_executor = skill_executor
         self._work_item_store = work_item_store
@@ -85,6 +88,8 @@ class LiveWorkItemExecutor:
         self._audit = audit
         self._consult_manager = consult_manager
         self._replan_manager = replan_manager
+        self._pool = pool
+        self._scope_id = scope_id or "default"
 
         sandbox_manager = create_sandbox_manager()
         self._executor_registry: dict[WorkItemExecutorType, object] = {
@@ -108,44 +113,60 @@ class LiveWorkItemExecutor:
         aggregate_budget = BudgetUsed()
         execution_results: dict[str, WorkItemResult] = {}
 
-        for work_item_id in ordered_ids:
-            work_item = items_by_id[work_item_id]
-            unmet = [
-                dep_id
-                for dep_id in prerequisites.get(work_item_id, set())
-                if execution_results.get(dep_id) is None
-                or execution_results[dep_id].status != WorkItemStatus.done
-            ]
-            if unmet:
-                unmet_str = ", ".join(sorted(unmet))
-                return await self._mark_failed(
-                    root_item,
-                    f"dependency not completed: {unmet_str}",
-                    budget_used=aggregate_budget,
-                )
+        # Build wave schedule: groups of items whose deps are all satisfied
+        waves = self._build_waves(ordered_ids, prerequisites)
 
-            if work_item.status == WorkItemStatus.done:
-                done_result = WorkItemResult(
-                    work_item_id=work_item.id,
-                    status=WorkItemStatus.done,
-                    summary=f"Work item {work_item.id} already complete.",
-                    budget_used=work_item.budget_used.model_copy(deep=True),
-                )
-                execution_results[work_item.id] = done_result
-                aggregate_budget.merge(done_result.budget_used.model_copy(deep=True))
+        for wave in waves:
+            wave_items = [items_by_id[wid] for wid in wave]
+
+            # Skip already-done items
+            pending_items: list[WorkItem] = []
+            for work_item in wave_items:
+                if work_item.status == WorkItemStatus.done:
+                    done_result = WorkItemResult(
+                        work_item_id=work_item.id,
+                        status=WorkItemStatus.done,
+                        summary=f"Work item {work_item.id} already complete.",
+                        budget_used=work_item.budget_used.model_copy(deep=True),
+                    )
+                    execution_results[work_item.id] = done_result
+                    aggregate_budget.merge(done_result.budget_used.model_copy(deep=True))
+                else:
+                    pending_items.append(work_item)
+
+            if not pending_items:
                 continue
 
-            result = await self._execute_single(work_item)
-            execution_results[work_item.id] = result
-            aggregate_budget.merge(result.budget_used.model_copy(deep=True))
-            if result.status != WorkItemStatus.done:
-                if work_item.id == root_item.id:
-                    return result
-                return await self._mark_failed(
-                    root_item,
-                    f"dependency {work_item.id} failed: {result.last_error or result.summary}",
-                    budget_used=aggregate_budget,
-                )
+            # Check that all deps for this wave passed
+            for work_item in pending_items:
+                unmet = [
+                    dep_id
+                    for dep_id in prerequisites.get(work_item.id, set())
+                    if execution_results.get(dep_id) is None
+                    or execution_results[dep_id].status != WorkItemStatus.done
+                ]
+                if unmet:
+                    unmet_str = ", ".join(sorted(unmet))
+                    return await self._mark_failed(
+                        root_item,
+                        f"dependency not completed: {unmet_str}",
+                        budget_used=aggregate_budget,
+                    )
+
+            # Dispatch wave: parallel if pool exists and >1 item, else serial
+            wave_results = await self._dispatch_wave(pending_items)
+
+            for work_item, result in zip(pending_items, wave_results, strict=True):
+                execution_results[work_item.id] = result
+                aggregate_budget.merge(result.budget_used.model_copy(deep=True))
+                if result.status != WorkItemStatus.done:
+                    if work_item.id == root_item.id:
+                        return result
+                    return await self._mark_failed(
+                        root_item,
+                        f"dependency {work_item.id} failed: {result.last_error or result.summary}",
+                        budget_used=aggregate_budget,
+                    )
 
         root_result = execution_results.get(root_item.id)
         if root_result is not None:
@@ -162,6 +183,62 @@ class LiveWorkItemExecutor:
             summary=f"Executed {len(ordered_ids)} work item(s) successfully.",
             budget_used=aggregate_budget,
         )
+
+    async def _dispatch_wave(self, items: list[WorkItem]) -> list[WorkItemResult]:
+        """Execute a wave of independent work items.
+
+        Uses the executor pool for parallel dispatch when available and
+        there are multiple items.  Falls back to serial execution.
+        """
+        if self._pool is not None and len(items) > 1:
+            logger.info(
+                "parallel_dispatch wave_size=%d scope=%s",
+                len(items),
+                self._scope_id,
+            )
+            coros = [
+                self._pool.dispatch(item, self._scope_id)
+                for item in items
+            ]
+            return list(await asyncio.gather(*coros))
+
+        # Serial fallback (single item or no pool)
+        return [await self._execute_single(item) for item in items]
+
+    def _build_waves(
+        self,
+        ordered_ids: list[str],
+        prerequisites: dict[str, set[str]],
+    ) -> list[list[str]]:
+        """Group topologically-sorted IDs into parallel waves.
+
+        Each wave contains items whose dependencies are all in previous
+        waves.  Items within a wave have no inter-dependencies and can
+        be dispatched concurrently.
+        """
+        completed: set[str] = set()
+        waves: list[list[str]] = []
+
+        remaining = list(ordered_ids)
+        while remaining:
+            wave: list[str] = []
+            still_remaining: list[str] = []
+            for item_id in remaining:
+                deps = prerequisites.get(item_id, set())
+                if deps <= completed:
+                    wave.append(item_id)
+                else:
+                    still_remaining.append(item_id)
+            if not wave:
+                # All remaining items have unresolved deps — break to avoid
+                # infinite loop (shouldn't happen after topo sort, but be safe)
+                wave = still_remaining
+                still_remaining = []
+            waves.append(wave)
+            completed.update(wave)
+            remaining = still_remaining
+
+        return waves
 
     async def _execute_single(self, item: WorkItem) -> WorkItemResult:
         work_item = item.model_copy(deep=True)
