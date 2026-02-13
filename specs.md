@@ -265,7 +265,7 @@ Moved to `specs/project-structure.md` (normative reference).
 
 | Package | Purpose | Version Constraint |
 |---|---|---|
-| `pynacl` | Ed25519 signing/verification (libsodium) | `>=1.5,<2` |
+| `cryptography` | Ed25519 signing/verification | `>=43.0` |
 | `keyring` | OS credential store for private keys | `>=25.0,<26` |
 
 ### Memory
@@ -1068,7 +1068,7 @@ Manages the Ed25519 keypair used for cryptographic approval.
 Ed25519 is the security boundary. All approvals use `tap` strength.
 
 **Key generation (`generate_keypair`):**
-1. Generate an Ed25519 keypair using libsodium (via PyNaCl)
+1. Generate an Ed25519 keypair using the `cryptography` library (Ed25519)
 2. Store the private (signing) key in the OS keyring via the `keyring` library, keyed by the owner ID
 3. Return the public (verify) key as a hex-encoded string
 

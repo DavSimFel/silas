@@ -109,7 +109,7 @@ Silas is a fully autonomous AI runtime — three pydantic-ai agent loops (proxy/
 | 6 | Skill import/adaptation (§10.4) | Zero implementation |
 | 7 | Step 0.5 batch review polling | Review surface decision queue not fully wired |
 | 8 | Concurrent turn isolation tests | Multi-connection correctness unproven |
-| 9 | Spec says pynacl, code uses cryptography | Documentation divergence |
+| 9 | ~~Spec says pynacl, code uses cryptography~~ | Fixed — spec updated to `cryptography` |
 | 10 | CLI channel adapter | Only web + telegram confirmed |
 
 ### Low Priority (UX/Polish)
@@ -156,7 +156,7 @@ Silas is a fully autonomous AI runtime — three pydantic-ai agent loops (proxy/
 ## Key Dependencies
 
 - `pydantic-ai` — agent framework
-- `cryptography` — Ed25519 signing (spec says pynacl, code uses cryptography)
+- `cryptography` — Ed25519 signing (spec and code aligned)
 - `httpx` — async HTTP (Telegram channel)
 - `guardrails-ai` — optional gate provider
 - SQLite — all stores including queue store
