@@ -508,9 +508,10 @@ async def test_process_turn_stores_raw_memory_with_session_id(
         item for item in memory_store.items.values()
         if item.source_kind == "conversation_raw"
     ]
-    assert len(raw_items) == 1
-    assert raw_items[0].session_id == stream.session_id
-    assert raw_items[0].session_id is not None
+    # Step 3.5 ingests input, step 11.5 ingests output — expect 2.
+    assert len(raw_items) == 2
+    assert all(item.session_id == stream.session_id for item in raw_items)
+    assert all(item.session_id is not None for item in raw_items)
 
 
 @pytest.mark.asyncio
