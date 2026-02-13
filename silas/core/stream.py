@@ -38,7 +38,15 @@ from silas.core.plan_executor import (
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
 from silas.gates import OutputGateRunner
-from silas.models.agents import AgentResponse, InteractionMode, PlanAction, RouteDecision
+from silas.memory.retriever import SilasMemoryRetriever
+from silas.models.agents import (
+    AgentResponse,
+    InteractionMode,
+    MemoryOp,
+    MemoryOpType,
+    PlanAction,
+    RouteDecision,
+)
 from silas.models.approval import ApprovalScope, ApprovalVerdict
 from silas.models.connections import ConnectionFailure
 from silas.models.context import ContextItem, ContextSubscription, ContextZone
@@ -55,6 +63,7 @@ from silas.models.work import WorkItem, WorkItemStatus, WorkItemType
 from silas.protocols.approval import NonceStore
 from silas.protocols.channels import ChannelAdapterCore
 from silas.protocols.connections import ConnectionManager
+from silas.protocols.memory import MemoryStore
 from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
 from silas.protocols.scheduler import TaskScheduler
 from silas.protocols.work import PlanParser, WorkItemStore
@@ -1115,8 +1124,16 @@ class Stream:
                 turn_number,
             )
 
-            await self._audit("phase1a_noop", step=9, note="memory query processing skipped")
-            await self._audit("phase1a_noop", step=10, note="memory op processing skipped")
+            # Step 9 — execute memory queries the agent requested
+            await self._process_memory_queries(
+                routed.response, signed.taint, session_id, scope_id,
+                cm, turn_number,
+            )
+
+            # Step 10 — execute memory write ops (gated)
+            await self._process_memory_ops(
+                routed.response, signed.taint, session_id, turn_number,
+            )
 
             response_item = ContextItem(
                 ctx_id=f"chronicle:{turn_number}:resp:{uuid.uuid4().hex}",
@@ -1134,7 +1151,10 @@ class Stream:
             if tc.chronicle_store is not None:
                 await tc.chronicle_store.append(scope_id, response_item)
 
-            await self._audit("phase1a_noop", step=11.5, note="raw output ingest skipped")
+            # Step 11.5 — ingest agent output as raw memory for future recall
+            await self._ingest_raw_memory(
+                response_text, TaintLevel.owner, session_id, turn_number,
+            )
             await self.channel.send(connection_id, response_text, reply_to=message.reply_to)
             await self._audit("phase1a_noop", step=14, note="access state updates skipped")
             await self._record_autonomy_outcome(
@@ -1840,6 +1860,155 @@ class Stream:
                 source_kind="conversation_raw",
             ),
         )
+
+    async def _process_memory_queries(
+        self,
+        response: AgentResponse | None,
+        request_taint: TaintLevel,
+        session_id: str,
+        scope_id: str,
+        cm: LiveContextManager | None,
+        turn_number: int,
+    ) -> list[MemoryItem]:
+        """Step 9: run memory queries the agent attached to its response.
+
+        Taint gate: external-tainted contexts must not receive owner-tainted
+        memories, preventing data leakage across trust boundaries.
+        """
+        if response is None or not response.memory_queries:
+            await self._audit("memory_queries_skipped", step=9, reason="no queries")
+            return []
+
+        tc = self._turn_context()
+        memory_store = tc.memory_store
+        if memory_store is None:
+            await self._audit("memory_queries_skipped", step=9, reason="no memory store")
+            return []
+
+        retriever = SilasMemoryRetriever(memory_store)
+        all_results: list[MemoryItem] = []
+
+        for query in response.memory_queries:
+            results = await retriever.retrieve(query, scope_id=scope_id, session_id=session_id)
+
+            # Taint gate: strip owner memories when the request came from
+            # an external context — prevents cross-boundary data leakage.
+            if request_taint == TaintLevel.external:
+                results = [r for r in results if r.taint != TaintLevel.owner]
+
+            all_results.extend(results)
+            await self._audit(
+                "memory_query_executed",
+                step=9,
+                strategy=query.strategy.value,
+                query=query.query,
+                result_count=len(results),
+            )
+
+        # Inject retrieved memories into live context for the next turn.
+        if all_results and cm is not None:
+            for item in all_results:
+                cm.add(scope_id, ContextItem(
+                    ctx_id=f"mem_recall:{turn_number}:{item.memory_id}",
+                    zone=ContextZone.memory,
+                    content=item.content,
+                    token_count=_counter.count(item.content),
+                    created_at=datetime.now(UTC),
+                    turn_number=turn_number,
+                    source="memory:query_result",
+                    taint=item.taint,
+                    kind="memory",
+                ))
+
+        return all_results
+
+    async def _process_memory_ops(
+        self,
+        response: AgentResponse | None,
+        request_taint: TaintLevel,
+        session_id: str,
+        turn_number: int,
+    ) -> None:
+        """Step 10: execute memory write ops the agent requested.
+
+        All ops are gated: external-tainted requests cannot write memories
+        (prevents prompt-injection from persisting attacker content).
+        Store/update/delete each route to the appropriate MemoryStore method.
+        """
+        if response is None or not response.memory_ops:
+            await self._audit("memory_ops_skipped", step=10, reason="no ops")
+            return
+
+        tc = self._turn_context()
+        memory_store = tc.memory_store
+        if memory_store is None:
+            await self._audit("memory_ops_skipped", step=10, reason="no memory store")
+            return
+
+        # Hard gate: external contexts cannot write memories at all.
+        if request_taint == TaintLevel.external:
+            await self._audit(
+                "memory_ops_blocked",
+                step=10,
+                reason="external taint",
+                op_count=len(response.memory_ops),
+            )
+            return
+
+        for op in response.memory_ops:
+            try:
+                await self._execute_single_memory_op(memory_store, op, session_id, turn_number)
+                await self._audit(
+                    "memory_op_executed",
+                    step=10,
+                    op=op.op.value,
+                    memory_id=op.memory_id,
+                )
+            except Exception as exc:
+                await self._audit(
+                    "memory_op_failed",
+                    step=10,
+                    op=op.op.value,
+                    memory_id=op.memory_id,
+                    error=str(exc),
+                )
+
+    async def _execute_single_memory_op(
+        self,
+        memory_store: MemoryStore,
+        op: MemoryOp,
+        session_id: str,
+        turn_number: int,
+    ) -> None:
+        """Dispatch a single memory op to the store."""
+        if op.op == MemoryOpType.store:
+            tc = self._turn_context()
+            await memory_store.store(
+                MemoryItem(
+                    memory_id=f"agent_op:{tc.scope_id}:{turn_number}:{uuid.uuid4().hex}",
+                    content=op.content or "",
+                    memory_type=op.memory_type,
+                    taint=TaintLevel.owner,
+                    semantic_tags=op.tags,
+                    entity_refs=op.entity_refs,
+                    session_id=session_id,
+                    source_kind="agent_memory_op",
+                ),
+            )
+        elif op.op == MemoryOpType.update:
+            assert op.memory_id is not None  # validated by MemoryOp
+            await memory_store.update(op.memory_id, content=op.content)
+        elif op.op == MemoryOpType.delete:
+            assert op.memory_id is not None
+            await memory_store.delete(op.memory_id)
+        elif op.op == MemoryOpType.link:
+            # Link ops update causal_refs — the lightweight graph edge.
+            assert op.memory_id is not None
+            assert op.link_to is not None
+            existing = await memory_store.get(op.memory_id)
+            if existing is not None:
+                new_refs = [*existing.causal_refs, op.link_to]
+                await memory_store.update(op.memory_id, causal_refs=new_refs)
 
     def _take_evicted_context_items(
         self,
