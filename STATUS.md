@@ -1,6 +1,6 @@
 # Implementation Status
 
-Last updated: 2026-02-13 (post gap review v2)
+Last updated: 2026-02-13 (post PRs #86-94 merge)
 
 ---
 
@@ -19,12 +19,12 @@ Silas is a fully autonomous AI runtime — three pydantic-ai agent loops (proxy/
 
 ## Current State
 
-**Overall: ~85-88% of spec implemented. The autonomous loop is real.**
+**Overall: ~93% of spec implemented. The autonomous loop is real.**
 
-- **129 commits ahead of main**, 85 PRs merged (#27-#85)
-- **1,003 tests** across 67 files, 0 lint errors (ruff strict, C901 max=12)
-- **~25K LOC** (silas/), **~18K LOC** (tests/), test:code ratio 0.72:1
-- **169 Python modules**
+- **138 commits ahead of main**, 94 PRs merged (#27-#94)
+- **1,036 tests** across 74 files, 0 lint errors (ruff strict, C901 max=12)
+- **~25K LOC** (silas/), **~20K LOC** (tests/), test:code ratio 0.79:1
+- **172 Python modules**
 - Queue-based execution is the **default path** — procedural is fallback only
 - All 6 security invariants enforced (INV-01 through INV-06)
 
@@ -38,6 +38,7 @@ Silas is a fully autonomous AI runtime — three pydantic-ai agent loops (proxy/
 - `QueueBridge` — Stream integration seam (filtered lease, no nack storms)
 - `QueueOrchestrator` — consumer lifecycle with health checks
 - Queue is default execution path (`config.execution.use_queue_path = True`)
+- **Full e2e queue loop test** — user → proxy → planner → executor → result through actual queues
 
 ### Self-Healing Cascade
 - Retry → consult-planner (90s timeout) → replan (max depth 2) → escalate
@@ -52,12 +53,20 @@ Silas is a fully autonomous AI runtime — three pydantic-ai agent loops (proxy/
 ### Security & Approval
 - `SilasApprovalVerifier` (Ed25519 via `cryptography` lib), `SQLiteNonceStore`
 - `LiveApprovalManager` with UX metrics recording + fatigue analysis
-- `SilasGateRunner` — unified two-lane model for input AND output gates
+- `SilasGateRunner` — unified two-lane model for input AND output gates (OutputGateRunner removed)
 - `SilasAccessController` — gate-driven access state
 - `TaintTracker` — contextvars-based, tool-category taint ceilings, lattice-join propagation
-- `SkillHasher` — SHA-256 hash-bound versioning at install
+- **Skill tool taint classification** — dynamic skills properly classified via TaintTracker categories
+- `SkillHasher` — SHA-256 hash-bound versioning at install, **load-time verification enforced**
 - Secret isolation (Tier 1 + Tier 2)
 - Channel-based inbound trust classification (no more self-sign-then-verify)
+- **Batch review polling** — `ReviewQueue` with priority ordering, batch resolve, expiry
+
+### Skills & Connections
+- `SilasSkillLoader`, `LiveSkillResolver`, `SkillValidator`
+- **Skill import/adaptation (§10.4)** — full implementation
+- `LiveConnectionManager` — health checks, token refresh, degraded/unhealthy detection
+- **Connection-as-skill integration (§2.5/§10.6)** — connections invocable as skills
 
 ### Memory & Context
 - `SQLiteMemoryStore`, `SilasMemoryRetriever`, `SilasMemoryConsolidator`
@@ -70,15 +79,15 @@ Silas is a fully autonomous AI runtime — three pydantic-ai agent loops (proxy/
 - `LiveWorkItemExecutor` — retry loop, verification, budget, INV-01/INV-03 enforced
 - `SubprocessSandboxManager` + `DockerSandboxManager` (factory pattern, feature-flagged)
 - Executor type registry (shell/python/skill)
+- **Concurrent turn isolation** — verified via dedicated test suite
 
 ### Channels
 - `WebChannel` (WebSocket + REST), onboarding flow
 - `TelegramChannel` (webhook, owner detection, message splitting)
+- **`CLIChannel`** — local development/testing adapter
 
 ### Infrastructure
 - `SilasScheduler` (APScheduler)
-- `SilasSkillLoader`, `LiveSkillResolver`, `SkillValidator`
-- `LiveConnectionManager` — health checks, token refresh, degraded/unhealthy detection
 - `UndoManager` — 5-minute undo window, typed results
 - `UXMetricsCollector` — approval timing, fatigue score, batch efficiency
 - `ApprovalFatigueMitigator` — auto-approve low-risk at high fatigue
@@ -92,26 +101,6 @@ Silas is a fully autonomous AI runtime — three pydantic-ai agent loops (proxy/
 
 ## ⚠️ Remaining Gaps
 
-### High Priority
-
-| # | Item | Detail |
-|---|------|--------|
-| 1 | **Full queue loop e2e test** | No test runs user → proxy → planner → executor → result through actual queues |
-| 2 | **Clean up OutputGateRunner** | Old class still exists despite unification PR; verify two-lane model for output |
-| 3 | **Skill tool taint classification** | Dynamic skills bypass TaintTracker categories — external-interacting skills treated as owner |
-| 4 | **Verify skill hash at load time** | SkillHasher computes hashes; load-time verification path needs confirmation |
-| 5 | **Connection-as-skill integration** | LiveConnectionManager is standalone, not skill-invoking per spec §2.5/§10.6 |
-
-### Medium Priority
-
-| # | Item | Detail |
-|---|------|--------|
-| 6 | Skill import/adaptation (§10.4) | Zero implementation |
-| 7 | Step 0.5 batch review polling | Review surface decision queue not fully wired |
-| 8 | Concurrent turn isolation tests | Multi-connection correctness unproven |
-| 9 | ~~Spec says pynacl, code uses cryptography~~ | Fixed — spec updated to `cryptography` |
-| 10 | CLI channel adapter | Only web + telegram confirmed |
-
 ### Low Priority (UX/Polish)
 
 | # | Item | Detail |
@@ -121,6 +110,29 @@ Silas is a fully autonomous AI runtime — three pydantic-ai agent loops (proxy/
 | 13 | Three distinct UI surfaces (§0.5.1) | Frontend architecture |
 | 14 | Adversarial sandbox escape tests | Security hardening |
 | 15 | Approval token race condition tests | Edge case hardening |
+
+### Documentation
+
+| # | Item | Detail |
+|---|------|--------|
+| 16 | Spec says pynacl, code uses cryptography | Documentation divergence (spec update in progress) |
+
+---
+
+## ✅ Done (Previously High/Medium Priority)
+
+| # | Item | Closed In |
+|---|------|-----------|
+| 1 | Full queue loop e2e test | PR #86 |
+| 2 | Clean up OutputGateRunner | PR #87 |
+| 3 | Skill tool taint classification | PR #88 |
+| 4 | Verify skill hash at load time | PR #89 |
+| 5 | Connection-as-skill integration | PR #90 |
+| 6 | Skill import/adaptation (§10.4) | PR #91 |
+| 7 | Step 0.5 batch review polling | PR #94 |
+| 8 | Concurrent turn isolation tests | PR #92 |
+| 9 | Spec pynacl vs cryptography | In progress (doc update) |
+| 10 | CLI channel adapter | PR #93 |
 
 ---
 
@@ -150,13 +162,14 @@ Silas is a fully autonomous AI runtime — three pydantic-ai agent loops (proxy/
 | #70-#74 | Output gate unification, queue main path, consult-replan, QueueMessage schema, research SM |
 | #75-#79 | Skill hash versioning, scorer eviction, memory portability, Docker sandbox, Telegram channel |
 | #80-#85 | Undo/recover, UX metrics, approval fatigue, connection lifecycle, guardrails-ai, benchmarks |
+| #86-#94 | E2e queue test, OutputGateRunner cleanup, skill taint, hash verify, connection-as-skill, skill import, concurrent isolation, CLI channel, batch review |
 
 ---
 
 ## Key Dependencies
 
 - `pydantic-ai` — agent framework
-- `cryptography` — Ed25519 signing (spec and code aligned)
+- `cryptography` — Ed25519 signing (spec says pynacl, code uses cryptography — doc update pending)
 - `httpx` — async HTTP (Telegram channel)
 - `guardrails-ai` — optional gate provider
 - SQLite — all stores including queue store
