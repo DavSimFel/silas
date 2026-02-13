@@ -11,12 +11,19 @@ from silas.models.approval import (
     PendingApproval,
 )
 from silas.models.work import WorkItem
+from silas.proactivity.ux_metrics import UXMetricsCollector
 
 
 class LiveApprovalManager:
-    def __init__(self, timeout: timedelta = timedelta(hours=1)) -> None:
+    def __init__(
+        self,
+        timeout: timedelta = timedelta(hours=1),
+        ux_metrics: UXMetricsCollector | None = None,
+    ) -> None:
         self._timeout = timeout
         self._pending: dict[str, PendingApproval] = {}
+        # Optional — callers that don't care about metrics can omit it.
+        self._ux_metrics = ux_metrics
 
     def request_approval(self, work_item: WorkItem, scope: ApprovalScope) -> ApprovalToken:
         self._prune_expired()
@@ -58,14 +65,25 @@ class LiveApprovalManager:
         if pending.decision is not None:
             return pending.decision
 
+        now = datetime.now(UTC)
         decision = ApprovalDecision(verdict=verdict)
         self._pending[token_id] = pending.model_copy(
             update={
                 "decision": decision,
-                "resolved_at": datetime.now(UTC),
+                "resolved_at": now,
                 "resolved_by": resolved_by,
             }
         )
+
+        # Record UX timing so fatigue/throughput metrics stay current.
+        if self._ux_metrics is not None:
+            duration_ms = int((now - pending.requested_at).total_seconds() * 1000)
+            self._ux_metrics.record_approval_decision(
+                token_id=token_id,
+                decision=verdict.value,
+                duration_ms=duration_ms,
+            )
+
         return decision
 
     def list_pending(self) -> list[PendingApproval]:
