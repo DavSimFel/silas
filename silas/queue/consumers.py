@@ -16,6 +16,8 @@ from __future__ import annotations
 import logging
 from typing import Protocol, runtime_checkable
 
+from silas.queue.consult import ConsultPlannerManager
+from silas.queue.replan import ReplanManager
 from silas.queue.router import QueueRouter
 from silas.queue.status_router import route_to_surface
 from silas.queue.store import DurableQueueStore
@@ -359,7 +361,8 @@ class ExecutorConsumer(BaseConsumer):
 
     Handles: execution_request, research_request.
 
-    For execution_request: runs executor in full mode → enqueues execution_status.
+    For execution_request: runs executor with the full self-healing cascade
+    (Principle #8): retry → consult-planner → replan → escalate.
     For research_request: runs executor in research (read-only) mode → enqueues research_result.
     """
 
@@ -369,10 +372,17 @@ class ExecutorConsumer(BaseConsumer):
         router: QueueRouter,
         executor_agent: ExecutorAgentProtocol,
         *,
+        consult_manager: ConsultPlannerManager | None = None,
+        replan_manager: ReplanManager | None = None,
         max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
     ) -> None:
         super().__init__(store, router, "executor_queue", max_attempts=max_attempts)
         self._executor = executor_agent
+        # Why optional: existing callers (tests, simple deployments) that don't
+        # need the cascade can omit these. When absent, failures fall through
+        # directly to execution_status with status=failed.
+        self._consult = consult_manager
+        self._replan = replan_manager
 
     async def _process(self, msg: QueueMessage) -> QueueMessage | None:
         """Dispatch executor messages and produce status/result responses."""
@@ -387,9 +397,21 @@ class ExecutorConsumer(BaseConsumer):
         return None
 
     async def _handle_execution_request(self, msg: QueueMessage) -> QueueMessage:
-        """Run executor on a work item and produce an execution_status."""
+        """Run executor with self-healing cascade (Principle #8).
+
+        Flow: execute → if failed and on_stuck=consult_planner → consult
+        planner for guidance → retry with guidance → if still fails →
+        trigger replan (up to max_replan_depth=2) → escalate to user.
+
+        Budget attribution: executor tokens charge to work-item budget,
+        consult/replan tokens charge to plan budget (handled by
+        ConsultPlannerManager routing through planner_queue).
+        """
         prompt = str(msg.payload.get("task_description", msg.payload.get("body", "")))
         work_item_id = str(msg.payload.get("work_item_id", ""))
+        on_stuck = str(msg.payload.get("on_stuck", "consult_planner"))
+        original_goal = str(msg.payload.get("original_goal", prompt))
+        replan_depth = int(msg.payload.get("replan_depth", 0))
 
         result = await self._executor.run(prompt)
         output = getattr(result, "output", None)
@@ -398,16 +420,100 @@ class ExecutorConsumer(BaseConsumer):
         last_error = getattr(output, "last_error", None) if output else None
         status = "failed" if last_error else "done"
 
+        # Happy path: execution succeeded, no cascade needed.
+        if status == "done":
+            return self._build_status_msg(msg.trace_id, work_item_id, "done", summary)
+
+        # Self-healing cascade (Principle #8): consult → retry → replan → escalate.
+        # Only triggers when on_stuck requests it AND the managers are wired in.
+        if on_stuck == "consult_planner" and self._consult is not None:
+            guidance = await self._consult.consult(
+                work_item_id=work_item_id,
+                failure_context=f"Execution failed: {last_error}\n\nOriginal task: {prompt}",
+                trace_id=msg.trace_id,
+            )
+
+            if guidance is not None:
+                # Retry once with planner guidance appended to the prompt.
+                # Guidance tokens were charged to plan budget (routed through
+                # planner_queue by ConsultPlannerManager).
+                guided_prompt = f"{prompt}\n\n## Planner Guidance\n{guidance}"
+                retry_result = await self._executor.run(guided_prompt)
+                retry_output = getattr(retry_result, "output", None)
+                retry_error = getattr(retry_output, "last_error", None) if retry_output else None
+                retry_summary = (
+                    getattr(retry_output, "summary", "Execution completed.")
+                    if retry_output else "Execution completed."
+                )
+
+                if not retry_error:
+                    return self._build_status_msg(
+                        msg.trace_id, work_item_id, "done", retry_summary,
+                    )
+                # Guided retry also failed — update context for replan.
+                last_error = retry_error
+                summary = retry_summary
+
+            # Consult exhausted (timed out or guided retry failed) → trigger replan.
+            if self._replan is not None:
+                failure_history: list[dict[str, object]] = [
+                    {"phase": "execution", "error": str(last_error)},
+                    {"phase": "consult", "result": "timeout" if guidance is None else "guidance_failed"},
+                ]
+                replan_enqueued = await self._replan.trigger_replan(
+                    work_item_id=work_item_id,
+                    original_goal=original_goal,
+                    failure_history=failure_history,
+                    trace_id=msg.trace_id,
+                    current_depth=replan_depth,
+                )
+
+                if replan_enqueued:
+                    # Replan was sent to planner — report stuck (not failed)
+                    # so the orchestrator knows recovery is in progress.
+                    return self._build_status_msg(
+                        msg.trace_id, work_item_id, "stuck",
+                        f"Replan triggered (depth {replan_depth + 1}): {last_error}",
+                    )
+
+                # max_replan_depth exceeded → escalate to user.
+                return self._build_status_msg(
+                    msg.trace_id, work_item_id, "failed",
+                    f"All recovery exhausted (replan depth {replan_depth}). "
+                    f"Escalating to user. Last error: {last_error}",
+                    escalated=True,
+                )
+
+        # No cascade available or on_stuck doesn't request it.
+        return self._build_status_msg(
+            msg.trace_id, work_item_id, "failed", summary, last_error=last_error,
+        )
+
+    def _build_status_msg(
+        self,
+        trace_id: str,
+        work_item_id: str,
+        status: str,
+        summary: str,
+        *,
+        last_error: str | None = None,
+        escalated: bool = False,
+    ) -> QueueMessage:
+        """Build an execution_status message. Factored out to reduce duplication."""
+        payload: dict[str, object] = {
+            "status": status,
+            "work_item_id": work_item_id,
+            "summary": summary,
+        }
+        if last_error is not None:
+            payload["last_error"] = last_error
+        if escalated:
+            payload["escalated"] = True
         return QueueMessage(
             message_kind="execution_status",
             sender="executor",
-            trace_id=msg.trace_id,
-            payload={
-                "status": status,
-                "work_item_id": work_item_id,
-                "summary": summary,
-                "last_error": last_error,
-            },
+            trace_id=trace_id,
+            payload=payload,
         )
 
     async def _handle_research_request(self, msg: QueueMessage) -> QueueMessage:
