@@ -66,6 +66,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Tests legitimately use hardcoded values, tmp paths, and broad raises
 "tests/*" = ["S104", "S105", "S106", "S108", "PT011", "RUF043", "DTZ001"]
+# CLI channel uses print() as its output mechanism — that's the whole point
+"silas/channels/cli.py" = ["T20"]
 "silas/benchmarks/*" = ["S108"]
 
 [tool.ruff.lint.mccabe]
