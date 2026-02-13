@@ -39,11 +39,16 @@ from tests.fakes import (
 
 
 def _msg(text: str, sender_id: str = "owner") -> ChannelMessage:
+    # is_authenticated=True for owner messages so the stream classifies them
+    # as owner-tainted (verified via channel auth).  Without this, all messages
+    # default to external taint and the taint gate in _process_memory_queries
+    # strips owner-tainted memories, causing false-negative results.
     return ChannelMessage(
         channel="web",
         sender_id=sender_id,
         text=text,
         timestamp=datetime.now(UTC),
+        is_authenticated=(sender_id == "owner"),
     )
 
 
