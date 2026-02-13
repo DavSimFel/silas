@@ -79,6 +79,19 @@ class SilasSkillLoader:
 
         return True, current_hash
 
+    def load(self, skill_name: str, *, stored_hash: str | None = None) -> tuple[str, str]:
+        """Load skill content after verifying integrity.
+
+        Returns ``(content, current_hash)``.  When *stored_hash* is provided
+        the skill files are checked against it and a :class:`SecurityError` is
+        raised on mismatch.  When *stored_hash* is ``None`` the skill is
+        treated as newly seen and the caller should persist the returned hash
+        for future checks.
+        """
+        _ok, current_hash = self.verify_integrity(skill_name, stored_hash)
+        content = self.load_full(skill_name)
+        return content, current_hash
+
     def load_full(self, skill_name: str) -> str:
         skill_file = self._skill_markdown_path(skill_name)
         return skill_file.read_text(encoding="utf-8")
