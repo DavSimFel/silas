@@ -37,7 +37,7 @@ from silas.core.plan_executor import (
 )
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
-from silas.gates import OutputGateRunner
+from silas.gates import SilasGateRunner
 from silas.memory.retriever import SilasMemoryRetriever
 from silas.models.agents import (
     AgentResponse,
@@ -133,7 +133,7 @@ class Stream:
     queue_bridge: QueueBridge | None = None
     owner_id: str = "owner"
     default_context_profile: str = "conversation"
-    output_gate_runner: OutputGateRunner | None = None
+    output_gate_runner: SilasGateRunner | None = None
     session_id: str | None = None
     _approval_flow: ApprovalFlow | None = None
     _pending_persona_scopes: set[str] = field(default_factory=set, init=False, repr=False)
@@ -1783,7 +1783,7 @@ class Stream:
             await self._audit("output_gates_evaluated", turn_number=turn_number, results=[], configured=False)
             return response_text, blocked_gate_names
 
-        response_text, gate_results = self.output_gate_runner.evaluate(
+        response_text, gate_results = self.output_gate_runner.evaluate_output(
             response_text=response_text, response_taint=response_taint, sender_id=sender_id,
         )
         results_payload = [r.model_dump(mode="json") for r in gate_results]

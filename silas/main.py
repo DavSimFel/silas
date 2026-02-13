@@ -23,7 +23,7 @@ from silas.core.logging import setup_logging
 from silas.core.stream import Stream
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
-from silas.gates import OutputGateRunner, SilasGateRunner
+from silas.gates import SilasGateRunner
 from silas.manual_harness import run_manual_harness
 from silas.memory.sqlite_store import SQLiteMemoryStore
 from silas.persistence.chronicle_store import SQLiteChronicleStore
@@ -86,12 +86,12 @@ def build_stream(
     approval_manager = LiveApprovalManager()
     suggestion_engine = SimpleSuggestionEngine()
     autonomy_calibrator = SimpleAutonomyCalibrator()
-    gate_runner = SilasGateRunner()
-    output_gate_runner = (
-        OutputGateRunner(settings.output_gates, token_counter=token_counter)
-        if settings.output_gates
-        else None
-    )
+    gate_runner = SilasGateRunner(token_counter=token_counter)
+    # Why reuse gate_runner: unified two-lane model for both input and output gates.
+    output_gate_runner: SilasGateRunner | None = None
+    if settings.output_gates:
+        output_gate_runner = gate_runner
+        gate_runner.set_output_gates(settings.output_gates)
 
     turn_context = TurnContext(
         scope_id=settings.owner_id,
