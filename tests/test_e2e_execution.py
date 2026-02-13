@@ -16,7 +16,9 @@ from silas.core.plan_parser import MarkdownPlanParser
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.verification_runner import SilasVerificationRunner
 from silas.execution.sandbox import SubprocessSandboxManager
-from silas.gates.output import OutputGateRunner
+
+# OutputGateRunner removed — using unified SilasGateRunner (PR #70)
+from silas.gates.runner import SilasGateRunner
 from silas.models.context import ContextItem, ContextZone, TokenBudget
 from silas.models.gates import Gate, GateTrigger, GateType
 from silas.models.messages import TaintLevel
@@ -255,55 +257,56 @@ class TestVerificationRunnerIntegration:
 
 
 class TestOutputGateRunnerIntegration:
-    """Test output gate evaluation with real gate runner."""
+    """Test output gate evaluation with unified SilasGateRunner (PR #70)."""
 
     def test_string_match_gate(self) -> None:
         """String match gate should evaluate against response text."""
-        runner = OutputGateRunner(
-            gates=[
-                Gate(
-                    name="no-secrets",
-                    on=GateTrigger.every_agent_response,
-                    type=GateType.string_match,
-                    check="password",
-                ),
-            ],
-        )
-        _response, results = runner.evaluate(
+        runner = SilasGateRunner()
+        gates = [
+            Gate(
+                name="no-secrets",
+                on=GateTrigger.every_agent_response,
+                type=GateType.string_match,
+                check="password",
+            ),
+        ]
+        _response, results = runner.evaluate_output(
             response_text="Your password is hunter2",
             response_taint=TaintLevel.owner,
             sender_id="user-1",
+            gates=gates,
         )
         assert len(results) == 1
         assert results[0].gate_name == "no-secrets"
 
     def test_empty_gates_pass_through(self) -> None:
         """No gates configured = response passes unchanged."""
-        runner = OutputGateRunner(gates=[])
-        safe_response, results = runner.evaluate(
+        runner = SilasGateRunner()
+        safe_response, results = runner.evaluate_output(
             response_text="safe response",
             response_taint=TaintLevel.owner,
             sender_id="user-1",
+            gates=[],
         )
         assert safe_response == "safe response"
         assert results == []
 
     def test_regex_gate(self) -> None:
         """Regex gate should match patterns in response."""
-        runner = OutputGateRunner(
-            gates=[
-                Gate(
-                    name="no-api-keys",
-                    on=GateTrigger.every_agent_response,
-                    type=GateType.regex,
-                    check=r"sk-[a-zA-Z0-9]{20,}",
-                ),
-            ],
-        )
-        _response, results = runner.evaluate(
+        runner = SilasGateRunner()
+        gates = [
+            Gate(
+                name="no-api-keys",
+                on=GateTrigger.every_agent_response,
+                type=GateType.regex,
+                check=r"sk-[a-zA-Z0-9]{20,}",
+            ),
+        ]
+        _response, results = runner.evaluate_output(
             response_text="Here's your key: sk-abcdefghij1234567890",
             response_taint=TaintLevel.owner,
             sender_id="user-1",
+            gates=gates,
         )
         assert len(results) == 1
         assert results[0].gate_name == "no-api-keys"

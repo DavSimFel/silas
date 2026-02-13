@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from silas.core.token_counter import HeuristicTokenCounter
-from silas.gates.output import OutputGateRunner
 from silas.gates.runner import SilasGateRunner
 from silas.models.gates import Gate, GateTrigger
 from silas.models.messages import TaintLevel
@@ -112,16 +111,5 @@ def test_set_output_gates_used_when_no_gates_passed() -> None:
     assert "pii_email" in results[0].flags
 
 
-# ── Legacy OutputGateRunner still works (backward compat) ──────────
-
-
-def test_legacy_output_gate_runner_still_works() -> None:
-    runner = OutputGateRunner(
-        [_output_gate("taint_guard", "taint_ceiling", {"threshold": "auth"})]
-    )
-    _rewritten, results = runner.evaluate(
-        response_text="sensitive response",
-        response_taint=TaintLevel.external,
-        sender_id="customer-1",
-    )
-    assert results[0].action == "block"
+# Legacy OutputGateRunner was removed — all output evaluation now uses
+# SilasGateRunner.evaluate_output() (unified two-lane model, PR #70).
