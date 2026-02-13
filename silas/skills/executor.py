@@ -38,6 +38,15 @@ class SkillExecutor:
     def register_handler(self, skill_name: str, handler: SkillHandler) -> None:
         self._handlers[skill_name] = handler
 
+    async def run_tool(self, tool_name: str, arguments: dict[str, object]) -> SkillResult:
+        """Dispatch a tool call through the skill executor.
+
+        Why this alias exists: tool-call producers use "tool" terminology,
+        while the execution backend stores handlers keyed as skills. Keeping
+        this method local avoids call-site branching and centralizes dispatch.
+        """
+        return await self.execute(tool_name, arguments)
+
     async def execute(self, skill_name: str, inputs: dict[str, object]) -> SkillResult:
         started_at = datetime.now(UTC)
         definition = self._skill_registry.get(skill_name)

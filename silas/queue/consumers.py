@@ -16,6 +16,8 @@ from __future__ import annotations
 import logging
 from typing import Protocol, runtime_checkable
 
+from silas.models.work import WorkItem, WorkItemResult
+from silas.protocols.work import WorkItemExecutor
 from silas.queue.consult import ConsultPlannerManager
 from silas.queue.replan import ReplanManager
 from silas.queue.research import ResearchStateMachine
@@ -23,6 +25,7 @@ from silas.queue.router import QueueRouter
 from silas.queue.status_router import route_to_surface
 from silas.queue.store import DurableQueueStore
 from silas.queue.types import QueueMessage
+from silas.work.executor import work_item_from_execution_payload
 
 logger = logging.getLogger(__name__)
 
@@ -489,12 +492,14 @@ class ExecutorConsumer(BaseConsumer):
         router: QueueRouter,
         executor_agent: ExecutorAgentProtocol,
         *,
+        work_executor: WorkItemExecutor | None = None,
         consult_manager: ConsultPlannerManager | None = None,
         replan_manager: ReplanManager | None = None,
         max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
     ) -> None:
         super().__init__(store, router, "executor_queue", max_attempts=max_attempts)
         self._executor = executor_agent
+        self._work_executor = work_executor
         # Why optional: existing callers (tests, simple deployments) that don't
         # need the cascade can omit these. When absent, failures fall through
         # directly to execution_status with status=failed.
@@ -524,6 +529,15 @@ class ExecutorConsumer(BaseConsumer):
         consult/replan tokens charge to plan budget (handled by
         ConsultPlannerManager routing through planner_queue).
         """
+        # Prefer the work-item executor path when a serialized work item
+        # is provided. This enables planner->executor queue dispatch to run
+        # the same LiveWorkItemExecutor pipeline as procedural execution.
+        if self._work_executor is not None:
+            work_item = self._deserialize_work_item(msg)
+            if work_item is not None:
+                result = await self._work_executor.execute(work_item)
+                return self._status_from_work_result(msg, work_item.id, result)
+
         prompt = str(msg.payload.get("task_description", msg.payload.get("body", "")))
         # Why prefer first-class field: work_item_id on the envelope is the
         # spec-mandated location (§2.1). Fall back to payload for backward compat.
@@ -606,6 +620,30 @@ class ExecutorConsumer(BaseConsumer):
         # No cascade available or on_stuck doesn't request it.
         return self._build_status_msg(
             msg.trace_id, work_item_id, "failed", summary, last_error=last_error,
+        )
+
+    def _deserialize_work_item(self, msg: QueueMessage) -> WorkItem | None:
+        """Return a validated WorkItem from execution payload or None when absent.
+
+        Raises:
+            ValueError: Payload looks like a work item but fails validation.
+        """
+        return work_item_from_execution_payload(msg.payload)
+
+    def _status_from_work_result(
+        self,
+        msg: QueueMessage,
+        work_item_id: str,
+        result: WorkItemResult,
+    ) -> QueueMessage:
+        """Translate WorkItemResult into the queue status message contract."""
+        last_error = result.last_error
+        return self._build_status_msg(
+            msg.trace_id,
+            work_item_id,
+            result.status.value,
+            result.summary,
+            last_error=last_error,
         )
 
     def _build_status_msg(
