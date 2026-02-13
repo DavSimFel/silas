@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 
 from silas.models.skills import SkillMetadata
+from silas.skills.hasher import SkillHasher
 from silas.skills.validator import (
     check_forbidden_patterns,
     validate_frontmatter,
@@ -50,6 +51,33 @@ class SilasSkillLoader:
             )
 
         return metadata
+
+    def verify_integrity(
+        self,
+        skill_name: str,
+        stored_hash: str | None,
+    ) -> tuple[bool, str]:
+        """Check skill files against a previously stored hash.
+
+        Returns (ok, current_hash). If *stored_hash* is None the skill
+        is treated as new — the caller should persist the returned hash.
+        If the hashes diverge, the caller MUST block activation.
+        """
+        skill_dir = self._resolve_skill_dir(skill_name)
+        current_hash = SkillHasher.compute_hash(skill_dir)
+
+        if stored_hash is None:
+            # New skill, no prior hash — accept and let caller store it.
+            return True, current_hash
+
+        if current_hash != stored_hash:
+            raise SecurityError(
+                f"Skill '{skill_name}' failed integrity check: "
+                f"expected hash {stored_hash}, got {current_hash}. "
+                "Re-approval required."
+            )
+
+        return True, current_hash
 
     def load_full(self, skill_name: str) -> str:
         skill_file = self._skill_markdown_path(skill_name)
@@ -355,7 +383,11 @@ def _is_within(candidate: Path, parent: Path) -> bool:
     return True
 
 
+class SecurityError(Exception):
+    """Raised when a skill fails hash integrity verification."""
+
+
 SkillLoader = SilasSkillLoader
 
 
-__all__ = ["SilasSkillLoader", "SkillLoader"]
+__all__ = ["SecurityError", "SilasSkillLoader", "SkillLoader"]

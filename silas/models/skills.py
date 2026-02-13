@@ -36,6 +36,7 @@ class SkillDefinition(BaseModel):
     input_schema: dict[str, object] = Field(default_factory=dict)
     output_schema: dict[str, object] = Field(default_factory=dict)
     requires_approval: bool = False
+    verified_hash: str | None = None
     max_retries: int = 0
     timeout_seconds: int = 30
 
