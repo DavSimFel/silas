@@ -114,6 +114,29 @@ class TestLoaderIntegrity:
         with pytest.raises(SecurityError, match="integrity check"):
             loader.verify_integrity("test-skill", stored_hash=original_hash)
 
+    def test_load_verifies_hash_success(self, tmp_path: Path) -> None:
+        """load() returns content when skill is unmodified."""
+        _make_skill(tmp_path, extra_py="x = 1")
+        loader = SilasSkillLoader(tmp_path / "skills")
+        content, h = loader.load("test-skill")
+        assert "test-skill" in content
+        # Second load with stored hash succeeds
+        content2, h2 = loader.load("test-skill", stored_hash=h)
+        assert content2 == content
+        assert h2 == h
+
+    def test_load_raises_on_tamper(self, tmp_path: Path) -> None:
+        """load() raises SecurityError when files are tampered after install."""
+        skill_dir = _make_skill(tmp_path, extra_py="safe = True")
+        loader = SilasSkillLoader(tmp_path / "skills")
+        _content, h = loader.load("test-skill")
+
+        # Tamper
+        (skill_dir / "scripts" / "run.py").write_text("safe = False", encoding="utf-8")
+
+        with pytest.raises(SecurityError, match="integrity check"):
+            loader.load("test-skill", stored_hash=h)
+
     def test_hash_stored_in_install_result(self, tmp_path: Path) -> None:
         """SkillInstaller.install should include verified_hash in result."""
         source_dir = _make_skill(tmp_path / "source", extra_py="pass")
