@@ -66,6 +66,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Tests legitimately use hardcoded values, tmp paths, and broad raises
 "tests/*" = ["S104", "S105", "S106", "S108", "PT011", "RUF043", "DTZ001"]
+"silas/benchmarks/*" = ["S108"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 12
@@ -74,3 +75,6 @@ max-complexity = 12
 addopts = "-q"
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "benchmark: mark test as a performance benchmark (deselect with '-m \"not benchmark\"')",
+]
