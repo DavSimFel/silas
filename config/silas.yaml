@@ -1,44 +1,55 @@
 silas:
-  owner_id: "owner"
-  agent_name: "Silas"
-  owner_name: ""
-  registration_open: true
-  data_dir: "./data"
-
+  owner_id: david
+  agent_name: Silas
+  owner_name: David
+  registration_open: false
+  data_dir: ./data
   models:
-    proxy: "openrouter:anthropic/claude-haiku-4-5"
-    planner: "openrouter:anthropic/claude-sonnet-4-5"
-    executor: "openrouter:anthropic/claude-haiku-4-5"
-    scorer: "openrouter:anthropic/claude-haiku-4-5"
-
+    proxy: openrouter:anthropic/claude-haiku-4-5
+    planner: openrouter:anthropic/claude-sonnet-4-5
+    executor: openrouter:anthropic/claude-haiku-4-5
+    scorer: openrouter:anthropic/claude-haiku-4-5
+    api_key_ref: openrouter-api-key
   context:
     total_tokens: 180000
     system_max: 8000
     skill_metadata_budget_pct: 0.02
-    eviction_threshold_pct: 0.80
-    scorer_threshold_pct: 0.90
+    eviction_threshold_pct: 0.8
+    scorer_threshold_pct: 0.9
     max_subscription_tokens: 2000
     subscription_ttl_turns: 10
     observation_mask_after_turns: 5
-    default_profile: "conversation"
+    default_profile: conversation
     profiles:
-      conversation: { chronicle_pct: 0.45, memory_pct: 0.20, workspace_pct: 0.15 }
-      coding: { chronicle_pct: 0.20, memory_pct: 0.20, workspace_pct: 0.40 }
-      research: { chronicle_pct: 0.20, memory_pct: 0.40, workspace_pct: 0.20 }
-      support: { chronicle_pct: 0.40, memory_pct: 0.25, workspace_pct: 0.15 }
-      planning: { chronicle_pct: 0.15, memory_pct: 0.25, workspace_pct: 0.35 }
-
+      conversation:
+        chronicle_pct: 0.45
+        memory_pct: 0.2
+        workspace_pct: 0.15
+      coding:
+        chronicle_pct: 0.2
+        memory_pct: 0.2
+        workspace_pct: 0.4
+      research:
+        chronicle_pct: 0.2
+        memory_pct: 0.4
+        workspace_pct: 0.2
+      support:
+        chronicle_pct: 0.4
+        memory_pct: 0.25
+        workspace_pct: 0.15
+      planning:
+        chronicle_pct: 0.15
+        memory_pct: 0.25
+        workspace_pct: 0.35
   skills:
-    shipped_dir: "./silas/skills/shipped"
-    custom_dir: "./silas/skills/custom"
-
+    shipped_dir: ./silas/skills/shipped
+    custom_dir: ./silas/skills/custom
   stream:
     streaming_enabled: true
     chunk_size: 50
-
   channels:
     web:
       enabled: true
-      host: "127.0.0.1"
+      host: 127.0.0.1
       port: 8420
       auth_token: null
