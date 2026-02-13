@@ -19,7 +19,7 @@ import logging
 from silas.queue.orchestrator import QueueOrchestrator
 from silas.queue.router import QueueRouter
 from silas.queue.store import DurableQueueStore
-from silas.queue.types import QueueMessage
+from silas.queue.types import QueueMessage, TaintLevel
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,9 @@ class QueueBridge:
         user_message: str,
         trace_id: str,
         metadata: dict[str, object] | None = None,
+        *,
+        scope_id: str | None = None,
+        taint: str | None = None,
     ) -> None:
         """Enqueue a user message to proxy_queue for agent processing.
 
@@ -74,6 +77,8 @@ class QueueBridge:
             sender="user",
             trace_id=trace_id,
             payload=payload,
+            scope_id=scope_id,
+            taint=TaintLevel(taint) if taint else None,
         )
         await self._router.route(msg)
         logger.debug("Dispatched user_message to queue, trace_id=%s", trace_id)

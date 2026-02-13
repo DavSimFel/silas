@@ -408,7 +408,9 @@ class ExecutorConsumer(BaseConsumer):
         ConsultPlannerManager routing through planner_queue).
         """
         prompt = str(msg.payload.get("task_description", msg.payload.get("body", "")))
-        work_item_id = str(msg.payload.get("work_item_id", ""))
+        # Why prefer first-class field: work_item_id on the envelope is the
+        # spec-mandated location (§2.1). Fall back to payload for backward compat.
+        work_item_id = msg.work_item_id or str(msg.payload.get("work_item_id", ""))
         on_stuck = str(msg.payload.get("on_stuck", "consult_planner"))
         original_goal = str(msg.payload.get("original_goal", prompt))
         replan_depth = int(msg.payload.get("replan_depth", 0))
