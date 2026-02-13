@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import re
 import uuid
 from collections.abc import Awaitable
@@ -97,6 +98,8 @@ _PLANNER_BASE_TOOLS: tuple[tuple[str, str], ...] = (
     ("validate_plan", "Validate markdown plan structure."),
     ("web_search", "Look up supporting facts for plan quality."),
 )
+
+logger = logging.getLogger(__name__)
 
 
 class _InMemoryNonceStore:
@@ -1088,6 +1091,7 @@ class Stream:
                 return await self._process_turn_via_queue(
                     processed_message_text, turn_id, turn_number,
                     scope_id, cm, tc, connection_id, message,
+                    taint_tracker=taint_tracker,
                 )
 
             if tc.proxy is None:
@@ -1143,22 +1147,26 @@ class Stream:
                 response_text,
                 high_confidence_suggestions,
             )
+            # Stamp response with accumulated taint (lattice-join of all sources
+            # touched during this turn): input message + proxy + planner + tools.
+            accumulated_taint = taint_tracker.get_current_taint()
+
             response_text, blocked_gate_names = await self._evaluate_output_gates(
                 response_text,
-                signed.taint,
+                accumulated_taint,
                 message.sender_id,
                 turn_number,
             )
 
             # Step 9 — execute memory queries the agent requested
             await self._process_memory_queries(
-                routed.response, signed.taint, session_id, scope_id,
+                routed.response, accumulated_taint, session_id, scope_id,
                 cm, turn_number,
             )
 
             # Step 10 — execute memory write ops (gated)
             await self._process_memory_ops(
-                routed.response, signed.taint, session_id, turn_number,
+                routed.response, accumulated_taint, session_id, turn_number,
             )
 
             response_item = ContextItem(
@@ -1169,7 +1177,7 @@ class Stream:
                 created_at=datetime.now(UTC),
                 turn_number=turn_number,
                 source="agent:proxy",
-                taint=TaintLevel.owner,
+                taint=accumulated_taint,
                 kind="message",
             )
             if cm is not None:
@@ -1179,7 +1187,7 @@ class Stream:
 
             # Step 11.5 — ingest agent output as raw memory for future recall
             await self._ingest_raw_memory(
-                response_text, TaintLevel.owner, session_id, turn_number,
+                response_text, accumulated_taint, session_id, turn_number,
             )
             await self.channel.send(connection_id, response_text, reply_to=message.reply_to)
             await self._audit("phase1a_noop", step=14, note="access state updates skipped")
@@ -2001,17 +2009,38 @@ class Stream:
             await self._audit("memory_ops_skipped", step=10, reason="no memory store")
             return
 
+        # Truncate excess memory ops per spec max_memory_ops_per_turn.
+        _stream_cfg = getattr(tc.config, "stream", None) if tc.config is not None else None
+        max_ops: int = getattr(_stream_cfg, "max_memory_ops_per_turn", 10)
+        ops = response.memory_ops
+        if len(ops) > max_ops:
+            dropped = len(ops) - max_ops
+            logger.warning(
+                "Truncating memory ops from %d to %d (dropped %d)",
+                len(ops),
+                max_ops,
+                dropped,
+            )
+            await self._audit(
+                "memory_ops_truncated",
+                step=10,
+                requested=len(ops),
+                allowed=max_ops,
+                dropped=dropped,
+            )
+            ops = ops[:max_ops]
+
         # Hard gate: external contexts cannot write memories at all.
         if request_taint == TaintLevel.external:
             await self._audit(
                 "memory_ops_blocked",
                 step=10,
                 reason="external taint",
-                op_count=len(response.memory_ops),
+                op_count=len(ops),
             )
             return
 
-        for op in response.memory_ops:
+        for op in ops:
             try:
                 await self._execute_single_memory_op(memory_store, op, session_id, turn_number)
                 await self._audit(

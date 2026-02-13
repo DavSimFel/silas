@@ -331,3 +331,77 @@ async def test_step11_5_output_ingested_as_raw_memory() -> None:
     output_raws = [i for i in raw_items if "I will remember this response" in i.content]
     assert len(output_raws) == 1
     assert output_raws[0].taint == TaintLevel.owner
+
+
+
+# ---------------------------------------------------------------------------
+# Step 10 - Memory ops truncation (max_memory_ops_per_turn)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_step10_memory_ops_truncated_to_max() -> None:
+    """Excess memory ops beyond max_memory_ops_per_turn are dropped."""
+    from silas.config import SilasSettings, StreamConfig
+
+    store = InMemoryMemoryStore()
+    ops = [
+        MemoryOp(op=MemoryOpType.store, content=f"fact {i}", memory_type=MemoryType.fact)
+        for i in range(15)
+    ]
+    model = MemoryOpModel(ops)
+    audit = InMemoryAuditLog()
+    channel = InMemoryChannel()
+    settings = SilasSettings(stream=StreamConfig(max_memory_ops_per_turn=5))
+    tc = TurnContext(
+        scope_id="owner",
+        context_manager=InMemoryContextManager(),
+        memory_store=store,
+        proxy=model,
+        audit=audit,
+        config=settings,
+    )
+    stream = _stream(channel, tc)
+
+    await stream._process_turn(_msg("store many"), "conn-1")
+
+    op_events = [e for e in audit.events if e["event"] == "memory_op_executed"]
+    assert len(op_events) == 5
+
+    trunc_events = [e for e in audit.events if e["event"] == "memory_ops_truncated"]
+    assert len(trunc_events) == 1
+    assert trunc_events[0]["data"]["requested"] == 15
+    assert trunc_events[0]["data"]["allowed"] == 5
+    assert trunc_events[0]["data"]["dropped"] == 10
+
+    agent_items = [i for i in store.items.values() if i.source_kind == "agent_memory_op"]
+    assert len(agent_items) == 5
+
+
+@pytest.mark.asyncio
+async def test_step10_memory_ops_no_truncation_under_limit() -> None:
+    """When ops count is within limit, all are executed without truncation event."""
+    store = InMemoryMemoryStore()
+    ops = [
+        MemoryOp(op=MemoryOpType.store, content=f"fact {i}", memory_type=MemoryType.fact)
+        for i in range(3)
+    ]
+    model = MemoryOpModel(ops)
+    audit = InMemoryAuditLog()
+    channel = InMemoryChannel()
+    tc = TurnContext(
+        scope_id="owner",
+        context_manager=InMemoryContextManager(),
+        memory_store=store,
+        proxy=model,
+        audit=audit,
+    )
+    stream = _stream(channel, tc)
+
+    await stream._process_turn(_msg("store few"), "conn-1")
+
+    op_events = [e for e in audit.events if e["event"] == "memory_op_executed"]
+    assert len(op_events) == 3
+
+    trunc_events = [e for e in audit.events if e["event"] == "memory_ops_truncated"]
+    assert len(trunc_events) == 0
