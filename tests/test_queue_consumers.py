@@ -10,9 +10,11 @@ from __future__ import annotations
 import asyncio
 import tempfile
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import aiosqlite
 import pytest
+import silas.queue.consumers as consumers_module
 from silas.models.agents import (
     AgentResponse,
     MemoryOp,
@@ -20,6 +22,7 @@ from silas.models.agents import (
     MemoryQuery,
     MemoryQueryStrategy,
 )
+from silas.models.approval import ApprovalDecision, ApprovalVerdict
 from silas.models.work import WorkItemResult, WorkItemStatus
 from silas.queue.consult import ConsultPlannerManager
 from silas.queue.consumers import (
@@ -194,6 +197,17 @@ class EchoConsumer(BaseConsumer):
 
     async def _process(self, msg: QueueMessage) -> QueueMessage | None:
         return None
+
+
+class MockApprovalChannel:
+    def __init__(self, verdict: ApprovalVerdict) -> None:
+        self._verdict = verdict
+        self.requests: list[tuple[str, str]] = []
+
+    async def send_approval_request(self, recipient_id: str, work_item: object) -> ApprovalDecision:
+        work_item_id = str(getattr(work_item, "id", ""))
+        self.requests.append((recipient_id, work_item_id))
+        return ApprovalDecision(verdict=self._verdict)
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────
@@ -505,6 +519,149 @@ async def test_proxy_consumer_execution_status_failed_dual_emit(
 
     surfaces = route_to_surface("failed")
     assert surfaces == ("stream", "activity")
+
+
+@pytest.mark.asyncio
+async def test_proxy_consumer_propagates_planner_allowlist(
+    store: DurableQueueStore, router: QueueRouter,
+) -> None:
+    proxy = MockProxyAgent(route="planner")
+    consumer = ProxyConsumer(store, router, proxy)
+
+    msg = QueueMessage(
+        message_kind="user_message",
+        sender="user",
+        payload={
+            "text": "needs planning",
+            "metadata": {"planner_tool_allowlist": ["memory_search", "validate_plan"]},
+        },
+    )
+    await router.route(msg)
+    await consumer.poll_once()
+
+    leased = await store.lease("planner_queue")
+    assert leased is not None
+    assert leased.tool_allowlist == ["memory_search", "validate_plan"]
+
+
+@pytest.mark.asyncio
+async def test_proxy_consumer_plan_result_dispatches_execution_when_approved(
+    store: DurableQueueStore, router: QueueRouter,
+) -> None:
+    proxy = MockProxyAgent()
+    channel = MockApprovalChannel(ApprovalVerdict.approved)
+    consumer = ProxyConsumer(store, router, proxy, channel=channel, approval_recipient_id="owner")
+    plan_markdown = (
+        "---\n"
+        "id: wi-plan-1\n"
+        "type: task\n"
+        "title: Planned task\n"
+        "---\n\n"
+        "Execute the planned step."
+    )
+    msg = QueueMessage(
+        message_kind="plan_result",
+        sender="planner",
+        payload={
+            "plan_markdown": plan_markdown,
+            "metadata": {"executor_tool_allowlist": ["memory_search"]},
+        },
+    )
+    await router.route(msg)
+    await consumer.poll_once()
+
+    assert channel.requests == [("owner", "wi-plan-1")]
+    leased = await store.lease("executor_queue")
+    assert leased is not None
+    assert leased.message_kind == "execution_request"
+    assert leased.work_item_id == "wi-plan-1"
+    assert leased.tool_allowlist == ["memory_search"]
+
+
+@pytest.mark.asyncio
+async def test_proxy_consumer_plan_result_no_dispatch_when_declined(
+    store: DurableQueueStore, router: QueueRouter,
+) -> None:
+    proxy = MockProxyAgent()
+    channel = MockApprovalChannel(ApprovalVerdict.declined)
+    consumer = ProxyConsumer(store, router, proxy, channel=channel, approval_recipient_id="owner")
+    plan_markdown = (
+        "---\n"
+        "id: wi-plan-2\n"
+        "type: task\n"
+        "title: Planned task\n"
+        "---\n\n"
+        "Execute the planned step."
+    )
+    msg = QueueMessage(
+        message_kind="plan_result",
+        sender="planner",
+        payload={"plan_markdown": plan_markdown},
+    )
+    await router.route(msg)
+    await consumer.poll_once()
+
+    assert channel.requests == [("owner", "wi-plan-2")]
+    assert await store.pending_count("executor_queue") == 0
+
+
+@pytest.mark.asyncio
+async def test_executor_consumer_research_request_uses_research_toolset_allowlist(
+    store: DurableQueueStore, router: QueueRouter, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _InlineTool:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.description = name
+            self.input_schema = {}
+            self.requires_approval = False
+
+    class _InlineToolset:
+        def __init__(self) -> None:
+            self._tools = {
+                "read_file": _InlineTool("read_file"),
+                "write_file": _InlineTool("write_file"),
+            }
+
+        def list_tools(self) -> list[object]:
+            return list(self._tools.values())
+
+        def call(self, tool_name: str, arguments: dict[str, object]) -> object:
+            del arguments
+            if tool_name in self._tools:
+                return SimpleNamespace(status="ok", output="ok", error=None, approval_request=None)
+            return SimpleNamespace(status="not_found", output=None, error="missing", approval_request=None)
+
+    class _ToolsetAwareExecutor(MockExecutorAgent):
+        def __init__(self) -> None:
+            super().__init__()
+            self.toolset = _InlineToolset()
+            self.visible_tools: list[str] = []
+
+        async def run(self, prompt: str, deps: object | None = None) -> MockExecutorResult:
+            del prompt, deps
+            self.call_count += 1
+            self.visible_tools = [tool.name for tool in self.toolset.list_tools()]
+            return MockExecutorResult(output=MockExecutorOutput(summary="ok"))
+
+    fake_research_toolset = SimpleNamespace(tools={"read_file": object()})
+    monkeypatch.setattr(
+        consumers_module,
+        "build_research_console_toolset",
+        lambda workspace_path: fake_research_toolset,
+    )
+
+    executor = _ToolsetAwareExecutor()
+    consumer = ExecutorConsumer(store, router, executor)
+    msg = QueueMessage(
+        message_kind="research_request", sender="planner",
+        payload={"query": "what is X?"},
+    )
+    await router.route(msg)
+    await consumer.poll_once()
+
+    assert executor.call_count == 1
+    assert executor.visible_tools == ["read_file"]
 
 
 # ── PlannerConsumer Tests ────────────────────────────────────────────
