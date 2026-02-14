@@ -31,6 +31,7 @@ from silas.queue.router import QueueRouter
 from silas.queue.status_router import route_to_surface
 from silas.queue.store import DurableQueueStore
 from silas.queue.types import (
+    AgentResponsePayload,
     ExecutionRequestPayload,
     PlanRequestPayload,
     QueueMessage,
@@ -311,20 +312,24 @@ class ProxyConsumer(BaseConsumer):
             memory_ops = [
                 op.model_dump(mode="json") if hasattr(op, "model_dump") else op for op in raw_ops
             ]
+        typed_response = AgentResponsePayload(
+            text=str(response_text or ""),
+            message=str(response_text or ""),
+        )
+        response_payload: dict[str, object] = typed_response.model_dump(mode="json")
+        # Extend with fields not covered by the typed payload contract.
+        response_payload["agent_response"] = (
+            agent_response.model_dump(mode="json")
+            if hasattr(agent_response, "model_dump")
+            else None
+        )
+        response_payload["memory_queries"] = memory_queries
+        response_payload["memory_ops"] = memory_ops
         return QueueMessage(
             message_kind="agent_response",
             sender="proxy",
             trace_id=msg.trace_id,
-            payload={
-                "text": str(response_text or ""),
-                "agent_response": (
-                    agent_response.model_dump(mode="json")
-                    if hasattr(agent_response, "model_dump")
-                    else None
-                ),
-                "memory_queries": memory_queries,
-                "memory_ops": memory_ops,
-            },
+            payload=response_payload,
             tool_allowlist=msg.tool_allowlist,
         )
 
