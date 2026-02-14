@@ -1,4 +1,4 @@
-const CACHE_VERSION = "silas-v3";
+const CACHE_VERSION = "silas-v5";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const API_CACHE = `${CACHE_VERSION}-api`;
 const PRECACHE_ASSETS = ["/", "/index.html", "/style.css", "/app.js", "/manifest.json"];
