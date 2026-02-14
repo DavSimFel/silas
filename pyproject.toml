@@ -89,3 +89,9 @@ testpaths = ["tests"]
 markers = [
     "benchmark: mark test as a performance benchmark (deselect with '-m \"not benchmark\"')",
 ]
+
+[tool.coverage.run]
+omit = [
+    "silas/benchmarks/*",
+    "silas/manual_harness.py",
+]
