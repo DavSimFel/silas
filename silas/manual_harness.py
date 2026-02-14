@@ -72,6 +72,23 @@ class ManualHarnessArtifacts:
 PromptFunc = Callable[[int, int, ManualScenario], ManualScenarioResult]
 
 
+def print_scenarios(profile: ManualHarnessProfile) -> None:
+    """Print all scenarios for *profile* without interactive prompts (dry-run mode)."""
+    scenarios = _select_scenarios(profile)
+    click.echo(f"Silas Manual Harness — Dry Run (profile={profile})")
+    click.echo(f"Total scenarios: {len(scenarios)}")
+    for index, scenario in enumerate(scenarios, start=1):
+        click.echo("")
+        click.echo(f"[{index}/{len(scenarios)}] {scenario.scenario_id} — {scenario.title}")
+        click.echo(f"  Tier: {scenario.tier}")
+        click.echo(f"  Objective: {scenario.objective}")
+        _echo_list("  Spec refs", scenario.spec_refs)
+        _echo_list("  Preconditions", scenario.preconditions)
+        _echo_list("  Steps", scenario.steps)
+        _echo_list("  Expected", scenario.expected)
+    click.echo("")
+
+
 def available_manual_scenarios() -> list[ManualScenario]:
     """Return the canonical manual-acceptance scenario set for Silas."""
 
@@ -84,16 +101,18 @@ def available_manual_scenarios() -> list[ManualScenario]:
             spec_refs=["§12", "§5.1 start()", "§8.1"],
             preconditions=[
                 "Fresh or known-good config at config/silas.yaml",
-                "Test machine has uv, browser, and required env vars",
+                "Test machine has uv, a browser, and required env vars (SILAS_SIGNING_PASSPHRASE)",
             ],
             steps=[
-                "Run `uv run silas init --config config/silas.yaml` and complete prompts.",
+                "Run `uv run silas init --config config/silas.yaml` and complete interactive prompts.",
                 "Start runtime: `SILAS_SIGNING_PASSPHRASE=<pass> uv run silas start --config config/silas.yaml`.",
-                "Open `http://127.0.0.1:8420/` and call `GET /health`.",
+                "Open http://127.0.0.1:8420/ in a browser to verify the web UI loads.",
+                "Run `curl -s http://127.0.0.1:8420/health` and inspect the JSON response.",
             ],
             expected=[
                 "Onboarding/init succeeds without stack traces.",
-                "Web UI loads and health returns status=ok with a connection count field.",
+                "Web UI index.html loads (HTTP 200).",
+                "GET /health returns JSON with status='ok', connections (int), and sessions (list).",
             ],
         ),
         ManualScenario(
@@ -103,17 +122,17 @@ def available_manual_scenarios() -> list[ManualScenario]:
             objective="Verify remote bind requires auth and unauthorized websocket clients are rejected.",
             spec_refs=["§8.1", "§11 startup validation"],
             preconditions=[
-                "Web channel host set to 0.0.0.0 in a test-only config copy",
-                "auth_token configured",
+                "Web channel host set to 0.0.0.0 and auth_token set in config/silas.yaml",
             ],
             steps=[
-                "Start Silas with remote bind test config.",
-                "Connect websocket without token and observe close code/reason.",
-                "Connect websocket with valid token and send a message event.",
+                "Start Silas with the auth-enabled config.",
+                "Connect without token: `websocat ws://127.0.0.1:8420/ws` — observe close code 4401.",
+                "Connect with valid token: `websocat 'ws://127.0.0.1:8420/ws?token=<auth_token>'`.",
+                'Send `{"type":"message","text":"hello"}` on the authenticated connection.',
             ],
             expected=[
-                "Unauthorized websocket is rejected.",
-                "Authorized websocket stays connected and can exchange messages.",
+                "Connection without token is closed with code 4401 reason 'unauthorized'.",
+                "Authenticated connection stays open and receives a JSON response.",
             ],
         ),
         ManualScenario(
@@ -122,15 +141,15 @@ def available_manual_scenarios() -> list[ManualScenario]:
             title="Direct turn and chronicle update",
             objective="Confirm baseline user-message to response flow and persisted conversation trail.",
             spec_refs=["§5.1 steps 2-3, 11, 13"],
-            preconditions=["Runtime running with web UI connected"],
+            preconditions=["Runtime running and web UI connected via WebSocket at /ws"],
             steps=[
-                "Send a simple message that should route direct (e.g., greeting/status).",
-                "Confirm response appears in Stream.",
-                "Inspect persisted chronicle rows in SQLite for both user and agent entries.",
+                "In the web UI, send a simple message (e.g. 'What can you do?').",
+                "Observe that a response appears in the chat stream (stream_start → stream_chunk → stream_end or message).",
+                "Open the SQLite database at data/chronicle.db and query: `SELECT * FROM chronicle ORDER BY rowid DESC LIMIT 4;`",
             ],
             expected=[
-                "User sees response quickly without planner/approval flow.",
-                "Both user and agent messages are persisted with timestamps and scope linkage.",
+                "User sees a response without plan-approval flow.",
+                "Chronicle table contains both user and agent message rows with timestamps and scope_id.",
             ],
         ),
         ManualScenario(
@@ -139,15 +158,19 @@ def available_manual_scenarios() -> list[ManualScenario]:
             title="Planner proposal, approval, and execution",
             objective="Verify plan approval gate before execution and post-approval task dispatch.",
             spec_refs=["§5.1.2", "§5.2.1", "INV-01"],
-            preconditions=["A request likely to route to planner (multi-step coding task)"],
+            preconditions=[
+                "Runtime running with web UI connected",
+                "A request likely to route to planner (e.g. multi-step coding task or file modification)",
+            ],
             steps=[
-                "Ask for a non-trivial action requiring a plan.",
-                "Review approval card contents and decline once.",
-                "Re-run request, approve, and observe execution progress events.",
+                "Send a non-trivial request that triggers planning (e.g. 'Create a Python script that fetches weather data').",
+                "When the approval_request card appears, decline it.",
+                "Re-send the same request, and this time approve the plan.",
+                "Observe execution progress messages (stream events or status updates) in the WebSocket stream.",
             ],
             expected=[
-                "Decline prevents execution.",
-                "Approval produces execution and status updates until completion or fail.",
+                "Declining prevents any execution from starting.",
+                "Approving produces execution with status updates until completion or failure.",
             ],
         ),
         ManualScenario(
@@ -157,15 +180,16 @@ def available_manual_scenarios() -> list[ManualScenario]:
             objective="Ensure failed verification does not report success from agent self-claims.",
             spec_refs=["§5.3", "INV-03"],
             preconditions=[
-                "Plan with explicit verification checks where one check can be forced to fail"
+                "A plan with explicit verification checks (e.g. 'create file X' where file creation can be prevented)",
             ],
             steps=[
-                "Execute a task whose tool step appears successful but verification check is intentionally failing.",
-                "Observe final status and reported verification details.",
+                "Approve and execute a task with a verification check that will fail (e.g. create a file in a read-only directory).",
+                "Observe the final status reported in the WebSocket stream.",
+                "Check the verification report in the work item's final state.",
             ],
             expected=[
-                "Final result is failed/stuck/blocked, not done.",
-                "Verification report identifies failed check deterministically.",
+                "Final result status is failed/stuck/blocked, not 'done'.",
+                "Verification report identifies the specific failed check.",
             ],
         ),
         ManualScenario(
@@ -174,15 +198,17 @@ def available_manual_scenarios() -> list[ManualScenario]:
             title="Policy-lane gate enforcement",
             objective="Validate policy gates can block and quality gates remain advisory.",
             spec_refs=["§5.1 steps 1 & 8", "§5.4", "§5.5"],
-            preconditions=["Known gate rules configured in config and/or active work item"],
+            preconditions=[
+                "Gate rules configured in config/silas.yaml under silas.gates section",
+            ],
             steps=[
-                "Send an input that should trip a blocking policy gate.",
-                "Send an input that should raise only a quality-lane concern.",
-                "Review audit entries for both events.",
+                "Send an input that should trip a blocking policy gate (e.g. a request matching a configured deny pattern).",
+                "Send an input that should raise only a quality-lane concern (advisory, non-blocking).",
+                "Query the audit log (data/audit.db) for gate-related entries.",
             ],
             expected=[
-                "Policy gate blocks or escalates deterministically.",
-                "Quality signal is logged without blocking response flow.",
+                "Policy gate blocks the request or escalates with a gate_approval card.",
+                "Quality signal is logged in audit without blocking the response flow.",
             ],
         ),
         ManualScenario(
@@ -191,16 +217,18 @@ def available_manual_scenarios() -> list[ManualScenario]:
             title="Secret isolation via /secrets endpoint",
             objective="Confirm credentials never enter websocket/chat context and are stored only by ref_id.",
             spec_refs=["§0.5 secret isolation", "§5.10.1", "§8.1 /secrets"],
-            preconditions=["Connection or secure-input flow available"],
+            preconditions=["Runtime running with web UI connected"],
             steps=[
-                "Trigger secure-input request and submit a test secret through `POST /secrets/{ref_id}`.",
-                "Inspect websocket traffic and audit records for the same interaction.",
-                "Inspect chat/chronicle/memory artifacts for leaked secret content.",
+                "Trigger a secure-input request (e.g. connection setup requiring a credential).",
+                'Alternatively, submit a test secret directly: `curl -X POST http://127.0.0.1:8420/secrets/test-key -H "Content-Type: application/json" -d \'{"value":"s3cret"}\'`',
+                "Monitor WebSocket traffic (browser DevTools → Network → WS tab) for the secure_input card exchange.",
+                "Inspect data/secrets/ directory for stored secret files.",
+                "Search chronicle, logs, and memory stores for the literal secret value.",
             ],
             expected=[
-                "Websocket carries only metadata and success signal, never secret value.",
-                "Audit contains ref_id marker only.",
-                "No raw secret string appears in context, logs, or memory rows.",
+                "POST /secrets/{ref_id} returns {ref_id: 'test-key', success: true}.",
+                "WebSocket carries only metadata (ref_id, label) and success signal, never the secret value.",
+                "No raw secret string appears in chronicle, context, logs, or memory rows.",
             ],
         ),
         ManualScenario(
@@ -209,31 +237,36 @@ def available_manual_scenarios() -> list[ManualScenario]:
             title="Approval replay protection",
             objective="Verify nonce and binding checks prevent token replay for unauthorized repeats.",
             spec_refs=["§5.11", "INV-02"],
-            preconditions=["Completed approval token available in test environment"],
+            preconditions=[
+                "Runtime running with a completed approval token from a previous plan execution",
+            ],
             steps=[
-                "Execute an approved action once with valid token.",
-                "Attempt to replay same authorization context/token for a second run.",
-                "Attempt with modified payload bound to original token hash.",
+                "Execute an approved action once with a valid approval token (approve a plan and let it run).",
+                "Capture the approval token/nonce from the approval flow.",
+                "Attempt to replay the same authorization context/token for a second execution.",
+                "Attempt with a modified payload bound to the original token hash.",
             ],
             expected=[
-                "Replay attempt is denied.",
+                "Replay attempt is denied (token is consumed/invalidated after first use).",
                 "Payload mismatch against plan hash is denied.",
             ],
         ),
         ManualScenario(
             scenario_id="core-09-context-budget-eviction",
-            tier="core",
+            tier="extended",
             title="Context budget and eviction behavior",
             objective="Exercise two-tier budget enforcement and memory-before-discard persistence.",
             spec_refs=["§5.1 step 5", "§5.7"],
-            preconditions=["Long enough session to exceed context profile budget"],
+            preconditions=[
+                "Runtime running with a low context budget configured (set silas.context.budget_tokens to a small value like 2000)",
+            ],
             steps=[
-                "Create sustained conversation/tool activity to exceed budget.",
-                "Observe masking/trivial-drop/subscription deactivation behavior.",
-                "Verify evicted content is still recoverable through memory retrieval.",
+                "Send many messages or trigger tool calls to exceed the context token budget.",
+                "Observe context management behavior (masking, trivial-drop) in the WebSocket stream or logs.",
+                "Ask about information from early in the conversation to verify memory retrieval works for evicted content.",
             ],
             expected=[
-                "Budget enforcement triggers without crashing turn flow.",
+                "Budget enforcement triggers without crashing the turn flow.",
                 "Previously evicted information can be recalled via memory query.",
             ],
         ),
@@ -243,32 +276,37 @@ def available_manual_scenarios() -> list[ManualScenario]:
             title="Multi-scope isolation",
             objective="Validate per-connection scope boundaries for context, memory injections, and access state.",
             spec_refs=["§5.1 isolation model", "§4.3", "§15 security model"],
-            preconditions=["Two concurrent client sessions available"],
+            preconditions=["Runtime running; two browser windows or two websocat sessions"],
             steps=[
-                "Open two separate websocket/browser sessions.",
-                "Trigger distinct context and tool usage in each session.",
-                "Check that each session sees only its own chronicle/memory/workspace state.",
+                "Open session A: connect to `ws://127.0.0.1:8420/ws?session=session-a`.",
+                "Open session B: connect to `ws://127.0.0.1:8420/ws?session=session-b`.",
+                "In session A, send a message with unique content (e.g. 'Remember the code word ALPHA').",
+                "In session B, ask 'What is the code word?' — it should not know about ALPHA.",
+                "Verify GET /health shows both sessions listed.",
             ],
             expected=[
-                "No cross-session leakage of messages, memories, or access transitions.",
-                "Per-session decisions do not mutate the other scope state.",
+                "No cross-session leakage of messages or memories.",
+                "Each session maintains independent context and conversation state.",
             ],
         ),
         ManualScenario(
             scenario_id="core-11-goal-standing-approval",
-            tier="core",
+            tier="extended",
             title="Goal cycle and standing approval path",
             objective="Verify spawned fix-task authorization rules in recurring goal execution.",
             spec_refs=["§5.2.3", "§4.4", "INV-01"],
-            preconditions=["Scheduled goal configured with spawn_task on failure"],
+            preconditions=[
+                "Scheduled goal configured in config with spawn_task on failure",
+                "Scheduler (APScheduler) enabled and running",
+            ],
             steps=[
-                "Force a goal verification failure to trigger spawned fix task.",
-                "Validate behavior with valid standing token and with invalid/missing standing token.",
-                "Confirm fallback interactive approval path works when standing verify fails.",
+                "Force a goal verification failure to trigger a spawned fix task.",
+                "Validate behavior with a valid standing approval token.",
+                "Remove or invalidate the standing token and verify the fallback interactive approval path.",
             ],
             expected=[
                 "Valid standing token allows spawned task execution within bound scope.",
-                "Invalid or missing standing token blocks or requires fresh approval.",
+                "Invalid or missing standing token blocks execution or requires fresh interactive approval.",
             ],
         ),
         ManualScenario(
@@ -277,14 +315,17 @@ def available_manual_scenarios() -> list[ManualScenario]:
             title="Audit chain integrity check",
             objective="Ensure audit log chain verification reports valid state under normal flow.",
             spec_refs=["§4.16", "§15"],
-            preconditions=["Runtime has processed several turns and actions"],
+            preconditions=[
+                "Runtime has processed several turns and actions (run core-03 and core-04 first)",
+            ],
             steps=[
-                "Invoke audit verification routine/checkpoint path from admin or diagnostic flow.",
-                "Inspect returned chain-verification result and entry count.",
+                "Open the audit database at data/audit.db.",
+                "Query audit entries: `SELECT COUNT(*) FROM audit_log;` to confirm entries exist.",
+                "Run the audit chain verification (if exposed via CLI or admin endpoint), or inspect hash chain continuity manually.",
             ],
             expected=[
-                "Audit chain verifies successfully.",
-                "Checkpoint path can verify incrementally without full-history scan errors.",
+                "Audit chain verifies successfully (each entry's prev_hash matches prior entry).",
+                "No gaps or hash mismatches in the chain.",
             ],
         ),
         ManualScenario(
@@ -293,15 +334,16 @@ def available_manual_scenarios() -> list[ManualScenario]:
             title="Connection setup and permission escalation",
             objective="Exercise setup conversation, then permission escalation with decision outcomes.",
             spec_refs=["§5.10.1", "§5.10.2", "§3.12"],
-            preconditions=["At least one connection skill installed in test environment"],
+            preconditions=["At least one connection skill installed (e.g. github_skill)"],
             steps=[
-                "Run setup flow for device_code/browser_redirect/secure_input strategy.",
-                "Trigger action needing higher permission than currently granted.",
-                "Test approve, just-this-once, and deny escalation paths.",
+                "Trigger a connection setup flow via the web UI (e.g. ask Silas to connect to GitHub).",
+                "Complete the setup card steps (device_code/browser_redirect/secure_input).",
+                "Trigger an action needing higher permission than currently granted.",
+                "Test approve, just-this-once, and deny on the permission_escalation card.",
             ],
             expected=[
                 "Setup cards progress and complete with structured results.",
-                "Escalation outcomes match decision semantics and audit records.",
+                "Escalation outcomes match decision semantics and are recorded in audit.",
             ],
         ),
         ManualScenario(
@@ -310,14 +352,14 @@ def available_manual_scenarios() -> list[ManualScenario]:
             title="Review queue card behavior",
             objective="Validate reviewed batch and decision-card queue semantics.",
             spec_refs=["§0.5.1", "§0.5.3", "§5.1.5"],
-            preconditions=["Goal/task that can emit batch and decision cards"],
+            preconditions=["A goal or task that emits batch and decision cards"],
             steps=[
-                "Generate multiple pending review items.",
-                "Confirm one active card focus with up-next stack.",
-                "Execute approve, decline, and edit-selection outcomes.",
+                "Generate multiple pending review items (e.g. trigger a batch action).",
+                "Observe that only one card is active/actionable at a time in the UI.",
+                "Execute approve, decline, and edit-selection outcomes on successive cards.",
             ],
             expected=[
-                "Only one active card is actionable at a time.",
+                "Only one active card is actionable at a time (FIFO queue).",
                 "Batch edit-selection requires subset handling and re-approval where required.",
             ],
         ),
@@ -328,16 +370,17 @@ def available_manual_scenarios() -> list[ManualScenario]:
             objective="Check proactive suggestion cadence and threshold-proposal review flow.",
             spec_refs=["§5.1.6", "§5.9"],
             preconditions=[
-                "Heartbeat scheduler enabled and enough interaction history for metrics"
+                "Heartbeat scheduler enabled in config",
+                "Enough interaction history for metrics (run several core scenarios first)",
             ],
             steps=[
-                "Allow suggestion heartbeat to run and review generated cards.",
-                "Drive correction outcomes to hit autonomy proposal thresholds.",
-                "Approve or decline threshold proposal and observe resulting behavior.",
+                "Allow the suggestion heartbeat to run and review generated suggestion cards.",
+                "Drive correction outcomes (decline/edit suggestions) to approach autonomy proposal thresholds.",
+                "When an autonomy_threshold_review card appears, approve or decline it.",
             ],
             expected=[
                 "Suggestions honor cooldown/dedupe behavior.",
-                "Autonomy changes only occur after explicit approved proposal.",
+                "Autonomy changes only occur after an explicitly approved proposal.",
             ],
         ),
         ManualScenario(
@@ -346,11 +389,14 @@ def available_manual_scenarios() -> list[ManualScenario]:
             title="Crash/restart rehydration path",
             objective="Validate state continuity after restart for active scopes and work items.",
             spec_refs=["§5.1.3", "§17.2"],
-            preconditions=["Runtime with active scope context and at least one in-progress item"],
+            preconditions=[
+                "Runtime running with an active conversation and at least one in-progress work item",
+            ],
             steps=[
-                "Capture current state snapshot (turn history, running work item IDs).",
-                "Stop runtime and restart.",
-                "Verify context/work item/persona state is rehydrated as expected.",
+                "Note current state: recent messages, any running work item IDs.",
+                "Stop the runtime (Ctrl+C or `kill`).",
+                "Restart: `SILAS_SIGNING_PASSPHRASE=<pass> uv run silas start --config config/silas.yaml`.",
+                "Reconnect the web UI and verify context/work item state is rehydrated.",
             ],
             expected=[
                 "Recent chronicle and relevant context return after restart.",
@@ -363,15 +409,15 @@ def available_manual_scenarios() -> list[ManualScenario]:
             title="Skill install and external adaptation",
             objective="Validate deterministic skill validation/reporting and install approval boundaries.",
             spec_refs=["§10.4", "§10.4.1", "INV-06"],
-            preconditions=["Test skill source available (local path or GitHub)"],
+            preconditions=["A test skill source available (local path or GitHub URL)"],
             steps=[
-                "Run skill validation/install for a native-format skill.",
-                "Run external import/adaptation flow and review transformation report.",
-                "Attempt install without approval token where policy requires one.",
+                "Run skill validation/install for a native-format skill via the CLI or web UI.",
+                "Run external import/adaptation flow and review the transformation report.",
+                "Attempt install without an approval token where policy requires one.",
             ],
             expected=[
                 "Validation report is deterministic and explicit about issues/transforms.",
-                "Activation does not occur without required approval path.",
+                "Activation does not occur without the required approval path.",
             ],
         ),
         ManualScenario(
@@ -380,14 +426,14 @@ def available_manual_scenarios() -> list[ManualScenario]:
             title="Personality injection and event decay hooks",
             objective="Exercise style directive injection and post-turn mood update/decay pipeline.",
             spec_refs=["§5.1.4", "§5.14", "§5.15"],
-            preconditions=["Personality enabled in config"],
+            preconditions=["Personality enabled in config (silas.personality.enabled: true)"],
             steps=[
-                "Run turns in different contexts (code review, casual, status).",
-                "Trigger events (success, failure, feedback) and inspect persona state deltas.",
-                "Wait/advance time and verify decay trends toward neutral.",
+                "Run turns in different contexts (e.g. ask for a code review, then casual chat, then a status report).",
+                "Trigger mood-affecting events (tool success, tool failure, user feedback) and inspect persona state.",
+                "Wait or advance time and verify decay trends toward neutral baseline.",
             ],
             expected=[
-                "Directive style changes by context without affecting security/approval semantics.",
+                "Directive style varies by context without affecting security/approval semantics.",
                 "Event and decay updates persist to persona state/event storage.",
             ],
         ),
@@ -606,5 +652,6 @@ __all__ = [
     "ManualScenario",
     "ManualScenarioResult",
     "available_manual_scenarios",
+    "print_scenarios",
     "run_manual_harness",
 ]
