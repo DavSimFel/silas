@@ -22,11 +22,14 @@ uv sync --group dev
 uv sync --group dev && uv run pytest
 ```
 
-Linting and type checking:
+CI runs lint + 3 parallel test shards. Some tests require privileged Linux (namespaces) and are excluded from CI — run the full suite locally if needed.
+
+Linting, formatting, and type checking:
 
 ```bash
 uv run ruff check silas tests    # lint (strict mode)
 uv run ruff format --check .     # format check
+uv run pyright silas             # type checking (~75 errors, tracked)
 ```
 
 ## Git Workflow
@@ -58,3 +61,22 @@ The `specs/` directory contains the authoritative behavioral specifications — 
 - **`specs/reference/`** — lookup-only reference material (models, protocols, examples, security model)
 
 Specs define *what the system must do*. Code implements the spec. When they diverge, the spec wins (and should be updated if the divergence is intentional).
+
+## Key Architectural Concepts
+
+- **Topics** — Activated context containers (not executed jobs). Hold triggers, instructions, plans, state. See [ARCHITECTURE.md](ARCHITECTURE.md#topics-system).
+- **WorkItem ≠ Task** — WorkItem is an internal execution unit; Task is a Notion record. Never conflate them.
+- **Approval tokens** — Ed25519-signed, consuming (one-use) or non-consuming (standing). Required before any executor action.
+- **Toolset wrapper chain** — Raw Tool → SkillToolset → PreparedToolset → FilteredToolset → ApprovalRequiredToolset. Enforced in code, not prompts.
+
+## CI Pipeline
+
+CI runs on every PR to `dev`:
+
+| Job | What |
+|-----|------|
+| **lint** | ruff check + ruff format --check |
+| **test (1-3)** | 3 parallel pytest shards (pytest-split) |
+| **pyright** | Type checking (continue-on-error) |
+
+All checks must be green before merge (except pyright, which is advisory).
