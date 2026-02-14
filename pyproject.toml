@@ -22,7 +22,7 @@ dependencies = [
   "keyring>=25.2",
   "aiosqlite>=0.22.1",
   "apscheduler>=3.11,<4",
-  "pydantic-ai-backend>=0.1.6",
+  "pydantic-ai-backend>=0.1.6,<1.0",
 ]
 
 [project.optional-dependencies]

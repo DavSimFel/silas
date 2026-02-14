@@ -15,6 +15,7 @@ from silas.models.work import WorkItem, WorkItemStatus
 
 if TYPE_CHECKING:
     from silas.core.context_manager import LiveContextManager
+    from silas.core.stream._base import StreamBase
     from silas.core.turn_context import TurnContext
     from silas.protocols.work import WorkItemStore
 
@@ -28,7 +29,7 @@ _IN_PROGRESS_STATUSES: tuple[WorkItemStatus, ...] = (
 )
 
 
-class RehydrationMixin:
+class RehydrationMixin(StreamBase if TYPE_CHECKING else object):  # type: ignore[misc]
     """Startup state restoration: context, chronicle, memory, proposals."""
 
     async def _rehydrate(self) -> None:

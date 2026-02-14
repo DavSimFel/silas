@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai_backends import LocalBackend
+from pydantic_ai_backends import ConsoleDeps
 from pydantic_ai_backends.permissions import READONLY_RULESET
 from pydantic_ai_backends.toolsets import create_console_toolset
 
@@ -44,7 +44,7 @@ _MUTATION_TOOLS: frozenset[str] = frozenset(
 )
 
 
-def build_readonly_console_toolset(workspace: Path) -> FunctionToolset:  # type: ignore[type-arg]
+def build_readonly_console_toolset(workspace: Path) -> FunctionToolset[ConsoleDeps]:
     """Create a read-only console toolset for proxy/planner agents.
 
     Uses READONLY_RULESET permissions and disables execute. Mutation tools
@@ -52,23 +52,19 @@ def build_readonly_console_toolset(workspace: Path) -> FunctionToolset:  # type:
     runtime by the permission checker — belt-and-suspenders with our
     FilteredToolset layer on top.
     """
-    backend = LocalBackend(root_dir=str(workspace), enable_execute=False)
     return create_console_toolset(
-        backend,
         include_execute=False,
         permissions=READONLY_RULESET,
     )
 
 
-def build_research_console_toolset(workspace: Path) -> FunctionToolset:  # type: ignore[type-arg]
+def build_research_console_toolset(workspace: Path) -> FunctionToolset[ConsoleDeps]:
     """Create a research-mode console toolset for executor in research mode.
 
     Only exposes tools in RESEARCH_TOOL_ALLOWLIST that are also console tools.
     Mutation tools are structurally removed — not just filtered.
     """
-    backend = LocalBackend(root_dir=str(workspace), enable_execute=False)
     toolset = create_console_toolset(
-        backend,
         include_execute=False,
         permissions=READONLY_RULESET,
     )
@@ -79,21 +75,19 @@ def build_research_console_toolset(workspace: Path) -> FunctionToolset:  # type:
     return toolset
 
 
-def build_execution_console_toolset(workspace: Path) -> FunctionToolset:  # type: ignore[type-arg]
+def build_execution_console_toolset(workspace: Path) -> FunctionToolset[ConsoleDeps]:
     """Create a full console toolset for executor in execution mode.
 
     Includes all tools: read, write, edit, execute. Security enforcement
     happens via the outer FilteredToolset and ApprovalRequiredToolset layers.
     """
-    backend = LocalBackend(root_dir=str(workspace), enable_execute=True)
     return create_console_toolset(
-        backend,
         include_execute=True,
     )
 
 
 def _remove_tools_not_in_allowlist(
-    toolset: FunctionToolset,  # type: ignore[type-arg]
+    toolset: FunctionToolset[ConsoleDeps],
     allowlist: frozenset[str],
 ) -> None:
     """Remove tools from a FunctionToolset that aren't in the allowlist.

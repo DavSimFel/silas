@@ -14,7 +14,7 @@ from silas.models.agents import (
 from silas.models.gates import GateTrigger
 from silas.tools.resolver import LiveSkillResolver
 
-from tests.fakes import TestModel
+from tests.fakes import FakeModel
 
 
 @pytest.mark.asyncio
@@ -63,7 +63,7 @@ def test_build_stream_configures_route_profiles_from_settings(
     )
 
     monkeypatch.setattr(
-        "silas.main.build_proxy_agent", lambda model, default_context_profile: TestModel()
+        "silas.main.build_proxy_agent", lambda model, default_context_profile: FakeModel()
     )
     RouteDecision.configure_profiles({"conversation", "coding", "research", "support", "planning"})
 
@@ -98,7 +98,7 @@ def test_build_stream_wires_output_gate_runner(
         }
     )
     monkeypatch.setattr(
-        "silas.main.build_proxy_agent", lambda model, default_context_profile: TestModel()
+        "silas.main.build_proxy_agent", lambda model, default_context_profile: FakeModel()
     )
 
     stream, _ = build_stream(settings)
@@ -113,7 +113,7 @@ def test_build_stream_injects_signing_key_into_stream(
     settings = SilasSettings.model_validate({"data_dir": str(tmp_path / "data")})
     signing_key = Ed25519PrivateKey.generate()
     monkeypatch.setattr(
-        "silas.main.build_proxy_agent", lambda model, default_context_profile: TestModel()
+        "silas.main.build_proxy_agent", lambda model, default_context_profile: FakeModel()
     )
 
     stream, _ = build_stream(settings, signing_key=signing_key)
@@ -128,7 +128,7 @@ def test_build_stream_wires_skill_loader_and_live_resolver(
 ) -> None:
     settings = SilasSettings.model_validate({"data_dir": str(tmp_path / "data")})
     monkeypatch.setattr(
-        "silas.main.build_proxy_agent", lambda model, default_context_profile: TestModel()
+        "silas.main.build_proxy_agent", lambda model, default_context_profile: FakeModel()
     )
 
     stream, _ = build_stream(settings)

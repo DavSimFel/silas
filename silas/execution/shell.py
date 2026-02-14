@@ -3,14 +3,14 @@ from __future__ import annotations
 import shlex
 from collections.abc import Mapping, Sequence
 
-from silas.execution.sandbox import SubprocessSandboxManager
+from silas.execution.sandbox_factory import SandboxBackend
 from silas.models.execution import ExecutionEnvelope, ExecutionResult
 
 
 class ShellExecutor:
     """Runs shell commands inside an isolated subprocess sandbox."""
 
-    def __init__(self, sandbox_manager: SubprocessSandboxManager) -> None:
+    def __init__(self, sandbox_manager: SandboxBackend) -> None:
         self._sandbox_manager = sandbox_manager
 
     async def execute(self, envelope: ExecutionEnvelope) -> ExecutionResult:

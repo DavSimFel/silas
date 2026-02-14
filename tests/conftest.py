@@ -5,11 +5,11 @@ from silas.core.turn_context import TurnContext
 from silas.models.agents import RouteDecision
 
 from tests.fakes import (
+    FakeModel,
     InMemoryAuditLog,
     InMemoryChannel,
     InMemoryContextManager,
     InMemoryMemoryStore,
-    TestModel,
 )
 
 
@@ -34,8 +34,8 @@ def audit_log() -> InMemoryAuditLog:
 
 
 @pytest.fixture
-def test_model() -> TestModel:
-    return TestModel()
+def test_model() -> FakeModel:
+    return FakeModel()
 
 
 @pytest.fixture
@@ -48,7 +48,7 @@ def turn_context(
     context_manager: InMemoryContextManager,
     memory_store: InMemoryMemoryStore,
     audit_log: InMemoryAuditLog,
-    test_model: TestModel,
+    test_model: FakeModel,
 ) -> TurnContext:
     return TurnContext(
         scope_id="owner",

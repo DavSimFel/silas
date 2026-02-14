@@ -21,10 +21,11 @@ from silas.models.approval import ApprovalScope, ApprovalToken, ApprovalVerdict
 from silas.models.work import WorkItem
 
 if TYPE_CHECKING:
+    from silas.core.stream._base import StreamBase
     from silas.tools.approval_required import ApprovalRequiredToolset
 
 
-class PlannerMixin:
+class PlannerMixin(StreamBase if TYPE_CHECKING else object):  # type: ignore[misc]
     """Plan resolution, approval gating, and skill action execution."""
 
     async def _handle_planner_route(

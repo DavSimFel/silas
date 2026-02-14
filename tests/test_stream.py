@@ -32,13 +32,13 @@ from silas.skills.registry import SkillRegistry
 from silas.work.executor import LiveWorkItemExecutor
 
 from tests.fakes import (
+    FakeModel,
     InMemoryAuditLog,
     InMemoryChannel,
     InMemoryContextManager,
     InMemoryMemoryStore,
     InMemoryWorkItemStore,
     RunResult,
-    TestModel,
     sample_memory_item,
 )
 
@@ -1042,7 +1042,7 @@ async def test_process_turn_via_queue_accepts_taint_tracker_kwarg():
         channel=InMemoryChannel(),
         turn_context=TurnContext(
             scope_id="owner",
-            proxy=TestModel(),
+            proxy=FakeModel(),
         ),
         owner_id="owner",
         default_context_profile="conversation",
@@ -1071,7 +1071,7 @@ async def test_process_turn_via_queue_dispatches_personality_metadata() -> None:
         channel=InMemoryChannel(),
         turn_context=TurnContext(
             scope_id="owner",
-            proxy=TestModel(),
+            proxy=FakeModel(),
             personality_engine=_QueuePersonalityEngine(),
         ),
         owner_id="owner",
@@ -1106,7 +1106,7 @@ async def test_process_turn_via_queue_uses_configured_queue_timeout() -> None:
         channel=InMemoryChannel(),
         turn_context=TurnContext(
             scope_id="owner",
-            proxy=TestModel(),
+            proxy=FakeModel(),
             config=SimpleNamespace(queue_timeout_s=7.5),
         ),
         owner_id="owner",

@@ -13,12 +13,13 @@ from silas.models.work import WorkItem
 
 if TYPE_CHECKING:
     from silas.core.context_manager import LiveContextManager
+    from silas.core.stream._base import StreamBase
     from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
 
 _counter = HeuristicTokenCounter()
 
 
-class HelpersMixin:
+class HelpersMixin(StreamBase if TYPE_CHECKING else object):  # type: ignore[misc]
     """Foundation mixin: audit, config, content helpers, and accessor shortcuts."""
 
     async def _ensure_persona_state_loaded(self, scope_id: str) -> None:

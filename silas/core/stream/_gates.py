@@ -11,10 +11,11 @@ from silas.models.messages import TaintLevel
 from silas.models.work import WorkItem, WorkItemType
 
 if TYPE_CHECKING:
+    from silas.core.stream._base import StreamBase
     from silas.models.messages import ChannelMessage
 
 
-class GateMixin:
+class GateMixin(StreamBase if TYPE_CHECKING else object):  # type: ignore[misc]
     """Input and output gate compilation, evaluation, and approval."""
 
     def _precompile_active_gates(self) -> tuple[Gate, ...]:

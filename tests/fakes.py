@@ -33,7 +33,7 @@ class RunResult:
     output: RouteDecision
 
 
-class TestModel:
+class FakeModel:
     """Deterministic structured agent used by tests."""
 
     def __init__(self, message_prefix: str = "echo:") -> None:
@@ -493,6 +493,7 @@ def sample_context_profile(name: str = "conversation") -> ContextProfile:
 __all__ = [
     "FakeAutonomyCalibrator",
     "FakeKeyManager",
+    "FakeModel",
     "FakePersonalityEngine",
     "FakeSuggestionEngine",
     "FakeTokenCounter",
@@ -503,7 +504,6 @@ __all__ = [
     "InMemoryMemoryStore",
     "InMemoryWorkItemStore",
     "RunResult",
-    "TestModel",
     "sample_context_profile",
     "sample_memory_item",
 ]

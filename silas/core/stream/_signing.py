@@ -5,14 +5,18 @@ from __future__ import annotations
 import hashlib
 import hmac
 import uuid
+from typing import TYPE_CHECKING
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from silas.models.messages import SignedMessage, TaintLevel
 
+if TYPE_CHECKING:
+    from silas.core.stream._base import StreamBase
 
-class SigningMixin:
+
+class SigningMixin(StreamBase if TYPE_CHECKING else object):  # type: ignore[misc]
     """Message signing, verification, and inbound taint resolution."""
 
     async def verify_inbound(self, signed_message: SignedMessage) -> tuple[bool, str]:
