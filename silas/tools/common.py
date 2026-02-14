@@ -15,7 +15,7 @@ from pydantic_ai import RunContext
 
 
 @runtime_checkable
-class MemoryRetriever(Protocol):
+class MemorySearchProvider(Protocol):
     """Protocol for memory search implementations.
 
     Why a protocol: decouples tools from concrete memory store, enabling
@@ -56,7 +56,7 @@ class AgentDeps:
     """
 
     workspace_path: Path
-    memory_retriever: MemoryRetriever | None = None
+    memory_retriever: MemorySearchProvider | None = None
     web_search_provider: WebSearchProvider | None = None
     # Why import as string: avoids circular import with queue module.
     # At runtime, this is a QueueRouter instance.
@@ -128,7 +128,7 @@ async def web_search(
 
 __all__ = [
     "AgentDeps",
-    "MemoryRetriever",
+    "MemorySearchProvider",
     "WebSearchProvider",
     "memory_search",
     "web_search",
