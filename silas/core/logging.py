@@ -50,6 +50,20 @@ def get_correlation_context() -> CorrelationContext:
     return context
 
 
+def _current_otel_trace_id() -> str:
+    """Extract the current OTel trace ID as a hex string, or empty."""
+    try:
+        from opentelemetry import trace as _trace_api
+
+        span = _trace_api.get_current_span()
+        ctx = span.get_span_context()
+        if ctx and ctx.trace_id:
+            return format(ctx.trace_id, "032x")
+    except Exception:  # noqa: S110
+        pass
+    return ""
+
+
 class CorrelationFilter(logging.Filter):
     """Inject correlation fields into every ``LogRecord`` before formatting."""
 
@@ -58,6 +72,7 @@ class CorrelationFilter(logging.Filter):
         record.turn_id = context.turn_id
         record.scope_id = context.scope_id
         record.work_item_id = context.work_item_id
+        record.otel_trace_id = _current_otel_trace_id()
         return True
 
 
@@ -73,6 +88,7 @@ class _JsonFormatter(logging.Formatter):
             "turn_id": getattr(record, "turn_id", None),
             "scope_id": getattr(record, "scope_id", None),
             "work_item_id": getattr(record, "work_item_id", None),
+            "trace_id": getattr(record, "otel_trace_id", None),
         }
         if record.exc_info is not None:
             payload["exception"] = self.formatException(record.exc_info)
@@ -98,6 +114,7 @@ def setup_logging(level: int | str = logging.INFO, json_output: bool = False) ->
         formatter = logging.Formatter(
             "%(asctime)s %(levelname)s %(name)s "
             "turn_id=%(turn_id)s scope_id=%(scope_id)s work_item_id=%(work_item_id)s "
+            "trace_id=%(otel_trace_id)s "
             "%(message)s",
         )
     handler.setFormatter(formatter)

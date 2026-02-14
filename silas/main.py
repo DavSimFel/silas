@@ -802,6 +802,11 @@ def start_command(config_path: str) -> None:
     if not settings.channels.web.enabled:
         raise click.ClickException("Phase 1a requires channels.web.enabled=true")
 
+    # Re-initialize logging with observability config (Loki handler)
+    obs = settings.observability
+    if obs.loki_url:
+        setup_logging(loki_url=obs.loki_url, loki_env=obs.env)
+
     passphrase = _resolve_signing_passphrase()
 
     try:

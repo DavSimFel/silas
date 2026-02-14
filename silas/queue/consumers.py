@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from silas.core.plan_parser import MarkdownPlanParser
+from silas.core.telemetry import get_tracer
 from silas.models.approval import ApprovalVerdict
 from silas.models.work import WorkItem, WorkItemResult
 from silas.protocols.work import WorkItemExecutor
@@ -129,16 +130,27 @@ class BaseConsumer:
             )
             return True
 
+        _tracer = get_tracer("silas.queue")
+        _span_name = f"{self._queue_name.replace('_queue', '')}.process"
         heartbeat_task = asyncio.create_task(self._heartbeat_lease(msg.id))
         try:
-            response = await self._process(msg)
-            await self._store.mark_processed(self._consumer_name, msg.id)
-            await self._store.ack(msg.id)
+            with _tracer.start_as_current_span(
+                _span_name,
+                attributes={
+                    "message.id": msg.id,
+                    "message.kind": msg.message_kind,
+                    "trace_id": msg.trace_id,
+                    "queue.name": self._queue_name,
+                },
+            ):
+                response = await self._process(msg)
+                await self._store.mark_processed(self._consumer_name, msg.id)
+                await self._store.ack(msg.id)
 
-            # Route the response message onward if the processor produced one.
-            if response is not None:
-                await self._router.route(response)
-            return True
+                # Route the response message onward if the processor produced one.
+                if response is not None:
+                    await self._router.route(response)
+                return True
 
         except Exception:
             logger.exception(
