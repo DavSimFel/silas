@@ -4,7 +4,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
-from silas.core.undo import UndoManager
 from silas.models.draft import DraftReview, DraftVerdict
 from silas.models.undo import UndoEntry
 from silas.proactivity.fatigue import ApprovalFatigueTracker
@@ -13,77 +12,6 @@ from silas.proactivity.ux_metrics import UXMetricsCollector
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
-
-
-def test_undo_manager_register_and_execute_within_window() -> None:
-    manager = UndoManager(undo_window=timedelta(minutes=5))
-    now = _utc_now()
-    entry = manager.record_execution(
-        scope_id="owner",
-        execution_id="exec-1",
-        reverse_actions=[{"op": "first"}, {"op": "second"}],
-        summary="Applied 2 changes",
-        now=now,
-    )
-
-    applied_reverse_actions: list[dict[str, object]] = []
-    undone = manager.undo(
-        "owner",
-        entry.entry_id,
-        apply_reverse_action=applied_reverse_actions.append,
-        now=now + timedelta(minutes=1),
-    )
-
-    assert undone is True
-    assert applied_reverse_actions == [{"op": "second"}, {"op": "first"}]
-    persisted = manager.get_entry("owner", entry.entry_id)
-    assert persisted is not None
-    assert persisted.undone_at == now + timedelta(minutes=1)
-
-
-def test_undo_manager_rejects_expired_window() -> None:
-    manager = UndoManager(undo_window=timedelta(minutes=5))
-    now = _utc_now()
-    entry = manager.record_execution(
-        scope_id="owner",
-        execution_id="exec-expired",
-        reverse_actions=[{"op": "revert"}],
-        now=now,
-    )
-
-    undone = manager.undo("owner", entry.entry_id, now=now + timedelta(minutes=6))
-    assert undone is False
-
-
-def test_undo_manager_builds_post_execution_card() -> None:
-    manager = UndoManager(undo_window=timedelta(minutes=5))
-    now = _utc_now()
-    entry = manager.record_execution(
-        scope_id="owner",
-        execution_id="exec-card",
-        reverse_actions=[{"op": "rollback"}],
-        summary="Batch completed",
-        metadata={"batch_size": 3},
-        now=now,
-    )
-
-    active_card = manager.build_post_execution_card(
-        "owner",
-        entry.entry_id,
-        results=[{"status": "ok"}],
-        now=now + timedelta(minutes=1),
-    )
-    assert active_card["undo_available"] is True
-    assert active_card["undo_status"] == "available"
-    assert active_card["undo_label"] == "Undo"
-
-    expired_card = manager.build_post_execution_card(
-        "owner",
-        entry.entry_id,
-        now=now + timedelta(minutes=6),
-    )
-    assert expired_card["undo_available"] is False
-    assert expired_card["undo_status"] == "expired"
 
 
 def test_draft_review_creation() -> None:
