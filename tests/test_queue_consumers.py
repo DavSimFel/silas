@@ -15,6 +15,7 @@ from types import SimpleNamespace
 import aiosqlite
 import pytest
 import silas.queue.consumers as consumers_module
+from silas.models.agents import AgentResponse, MemoryOp, MemoryOpType, MemoryQuery, MemoryQueryStrategy
 from silas.models.approval import ApprovalDecision, ApprovalVerdict
 from silas.models.work import WorkItemResult, WorkItemStatus
 from silas.queue.consult import ConsultPlannerManager
@@ -60,6 +61,35 @@ class MockProxyAgent:
     async def run(self, prompt: str, deps: object | None = None) -> MockProxyResult:
         self.call_count += 1
         return MockProxyResult(output=MockRouteOutput(route=self._route))
+
+
+class MockProxyAgentWithMemory:
+    """Mock proxy that returns a direct response with memory metadata."""
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    async def run(self, prompt: str, deps: object | None = None) -> MockProxyResult:
+        del prompt, deps
+        self.call_count += 1
+        output = MockRouteOutput(route="direct")
+        output.response = AgentResponse(
+            message="direct answer",
+            memory_queries=[
+                MemoryQuery(
+                    strategy=MemoryQueryStrategy.keyword,
+                    query="status",
+                )
+            ],
+            memory_ops=[
+                MemoryOp(
+                    op=MemoryOpType.store,
+                    content="store this",
+                )
+            ],
+            needs_approval=False,
+        )
+        return MockProxyResult(output=output)
 
 
 @dataclass
@@ -329,6 +359,41 @@ async def test_proxy_consumer_user_message_direct(
     assert proxy.call_count == 1
     # No messages should be in planner_queue.
     assert await store.pending_count("planner_queue") == 0
+
+
+@pytest.mark.asyncio
+async def test_proxy_consumer_includes_agent_response_memory_metadata(
+    store: DurableQueueStore, router: QueueRouter,
+) -> None:
+    """Direct proxy responses preserve memory fields in agent_response payload."""
+    proxy = MockProxyAgentWithMemory()
+    consumer = ProxyConsumer(store, router, proxy)
+
+    msg = QueueMessage(
+        message_kind="user_message",
+        sender="user",
+        trace_id="trace-memory-response",
+        payload={"text": "hello"},
+    )
+    await router.route(msg)
+    await consumer.poll_once()
+
+    response_msg = await store.lease_filtered(
+        queue_name="proxy_queue",
+        filter_trace_id="trace-memory-response",
+        filter_message_kind="agent_response",
+    )
+    assert response_msg is not None
+    assert response_msg.payload["text"] == "direct answer"
+    agent_response = response_msg.payload.get("agent_response")
+    assert isinstance(agent_response, dict)
+    assert agent_response.get("message") == "direct answer"
+    memory_queries = response_msg.payload.get("memory_queries")
+    assert isinstance(memory_queries, list)
+    assert memory_queries[0]["query"] == "status"
+    memory_ops = response_msg.payload.get("memory_ops")
+    assert isinstance(memory_ops, list)
+    assert memory_ops[0]["op"] == "store"
 
 
 @pytest.mark.asyncio

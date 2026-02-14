@@ -261,16 +261,42 @@ class ProxyConsumer(BaseConsumer):
             )
 
         # Direct response: send agent_response back so collect_response picks it up.
-        response_text = getattr(output, "response", None)
-        if response_text is None:
+        agent_response = getattr(output, "response", None)
+        response_text = getattr(agent_response, "message", "")
+        if not response_text:
             response_text = getattr(output, "message", "")
-        if hasattr(response_text, "message"):
-            response_text = response_text.message
+
+        memory_queries: list[object] = []
+        raw_queries = getattr(agent_response, "memory_queries", None)
+        if isinstance(raw_queries, list):
+            memory_queries = [
+                query.model_dump(mode="json")
+                if hasattr(query, "model_dump") else query
+                for query in raw_queries
+            ]
+
+        memory_ops: list[object] = []
+        raw_ops = getattr(agent_response, "memory_ops", None)
+        if isinstance(raw_ops, list):
+            memory_ops = [
+                op.model_dump(mode="json")
+                if hasattr(op, "model_dump") else op
+                for op in raw_ops
+            ]
         return QueueMessage(
             message_kind="agent_response",
             sender="proxy",
             trace_id=msg.trace_id,
-            payload={"text": str(response_text or "")},
+            payload={
+                "text": str(response_text or ""),
+                "agent_response": (
+                    agent_response.model_dump(mode="json")
+                    if hasattr(agent_response, "model_dump")
+                    else None
+                ),
+                "memory_queries": memory_queries,
+                "memory_ops": memory_ops,
+            },
             tool_allowlist=msg.tool_allowlist,
         )
 
