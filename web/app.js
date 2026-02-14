@@ -619,7 +619,10 @@ function connect(isReconnect = reconnectAttempt > 0) {
 
   setConnectionStatus(isReconnect ? "reconnecting" : "connecting");
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${window.location.host}/ws`);
+  const urlParams = new URLSearchParams(window.location.search);
+  const authToken = urlParams.get("token") || "";
+  const tokenQuery = authToken ? `?token=${encodeURIComponent(authToken)}` : "";
+  ws = new WebSocket(`${proto}://${window.location.host}/ws${tokenQuery}`);
 
   ws.addEventListener("open", () => {
     reconnectAttempt = 0;
@@ -720,6 +723,44 @@ function hideEmptyState() {
   }
 }
 
+// --- Chat history localStorage cache ---
+const CHAT_STORAGE_KEY = "silas_chat_history";
+const CHAT_MAX_MESSAGES = 200;
+
+function _saveChatHistory(role, text) {
+  try {
+    const history = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) || "[]");
+    history.push({ role, text, ts: Date.now() });
+    if (history.length > CHAT_MAX_MESSAGES) history.splice(0, history.length - CHAT_MAX_MESSAGES);
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(history));
+  } catch (_) { /* quota exceeded or private mode */ }
+}
+
+function _restoreChatHistory() {
+  try {
+    const history = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) || "[]");
+    for (const msg of history) {
+      _addMessageToDOM(msg.role, msg.text);
+    }
+  } catch (_) { /* corrupted storage */ }
+}
+
+function _addMessageToDOM(role, text) {
+  const value = String(text ?? "");
+  hideEmptyState();
+  let el = null;
+  if (role === "agent") {
+    el = createAgentMessageElement(value);
+  } else if (role === "user") {
+    el = createUserMessageElement(value);
+  } else {
+    el = createSystemMessageElement(value);
+  }
+  if (!el) return;
+  messageCount += 1;
+  messageRail?.appendChild(el);
+}
+
 function addMessage(role, text) {
   const value = String(text ?? "");
 
@@ -728,6 +769,7 @@ function addMessage(role, text) {
 
   if (role === "agent" && activeStreamMessageEl && activeStreamMessageEl.isConnected) {
     finalizeStreamingMessage(value);
+    _saveChatHistory(role, value);
     return;
   }
 
@@ -747,6 +789,7 @@ function addMessage(role, text) {
   scrollToBottom();
   announceMessage(role, value);
   renderSessionInfo();
+  _saveChatHistory(role, value);
 }
 
 function addThinking() {
@@ -2222,6 +2265,8 @@ shortcutClose?.addEventListener("click", () => {
 });
 
 // --- Init ---
+_restoreChatHistory();
+scrollToBottom();
 connect();
 initWorkPanelInteractions();
 initSidePanel();

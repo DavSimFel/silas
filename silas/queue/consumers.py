@@ -167,15 +167,25 @@ class ProxyConsumer(BaseConsumer):
             return self._handle_execution_status(msg)
         if kind == "plan_result":
             return self._handle_plan_result(msg)
+        if kind == "agent_response":
+            # agent_response is terminal for QueueBridge.collect_response.
+            # Re-processing it through the proxy creates feedback loops.
+            return None
 
-        # For agent_response, approval_request, system_event: run proxy
-        # and return whatever it says. These are informational messages
-        # that the proxy surfaces to the user.
+        # For approval_request/system_event: run proxy and return whatever it says.
+        # These are informational messages that the proxy surfaces to the user.
         return await self._handle_generic(msg)
 
     async def _handle_user_message(self, msg: QueueMessage) -> QueueMessage | None:
         """Run proxy agent on user message. Route to planner if needed."""
-        prompt = str(msg.payload.get("text", ""))
+        user_text = str(msg.payload.get("text", ""))
+        metadata = msg.payload.get("metadata")
+        rendered_context = ""
+        if isinstance(metadata, dict):
+            rendered_context = str(metadata.get("rendered_context", ""))
+
+        # Include chronicle context so the proxy has conversation history.
+        prompt = f"{rendered_context}\n\nUser: {user_text}" if rendered_context else user_text
         result = await self._proxy.run(prompt)
 
         # Why getattr: ProxyRunResult has .output.route, but we use a
@@ -191,8 +201,18 @@ class ProxyConsumer(BaseConsumer):
                 payload={"user_request": prompt, "reason": getattr(output, "reason", "")},
             )
 
-        # Direct response: no further routing needed.
-        return None
+        # Direct response: send agent_response back so collect_response picks it up.
+        response_text = getattr(output, "response", None)
+        if response_text is None:
+            response_text = getattr(output, "message", "")
+        if hasattr(response_text, "message"):
+            response_text = response_text.message
+        return QueueMessage(
+            message_kind="agent_response",
+            sender="proxy",
+            trace_id=msg.trace_id,
+            payload={"text": str(response_text or "")},
+        )
 
     def _handle_execution_status(self, msg: QueueMessage) -> QueueMessage | None:
         """Route execution status to appropriate UI surfaces.
