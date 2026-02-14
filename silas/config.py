@@ -147,6 +147,14 @@ class TelemetryConfig(BaseModel):
     env: str = "dev"
 
 
+class ObservabilityConfig(BaseModel):
+    """Observability wiring — Loki log shipping + Prometheus metrics."""
+
+    loki_url: str | None = None
+    metrics_enabled: bool = True
+    env: str = "dev"
+
+
 class StreamConfig(BaseModel):
     streaming_enabled: bool = True
     chunk_size: int = Field(default=50, ge=1)
@@ -166,6 +174,7 @@ class SilasSettings(BaseSettings):
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     output_gates: list[Gate] = Field(default_factory=list)
     queue_bridge_timeout_s: float = 120.0
     # Backward-compatible alias; prefer queue_bridge_timeout_s.

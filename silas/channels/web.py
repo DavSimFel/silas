@@ -93,6 +93,15 @@ class WebChannel(ChannelAdapterCore):
         self._setup_routes()
 
     def _setup_routes(self) -> None:
+        @self.app.get("/metrics")
+        async def metrics() -> Response:
+            from silas.core.metrics import metrics_generate_latest
+
+            return Response(
+                content=metrics_generate_latest(),
+                media_type="text/plain; version=0.0.4; charset=utf-8",
+            )
+
         @self.app.get("/health")
         async def health() -> JSONResponse:
             connected = len(self._websockets_by_session)

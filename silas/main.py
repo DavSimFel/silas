@@ -802,10 +802,16 @@ def start_command(config_path: str) -> None:
     if not settings.channels.web.enabled:
         raise click.ClickException("Phase 1a requires channels.web.enabled=true")
 
-    # Re-initialize logging with observability config (Loki handler)
+    # Wire Loki log handler if configured
     obs = settings.observability
     if obs.loki_url:
-        setup_logging(loki_url=obs.loki_url, loki_env=obs.env)
+        from silas.core.loki_handler import LokiHandler
+
+        loki_handler = LokiHandler(
+            url=f"{obs.loki_url}/loki/api/v1/push",
+            env=obs.env,
+        )
+        logging.getLogger().addHandler(loki_handler)
 
     passphrase = _resolve_signing_passphrase()
 
