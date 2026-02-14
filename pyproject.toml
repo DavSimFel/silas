@@ -41,6 +41,7 @@ dev = [
   "pyright>=1.1.397",
   "ruff>=0.6",
   "pytest-cov>=6.0",
+  "inspect-ai>=0.3",
 ]
 
 [project.scripts]
@@ -91,4 +92,10 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "benchmark: mark test as a performance benchmark (deselect with '-m \"not benchmark\"')",
+]
+
+[tool.coverage.run]
+omit = [
+    "silas/benchmarks/*",
+    "silas/manual_harness.py",
 ]
