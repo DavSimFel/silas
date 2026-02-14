@@ -9,6 +9,7 @@ import pytest
 import yaml
 from click.testing import CliRunner
 from silas.main import cli
+from silas.secrets import PassphraseBackend
 from silas.secrets import SecretStore
 
 # ---------------------------------------------------------------------------
@@ -28,6 +29,12 @@ def config_file(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return cfg
+
+
+@pytest.fixture(autouse=True)
+def _fast_pbkdf2(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Speed up crypto-heavy tests by reducing PBKDF2 iterations."""
+    monkeypatch.setattr(PassphraseBackend, "_ITERATIONS", 1000)
 
 
 def test_init_skips_when_already_configured(tmp_path: Path) -> None:

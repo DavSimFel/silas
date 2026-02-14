@@ -27,6 +27,7 @@ from silas.queue.router import QueueRouter
 from silas.queue.status_router import route_to_surface
 from silas.queue.store import DurableQueueStore
 from silas.queue.types import QueueMessage
+from tests.helpers import wait_until
 
 # ── Mock Agents ──────────────────────────────────────────────────────
 # Why dataclass mocks: minimal, typed, deterministic. No LLM calls.
@@ -556,7 +557,7 @@ async def test_consult_planner_receives_guidance(
 
     # Simulate planner responding with guidance after a short delay.
     async def _provide_guidance() -> None:
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.2)
         guidance_msg = QueueMessage(
             message_kind="planner_guidance",
             sender="planner",
@@ -676,8 +677,7 @@ async def test_orchestrator_start_stop(
     await orchestrator.start()
     assert orchestrator.running is True
 
-    # Let it run briefly.
-    await asyncio.sleep(0.2)
+    await wait_until(lambda: orchestrator.running is True, timeout=0.2)
 
     await orchestrator.stop()
     assert orchestrator.running is False
@@ -701,8 +701,11 @@ async def test_orchestrator_processes_messages(
     await router.route(msg)
     await orchestrator.start()
 
-    # Wait for processing.
-    await asyncio.sleep(0.5)
+    async def _queue_drained() -> bool:
+        return await store.pending_count("proxy_queue") == 0
+
+    await wait_until(lambda: proxy.call_count >= 1, timeout=0.5)
+    await wait_until(_queue_drained, timeout=0.5)
     await orchestrator.stop()
 
     assert proxy.call_count >= 1

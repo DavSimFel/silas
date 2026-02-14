@@ -23,6 +23,7 @@ from silas.queue.orchestrator import QueueOrchestrator
 from silas.queue.router import QueueRouter
 from silas.queue.store import DurableQueueStore
 from silas.queue.types import QueueMessage
+from tests.helpers import wait_until
 
 # ── Mock Agent Outputs ─────────────────────────────────────────────────
 # Why dataclasses instead of SimpleNamespace: consumers access attributes
@@ -304,8 +305,7 @@ class TestDirectRouteFullLoop:
 
         await bridge.dispatch_turn("audit test", trace_id=trace_id)
         await orchestrator.start()
-        # Wait for proxy consumer to process
-        await asyncio.sleep(0.5)
+        await wait_until(lambda: proxy.call_count >= 1, timeout=3.0)
         await orchestrator.stop()
 
         # The proxy consumer should have marked the user_message as processed.
@@ -353,9 +353,14 @@ class TestPlannerRouteFullLoop:
         await bridge.dispatch_turn("Refactor auth module", trace_id=trace_id)
         await orchestrator.start()
 
-        # Why 3s: message traverses 4 hops (proxy→planner→executor→proxy),
-        # each requiring a poll cycle. 3s is generous for mock agents.
-        await asyncio.sleep(3.0)
+        await wait_until(
+            lambda: (
+                proxy.call_count >= 1
+                and planner.call_count >= 1
+                and executor.call_count >= 1
+            ),
+            timeout=3.0,
+        )
         await orchestrator.stop()
 
         # Verify the full chain executed
@@ -398,7 +403,17 @@ class TestPlannerRouteFullLoop:
         ))
 
         await orchestrator.start()
-        await asyncio.sleep(3.0)
+        await wait_until(
+            lambda: (
+                proxy.call_count >= 1
+                and planner.call_count >= 1
+                and executor.call_count >= 1
+            ),
+            timeout=5.0,
+        )
+        # Extra settle time for return messages to be processed
+        import asyncio as _asyncio
+        await _asyncio.sleep(0.5)
         await orchestrator.stop()
 
         # Verify the full chain ran: proxy processed user_message,
@@ -468,7 +483,7 @@ class TestFailureCascade:
         # consumer is blocked waiting.
         async def _inject_guidance_after_delay() -> None:
             # Wait for the consult request to be enqueued to planner_queue
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
             guidance_msg = QueueMessage(
                 message_kind="planner_guidance",
                 sender="planner",
