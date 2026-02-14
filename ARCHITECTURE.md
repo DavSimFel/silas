@@ -117,6 +117,62 @@ This is Design Principle #8: the system is built for full autonomy. User involve
 
 ---
 
+## Topics System
+
+Topics are activated context containers — the AGENTS.md pattern applied to everything Silas works on. A Topic holds instructions, research, plans, approvals, and state in a single markdown file with YAML frontmatter.
+
+```
+topics/
+  fix-ci-pipeline.md      ← project-scoped, executor-owned
+  monitor-emails.md       ← infinite-scoped, proxy-owned
+  refactor-auth.md        ← session-scoped, planner-owned
+```
+
+### Anatomy of a Topic
+```yaml
+---
+id: fix-ci-pipeline
+name: Fix CI Pipeline
+scope: project          # session | project | infinite
+agent: executor         # proxy | planner | executor
+status: active          # active | paused | completed | archived
+triggers:               # Hard triggers — event-driven activation
+  - source: github
+    event: check_run.completed
+    filter:
+      conclusion: failure
+soft_triggers:           # Soft triggers — keyword/entity matching
+  - keywords: [CI, pipeline, tests failing]
+approvals:               # Tool-level approval requirements
+  - tool: write_file
+    constraints: { path_prefix: "silas/" }
+---
+
+## Instructions
+(markdown body — procedural memory, plans, context)
+```
+
+### Activation Model
+Topics are *activated*, not *executed*. They're memory areas that light up:
+- **Hard triggers** — webhook events matched by source/event/filter (e.g., GitHub CI failure → activate fix-ci Topic)
+- **Soft triggers** — keyword/entity matching against conversation context (associative memory)
+- **Agent-specific activation**: Proxy activates by user/trigger/soft-match; Planner by trigger/self; Executor only by trigger
+
+### Key Files
+| Path | What |
+|------|------|
+| `silas/topics/model.py` | Topic, TriggerSpec, SoftTrigger, ApprovalSpec models |
+| `silas/topics/parser.py` | Markdown ↔ Topic serialization |
+| `silas/topics/registry.py` | Filesystem-backed CRUD + trigger queries |
+| `silas/topics/matcher.py` | Hard trigger (exact match) + soft trigger (keyword scoring) |
+
+### What's Next
+- **Phase 2:** Wire hard triggers to webhook subscription system (event → find matching Topic → activate)
+- **Phase 3:** Soft trigger matching in proxy conversation loop
+- **Phase 4:** Plan ↔ WorkItem integration (checkbox steps → WorkItems)
+
+---
+
 ## Data Storage
 
 Everything is SQLite (single-process runtime, no external dependencies):
@@ -171,6 +227,7 @@ Delivery guarantees:
 | `silas/approval/` | Approval engine |
 | `silas/gates/` | Gate system |
 | `silas/memory/` | Memory stores |
-| `silas/core/stream.py` | Turn processing pipeline |
+| `silas/topics/` | Topics system (model, parser, registry, matcher) |
+| `silas/core/stream/` | Turn processing pipeline (split into modules) |
 | `silas/core/turn_context.py` | Per-turn state |
 | `specs/` | Full behavioral contracts |
