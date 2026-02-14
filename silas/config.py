@@ -139,6 +139,14 @@ class ExecutionConfig(BaseModel):
     use_queue_path: bool = True
 
 
+class ObservabilityConfig(BaseModel):
+    """Observability settings for Loki log shipping and metrics."""
+
+    loki_url: str | None = None
+    metrics_enabled: bool = True
+    env: str = "dev"
+
+
 class TelemetryConfig(BaseModel):
     """OpenTelemetry tracing configuration."""
 
@@ -165,6 +173,7 @@ class SilasSettings(BaseSettings):
     stream: StreamConfig = Field(default_factory=StreamConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     output_gates: list[Gate] = Field(default_factory=list)
     queue_bridge_timeout_s: float = 120.0

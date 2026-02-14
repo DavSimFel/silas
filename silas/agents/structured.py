@@ -4,7 +4,11 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
+from silas.core.metrics import LLM_CALLS_TOTAL, LLM_TOKENS_TOTAL
+from silas.core.telemetry import get_tracer
 from silas.models.agents import AgentResponse, InteractionMode, InteractionRegister, RouteDecision
+
+_TRACER = get_tracer("silas.agents")
 
 
 class StructuredRunnable(Protocol):
@@ -27,6 +31,19 @@ def _unwrap_run_result(result: object) -> object:
     """Extract .output from pydantic-ai RunResult, or return as-is."""
     output = getattr(result, "output", None)
     return output if output is not None else result
+
+
+def _record_usage(result: object, model_name: str) -> None:
+    usage_fn = getattr(result, "usage", None)
+    if not callable(usage_fn):
+        return
+    usage = usage_fn()
+    request_tokens = getattr(usage, "request_tokens", None)
+    response_tokens = getattr(usage, "response_tokens", None)
+    if request_tokens is not None:
+        LLM_TOKENS_TOTAL.labels(model=model_name, direction="input").inc(request_tokens)
+    if response_tokens is not None:
+        LLM_TOKENS_TOTAL.labels(model=model_name, direction="output").inc(response_tokens)
 
 
 def structured_fallback(call_name: str, default_context_profile: str) -> object:
@@ -66,14 +83,21 @@ async def run_structured_agent(
     prompt: str,
     call_name: str,
     default_context_profile: str = "conversation",
+    model_name: str = "unknown",
 ) -> object:
     try:
-        first = await agent.run(prompt)
+        with _TRACER.start_as_current_span(f"agent.{call_name}"):
+            LLM_CALLS_TOTAL.labels(model=model_name).inc()
+            first = await agent.run(prompt)
+            _record_usage(first, model_name)
         return _unwrap_run_result(first)
     except ValidationError as err:
         repair_prompt = f"{prompt}\n\n[SCHEMA VALIDATION ERROR]\n{summarize_validation_error(err)}"
         try:
-            second = await agent.run(repair_prompt)
+            with _TRACER.start_as_current_span(f"agent.{call_name}"):
+                LLM_CALLS_TOTAL.labels(model=model_name).inc()
+                second = await agent.run(repair_prompt)
+                _record_usage(second, model_name)
             return _unwrap_run_result(second)
         except ValidationError:
             return structured_fallback(call_name, default_context_profile)
