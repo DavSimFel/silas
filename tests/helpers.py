@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from typing import Callable, Union
+from collections.abc import Callable
+from typing import Union
 
 
 async def wait_until(
-    predicate: Union[Callable[[], bool], Callable[[], "asyncio.coroutine"]],
+    predicate: Union[Callable[[], bool], Callable[[], asyncio.coroutine]],
     timeout: float = 3.0,
     interval: float = 0.05,
 ) -> None:

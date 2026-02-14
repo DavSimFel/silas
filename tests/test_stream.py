@@ -998,6 +998,7 @@ async def test_process_turn_via_queue_accepts_taint_tracker_kwarg():
     """Regression: _process_turn_via_queue must accept taint_tracker keyword."""
     from silas.core.stream import Stream
     from silas.core.turn_context import TurnContext
+
     from tests.fakes import TestModel as _TestModel
 
     bridge = _StubQueueBridge("ok from queue")

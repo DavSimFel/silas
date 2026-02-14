@@ -27,6 +27,7 @@ from silas.queue.router import QueueRouter
 from silas.queue.status_router import route_to_surface
 from silas.queue.store import DurableQueueStore
 from silas.queue.types import QueueMessage
+
 from tests.helpers import wait_until
 
 # ── Mock Agents ──────────────────────────────────────────────────────
