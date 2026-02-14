@@ -5,7 +5,7 @@ import uuid
 from collections.abc import Mapping
 from pathlib import Path
 
-from silas.execution.sandbox import SubprocessSandboxManager
+from silas.execution.sandbox_factory import SandboxBackend
 from silas.models.execution import ExecutionEnvelope, ExecutionResult
 
 
@@ -14,7 +14,7 @@ class PythonExecutor:
 
     def __init__(
         self,
-        sandbox_manager: SubprocessSandboxManager,
+        sandbox_manager: SandboxBackend,
         python_bin: str | None = None,
     ) -> None:
         self._sandbox_manager = sandbox_manager

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from silas.models.agents import PlanAction, RouteDecision
 from silas.models.work import WorkItem, WorkItemStatus, WorkItemType
 from silas.tools.approval_required import ApprovalRequiredToolset
@@ -31,7 +33,11 @@ _IN_PROGRESS_STATUSES: tuple[WorkItemStatus, ...] = (
 )
 
 
-class ToolsetMixin:
+if TYPE_CHECKING:
+    from silas.core.stream._base import StreamBase
+
+
+class ToolsetMixin(StreamBase if TYPE_CHECKING else object):  # type: ignore[misc]
     """Toolset preparation, prompt building, and skill name resolution."""
 
     async def _prepare_agent_toolsets(

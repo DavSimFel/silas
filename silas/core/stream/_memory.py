@@ -17,6 +17,7 @@ from silas.models.messages import TaintLevel
 
 if TYPE_CHECKING:
     from silas.core.context_manager import LiveContextManager
+    from silas.core.stream._base import StreamBase
     from silas.protocols.memory import MemoryStore
 
 _counter = HeuristicTokenCounter()
@@ -24,7 +25,7 @@ _MENTION_PATTERN = re.compile(r"@([A-Za-z0-9_:-]+)")
 logger = logging.getLogger(__name__)
 
 
-class MemoryMixin:
+class MemoryMixin(StreamBase if TYPE_CHECKING else object):  # type: ignore[misc]
     """Memory retrieval, ingestion, query execution, and write operations."""
 
     async def _auto_retrieve_memories(
