@@ -8,6 +8,7 @@ to keep this file focused on orchestration.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from contextvars import ContextVar, Token
@@ -768,11 +769,23 @@ class Stream(
     ) -> str:
         """Dispatch a turn through the queue bridge instead of direct agent calls."""
         assert self.queue_bridge is not None  # caller guarantees this
+        personality_directives = await self._queue_personality_directives(
+            scope_id=scope_id,
+            message=message,
+        )
+        rendered_context = ""
+        if cm is not None:
+            rendered_context = cm.render(scope_id, turn_number)
         await self.queue_bridge.dispatch_turn(
-            user_message=message_text, trace_id=turn_id,
+            user_message=message_text,
+            trace_id=turn_id,
+            metadata={
+                "personality_directives": personality_directives,
+                "rendered_context_json": json.dumps({"rendered_context": rendered_context}),
+            },
         )
         queue_response = await self.queue_bridge.collect_response(
-            trace_id=turn_id, timeout_s=30.0,
+            trace_id=turn_id, timeout_s=self._queue_timeout_seconds(),
         )
         queue_text = ""
         if queue_response is not None:

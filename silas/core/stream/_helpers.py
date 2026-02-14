@@ -28,15 +28,34 @@ class HelpersMixin:
         personality_engine = self._turn_context().personality_engine
         if personality_engine is None:
             self._pending_persona_scopes.discard(scope_id)
-            await self._audit("stream_startup_dependency_missing", dependency="personality_engine")
-            return
+
+    async def _queue_personality_directives(
+        self,
+        *,
+        scope_id: str,
+        message: object,
+    ) -> str:
+        """Render personality directives for queue-dispatched proxy prompts."""
+        personality_engine = self._turn_context().personality_engine
+        if personality_engine is None:
+            return ""
 
         try:
-            await personality_engine.get_effective_axes(scope_id, "default")
+            context_key = await personality_engine.detect_context(message)
+            return await personality_engine.render_directives(scope_id, context_key)
         except (RuntimeError, ValueError, OSError) as exc:
-            await self._audit("persona_state_lazy_load_failed", scope_id=scope_id, error=str(exc))
-        finally:
-            self._pending_persona_scopes.discard(scope_id)
+            await self._audit(
+                "queue_personality_directives_failed",
+                scope_id=scope_id,
+                error=str(exc),
+            )
+            return ""
+
+    def _queue_timeout_seconds(self) -> float:
+        value = self._config_value("queue_timeout_s", default=120.0)
+        if isinstance(value, (int, float)) and value > 0:
+            return float(value)
+        return 120.0
 
     def _known_scopes(self) -> list[str]:
         scopes = {self._turn_context().scope_id}
@@ -84,6 +103,34 @@ class HelpersMixin:
         if not isinstance(value, int) or value < 1:
             return 50
         return value
+
+    async def _queue_personality_directives(
+        self,
+        *,
+        scope_id: str,
+        message: object,
+    ) -> str:
+        """Render personality directives for queue-dispatched proxy prompts."""
+        personality_engine = self._turn_context().personality_engine
+        if personality_engine is None:
+            return ""
+
+        try:
+            context_key = await personality_engine.detect_context(message)
+            return await personality_engine.render_directives(scope_id, context_key)
+        except (RuntimeError, ValueError, OSError) as exc:
+            await self._audit(
+                "queue_personality_directives_failed",
+                scope_id=scope_id,
+                error=str(exc),
+            )
+            return ""
+
+    def _queue_timeout_seconds(self) -> float:
+        value = self._config_value("queue_timeout_s", default=120.0)
+        if isinstance(value, (int, float)) and value > 0:
+            return float(value)
+        return 120.0
 
     def _observation_mask_after_turns(self) -> int:
         value = self._config_value("context", "observation_mask_after_turns", default=5)
