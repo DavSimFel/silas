@@ -2572,19 +2572,23 @@ dependencies = [
     { name = "pydantic-ai-slim", extra = ["logfire", "openrouter"] },
     { name = "pydantic-settings" },
     { name = "pynacl" },
-    { name = "pyright" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-split" },
-    { name = "pytest-timeout" },
     { name = "pyyaml" },
-    { name = "ruff" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.optional-dependencies]
 guardrails = [
     { name = "guardrails-ai" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-split" },
+    { name = "pytest-timeout" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -2602,16 +2606,20 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["openrouter", "logfire"], specifier = ">=0.0.27" },
     { name = "pydantic-settings", specifier = ">=2.4" },
     { name = "pynacl", specifier = ">=1.5" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
+]
+provides-extras = ["guardrails"]
+
+[package.metadata.requires-dev]
+dev = [
     { name = "pyright", specifier = ">=1.1.397" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "pytest-split", specifier = ">=0.10" },
     { name = "pytest-timeout", specifier = ">=2.3" },
-    { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", specifier = ">=0.6" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
-provides-extras = ["guardrails"]
 
 [[package]]
 name = "six"
