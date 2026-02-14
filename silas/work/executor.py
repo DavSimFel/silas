@@ -21,6 +21,7 @@ from silas.models.execution import (
 )
 from silas.models.gates import Gate, GateResult, GateTrigger
 from silas.models.work import (
+    Budget,
     BudgetUsed,
     WorkItem,
     WorkItemExecutorType,
@@ -157,14 +158,20 @@ class LiveWorkItemExecutor:
                     )
 
             # Dispatch wave: parallel if pool exists and >1 item, else serial
-            wave_results = await self._dispatch_wave(pending_items)
+            wave_results = await self._dispatch_wave(
+                pending_items,
+                plan_budget=aggregate_budget,
+                plan_budget_limits=root_item.budget,
+            )
 
             for work_item, result in zip(pending_items, wave_results, strict=True):
                 execution_results[work_item.id] = result
                 aggregate_budget.merge(result.budget_used.model_copy(deep=True))
                 if result.status != WorkItemStatus.done:
                     if work_item.id == root_item.id:
-                        return result
+                        return result.model_copy(
+                            update={"budget_used": aggregate_budget.model_copy(deep=True)}
+                        )
                     return await self._mark_failed(
                         root_item,
                         f"dependency {work_item.id} failed: {result.last_error or result.summary}",
@@ -187,7 +194,13 @@ class LiveWorkItemExecutor:
             budget_used=aggregate_budget,
         )
 
-    async def _dispatch_wave(self, items: list[WorkItem]) -> list[WorkItemResult]:
+    async def _dispatch_wave(
+        self,
+        items: list[WorkItem],
+        *,
+        plan_budget: BudgetUsed,
+        plan_budget_limits: Budget,
+    ) -> list[WorkItemResult]:
         """Execute a wave of independent work items.
 
         Uses the executor pool for parallel dispatch when available and
@@ -203,7 +216,14 @@ class LiveWorkItemExecutor:
             return list(await asyncio.gather(*coros))
 
         # Serial fallback (single item or no pool)
-        return [await self._execute_single(item) for item in items]
+        return [
+            await self._execute_single(
+                item,
+                plan_budget=plan_budget,
+                plan_budget_limits=plan_budget_limits,
+            )
+            for item in items
+        ]
 
     def _build_waves(
         self,
@@ -240,7 +260,13 @@ class LiveWorkItemExecutor:
 
         return waves
 
-    async def _execute_single(self, item: WorkItem) -> WorkItemResult:
+    async def _execute_single(
+        self,
+        item: WorkItem,
+        *,
+        plan_budget: BudgetUsed,
+        plan_budget_limits: Budget,
+    ) -> WorkItemResult:
         work_item = item.model_copy(deep=True)
         used = work_item.budget_used.model_copy(deep=True)
         max_attempts = max(1, work_item.budget.max_attempts)
@@ -266,7 +292,13 @@ class LiveWorkItemExecutor:
             if completion_result is not None:
                 return completion_result
 
-            stuck_result = await self._attempt_stuck_recovery(work_item, used, last_error)
+            stuck_result = await self._attempt_stuck_recovery(
+                work_item,
+                used,
+                last_error,
+                plan_budget=plan_budget,
+                plan_budget_limits=plan_budget_limits,
+            )
             if stuck_result is not None:
                 return stuck_result
 
@@ -499,12 +531,21 @@ class LiveWorkItemExecutor:
         work_item: WorkItem,
         used: BudgetUsed,
         last_error: str | None,
+        *,
+        plan_budget: BudgetUsed,
+        plan_budget_limits: Budget,
     ) -> WorkItemResult | None:
         if work_item.on_stuck != "consult_planner":
             return None
 
         failure_context = last_error or "unknown failure"
-        guidance, guidance_error = await self._consult_planner(work_item, used, failure_context)
+        guidance, guidance_error = await self._consult_planner(
+            work_item,
+            used,
+            failure_context,
+            plan_budget=plan_budget,
+            plan_budget_limits=plan_budget_limits,
+        )
         if guidance is not None:
             # The guided retry is the recovery mechanism AFTER the normal retry
             # loop is exhausted (spec §5.2.1 step e). It bypasses the attempt
@@ -586,19 +627,25 @@ class LiveWorkItemExecutor:
         work_item: WorkItem,
         used: BudgetUsed,
         failure_context: str,
+        *,
+        plan_budget: BudgetUsed,
+        plan_budget_limits: Budget,
     ) -> tuple[str | None, str | None]:
         if self._consult_manager is None:
             return None, None
-        if used.planner_calls >= work_item.budget.max_planner_calls:
+        max_planner_calls = plan_budget_limits.max_planner_calls
+        if plan_budget.planner_calls >= max_planner_calls:
             await self._audit_event(
                 "consult_planner_budget_exhausted",
                 work_item_id=work_item.id,
-                planner_calls=used.planner_calls,
-                max_planner_calls=work_item.budget.max_planner_calls,
+                planner_calls=plan_budget.planner_calls,
+                max_planner_calls=max_planner_calls,
             )
             return None, "planner call budget exhausted"
 
-        used.planner_calls += 1
+        plan_budget.planner_calls += 1
+        # Planner consults consume plan-level budget; do not charge
+        # the individual work item budget tracker.
         work_item.budget_used = used.model_copy(deep=True)
         await self._persist(work_item)
 
