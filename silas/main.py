@@ -373,6 +373,8 @@ def _resolve_queue_bridge(
     proxy_agent: object,
     planner_agent: object,
     executor_agent: object,
+    channel: object | None,
+    approval_recipient_id: str,
 ) -> QueueBridge | None:
     if not enabled:
         return None
@@ -383,6 +385,8 @@ def _resolve_queue_bridge(
                 proxy_agent=proxy_agent,
                 planner_agent=planner_agent,
                 executor_agent=executor_agent,
+                channel=channel,
+                approval_recipient_id=approval_recipient_id,
             ),
         )
         return bridge
@@ -539,12 +543,14 @@ def build_stream(
     queue_router = QueueRouter(queue_store)
     consult_manager = ConsultPlannerManager(queue_store, queue_router)
     replan_manager_inst = ReplanManager(queue_router)
+    gate_runner = SilasGateRunner(token_counter=token_counter)
 
     work_executor = LiveWorkItemExecutor(
         skill_executor=skill_executor,
         work_item_store=work_item_store,
         approval_verifier=approval_verifier,
         verification_runner=verification_runner,
+        gate_runner=gate_runner,
         audit=audit,
         consult_manager=consult_manager,
         replan_manager=replan_manager_inst,
@@ -563,8 +569,9 @@ def build_stream(
         proxy_agent=proxy,
         planner_agent=planner,
         executor_agent=queue_executor_agent,
+        channel=channel,
+        approval_recipient_id=settings.owner_id,
     )
-    gate_runner = SilasGateRunner(token_counter=token_counter)
     # Why reuse gate_runner: unified two-lane model for both input and output gates.
     output_gate_runner: SilasGateRunner | None = None
     if settings.output_gates:

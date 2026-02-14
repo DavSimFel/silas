@@ -57,6 +57,15 @@ def _row_to_message(row: aiosqlite.Row) -> QueueMessage:
     # won't have the new columns. Using dict.get() avoids KeyError.
     row_dict = dict(row)
     taint_raw = row_dict.get("taint")
+    tool_allowlist_raw = row_dict.get("tool_allowlist")
+    tool_allowlist: list[str] = []
+    if isinstance(tool_allowlist_raw, str) and tool_allowlist_raw.strip():
+        try:
+            parsed_allowlist = json.loads(tool_allowlist_raw)
+            if isinstance(parsed_allowlist, list):
+                tool_allowlist = [str(tool_name) for tool_name in parsed_allowlist]
+        except json.JSONDecodeError:
+            tool_allowlist = []
     return QueueMessage(
         id=row["id"],
         queue_name=row["queue_name"],
@@ -74,6 +83,7 @@ def _row_to_message(row: aiosqlite.Row) -> QueueMessage:
         parent_task_id=row_dict.get("parent_task_id"),
         work_item_id=row_dict.get("work_item_id"),
         approval_token=row_dict.get("approval_token"),
+        tool_allowlist=tool_allowlist,
         urgency=row_dict.get("urgency", "informational"),
     )
 
@@ -122,6 +132,7 @@ class DurableQueueStore:
                     parent_task_id TEXT,
                     work_item_id TEXT,
                     approval_token TEXT,
+                    tool_allowlist TEXT NOT NULL DEFAULT '[]',
                     urgency TEXT NOT NULL DEFAULT 'informational'
                 )
             """)
@@ -183,6 +194,7 @@ class DurableQueueStore:
             ("parent_task_id", "TEXT"),
             ("work_item_id", "TEXT"),
             ("approval_token", "TEXT"),
+            ("tool_allowlist", "TEXT NOT NULL DEFAULT '[]'"),
             ("urgency", "TEXT NOT NULL DEFAULT 'informational'"),
         ]
         for col_name, col_def in new_columns:
@@ -218,8 +230,8 @@ class DurableQueueStore:
                    (id, queue_name, message_kind, sender, trace_id, payload,
                     created_at, lease_id, lease_expires_at, attempt_count, max_attempts,
                     scope_id, taint, task_id, parent_task_id, work_item_id,
-                    approval_token, urgency)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    approval_token, tool_allowlist, urgency)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     msg.id,
                     msg.queue_name,
@@ -238,6 +250,7 @@ class DurableQueueStore:
                     msg.parent_task_id,
                     msg.work_item_id,
                     msg.approval_token,
+                    json.dumps(msg.tool_allowlist),
                     msg.urgency,
                 ),
             )

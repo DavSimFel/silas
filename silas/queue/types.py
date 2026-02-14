@@ -255,6 +255,8 @@ class QueueMessage(BaseModel):
     work_item_id: str | None = None
     # Authorization token consumed by the approval engine at execution entry
     approval_token: str | None = None
+    # Per-hop tool exposure contract for queue consumers.
+    tool_allowlist: list[str] = Field(default_factory=list)
     # Priority hint for consumer scheduling decisions
     urgency: Urgency = "informational"
 

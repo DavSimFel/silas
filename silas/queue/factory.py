@@ -32,6 +32,9 @@ async def create_queue_system(
     proxy_agent: ProxyAgentProtocol,
     planner_agent: PlannerAgentProtocol,
     executor_agent: ExecutorAgentProtocol,
+    *,
+    channel: object | None = None,
+    approval_recipient_id: str = "owner",
 ) -> tuple[QueueOrchestrator, QueueBridge]:
     """Create store, router, consumers, orchestrator, and bridge.
 
@@ -65,7 +68,13 @@ async def create_queue_system(
     consult_manager = ConsultPlannerManager(store, router)
     replan_manager = ReplanManager(router)
 
-    proxy_consumer = ProxyConsumer(store, router, proxy_agent)
+    proxy_consumer = ProxyConsumer(
+        store,
+        router,
+        proxy_agent,
+        channel=channel,
+        approval_recipient_id=approval_recipient_id,
+    )
     planner_consumer = PlannerConsumer(store, router, planner_agent)
     executor_consumer = ExecutorConsumer(
         store, router, executor_agent,
