@@ -23,6 +23,10 @@ jobs:
       - name: Ruff
         run: uv run ruff check .
 
+      - name: Pyright
+        continue-on-error: true  # Informational until errors are triaged
+        run: uv run pyright
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10

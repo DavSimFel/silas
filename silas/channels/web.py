@@ -6,7 +6,7 @@ import json
 import logging
 import mimetypes
 import os
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +54,9 @@ class OnboardPayload(BaseModel):
 
 
 class WebChannel(ChannelAdapterCore):
-    channel_name = "web"
+    @property
+    def channel_name(self) -> str:
+        return "web"
 
     def __init__(
         self,
@@ -842,7 +844,7 @@ class WebChannel(ChannelAdapterCore):
         }
         await self._send_json(recipient_id, payload)
 
-    async def _send_json(self, recipient_id: str, payload: dict[str, object]) -> None:
+    async def _send_json(self, recipient_id: str, payload: Mapping[str, object]) -> None:
         websocket = await self._resolve_socket_for_recipient(recipient_id)
         if websocket is None:
             return

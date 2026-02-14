@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from statistics import median
 
+type FatigueStatusValue = str | float | int | bool | datetime | None
+
 _MEDIUM_PLUS_RISK_LEVELS = {"medium", "high", "irreversible"}
 
 
@@ -33,7 +35,7 @@ class ApprovalFatigueTracker:
         risk_level: str,
         requested_at: datetime,
         decided_at: datetime,
-    ) -> dict[str, float | int | bool | None]:
+    ) -> dict[str, FatigueStatusValue]:
         _require_timezone_aware(requested_at, "requested_at")
         _require_timezone_aware(decided_at, "decided_at")
 
@@ -92,7 +94,7 @@ class ApprovalFatigueTracker:
         self,
         scope_id: str,
         medium_plus_pending: int = 0,
-    ) -> dict[str, float | int | bool | None]:
+    ) -> dict[str, FatigueStatusValue]:
         median_seconds = self.median_decision_time(scope_id)
         return {
             "scope_id": scope_id,

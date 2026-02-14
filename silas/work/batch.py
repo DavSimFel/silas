@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 from silas.models.review import BatchActionDecision, BatchActionItem, BatchProposal
@@ -19,14 +20,14 @@ logger = logging.getLogger(__name__)
 class BatchGateRunner(Protocol):
     """Protocol for gate runners that can check batch action permissions."""
 
-    def check_batch_action(self, action: str, payload: dict[str, object]) -> bool: ...
+    def check_batch_action(self, action: str, payload: Mapping[str, object]) -> bool: ...
 
 
 @runtime_checkable
 class BatchWorkItemStore(Protocol):
     """Protocol for stores that can execute batch actions."""
 
-    def execute_batch_action(self, action: str, payload: dict[str, object]) -> None: ...
+    def execute_batch_action(self, action: str, payload: Mapping[str, object]) -> None: ...
 
 
 class BatchExecutor:
@@ -91,7 +92,7 @@ class BatchExecutor:
 
         return {"item_id": item.item_id, "success": True, "error": None}
 
-    def _is_allowed(self, action: str, payload: dict[str, object]) -> bool:
+    def _is_allowed(self, action: str, payload: Mapping[str, object]) -> bool:
         """Check gate runner permission. No gate runner = always allowed."""
         if self._gate_runner is None:
             return True

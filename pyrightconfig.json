@@ -1,0 +1,20 @@
+{
+  "typeCheckingMode": "basic",
+  "include": [
+    "."
+  ],
+  "strict": [
+    "silas/models",
+    "silas/protocols"
+  ],
+  "exclude": [
+    "tests",
+    ".venv",
+    ".venv-local",
+    "build"
+  ],
+  "pythonVersion": "3.12",
+  "extraPaths": [
+    "."
+  ]
+}
