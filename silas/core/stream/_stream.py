@@ -853,7 +853,13 @@ class Stream(
 
         agent_response = None
         if queue_response is not None:
-            agent_response = queue_response.payload.get("agent_response")
+            raw = queue_response.payload.get("agent_response")
+            if isinstance(raw, dict):
+                from silas.models.agents import AgentResponse
+
+                agent_response = AgentResponse(**raw)
+            else:
+                agent_response = raw
         await self._process_memory_queries(
             agent_response,
             accumulated_taint,
