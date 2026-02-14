@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 from silas.scheduler.ap_scheduler import SilasScheduler
+from tests.helpers import wait_until
 
 
 @pytest.fixture
@@ -122,11 +121,10 @@ class TestCallbackExecution:
             nonlocal call_count
             call_count += 1
 
-        scheduler.add_heartbeat("test", 1, counter)
+        scheduler.add_heartbeat("test", 0.1, counter)
         await scheduler.start()
 
-        # Wait enough time for at least one tick
-        await asyncio.sleep(1.5)
+        await wait_until(lambda: call_count >= 1, timeout=0.5)
 
         await scheduler.shutdown()
         assert call_count >= 1
@@ -144,11 +142,11 @@ class TestCallbackExecution:
             nonlocal healthy_count
             healthy_count += 1
 
-        scheduler.add_heartbeat("bad", 1, failing)
-        scheduler.add_heartbeat("good", 1, healthy)
+        scheduler.add_heartbeat("bad", 0.1, failing)
+        scheduler.add_heartbeat("good", 0.1, healthy)
         await scheduler.start()
 
-        await asyncio.sleep(1.5)
+        await wait_until(lambda: healthy_count >= 1, timeout=0.5)
 
         await scheduler.shutdown()
         # The healthy callback should still have fired despite the failing one

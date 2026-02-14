@@ -79,11 +79,11 @@ class TestLeaseExpiry:
         await store.enqueue(msg)
 
         # Lease with a very short duration.
-        leased = await store.lease("test_queue", lease_duration_s=1)
+        leased = await store.lease("test_queue", lease_duration_s=0.1)
         assert leased is not None
 
         # Why sleep: we need the lease to actually expire in SQLite's time domain.
-        await asyncio.sleep(1.1)
+        await asyncio.sleep(0.15)
 
         # Another consumer should be able to lease the same message.
         re_leased = await store.lease("test_queue")
@@ -146,15 +146,15 @@ class TestHeartbeat:
         await store.enqueue(msg)
 
         # Lease with short duration so it would expire without heartbeat.
-        leased = await store.lease("test_queue", lease_duration_s=1)
+        leased = await store.lease("test_queue", lease_duration_s=0.1)
         assert leased is not None
 
         # Extend the lease well into the future.
         await store.heartbeat(msg.id, extend_s=300)
 
-        # Why sleep: proves the original 1s lease would have expired,
+        # Why sleep: proves the original short lease would have expired,
         # but the heartbeat extended it so no one else can lease it.
-        await asyncio.sleep(1.1)
+        await asyncio.sleep(0.15)
 
         other = await store.lease("test_queue")
         # Why None: the heartbeat extended the lease, so no message is available.
@@ -186,8 +186,8 @@ class TestStartupRecovery:
         await store.enqueue(msg)
 
         # Lease with short duration and let it expire.
-        await store.lease("test_queue", lease_duration_s=1)
-        await asyncio.sleep(1.1)
+        await store.lease("test_queue", lease_duration_s=0.1)
+        await asyncio.sleep(0.15)
 
         count = await store.requeue_expired()
         assert count == 1

@@ -7,7 +7,6 @@ components, and Stream's queue_bridge conditional works end-to-end.
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +19,7 @@ from silas.queue.orchestrator import QueueOrchestrator
 from silas.queue.router import QueueRouter
 from silas.queue.store import DurableQueueStore
 from silas.queue.types import QueueMessage
+from tests.helpers import wait_until
 
 # ── Mock Agents ────────────────────────────────────────────────────────
 
@@ -177,7 +177,7 @@ class TestQueueBridgeCollectResponse:
         )
         await router.route(response_msg)
 
-        result = await bridge.collect_response(trace_id=trace_id, timeout_s=2.0)
+        result = await bridge.collect_response(trace_id=trace_id, timeout_s=0.5)
         assert result is not None
         assert result.payload["text"] == "Here is your answer"
         assert result.trace_id == trace_id
@@ -269,9 +269,7 @@ class TestFullQueueFlow:
 
         # Start orchestrator briefly to let proxy consumer process.
         await orchestrator.start()
-        # Why short sleep: give the consumer poll loop time to lease and
-        # process the message. 0.5s is plenty for a mock agent.
-        await asyncio.sleep(0.5)
+        await wait_until(lambda: proxy.call_count >= 1, timeout=0.5)
         await orchestrator.stop()
 
         assert proxy.call_count == 1
@@ -293,9 +291,10 @@ class TestFullQueueFlow:
         await bridge.dispatch_turn("Refactor the auth module", trace_id=trace_id)
 
         await orchestrator.start()
-        # Why 1s: proxy needs to process user_message, produce plan_request,
-        # then planner needs to consume it. Two consumer cycles.
-        await asyncio.sleep(1.0)
+        await wait_until(
+            lambda: proxy.call_count >= 1 and planner.call_count >= 1,
+            timeout=0.5,
+        )
         await orchestrator.stop()
 
         assert proxy.call_count == 1
