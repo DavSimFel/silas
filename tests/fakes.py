@@ -94,7 +94,9 @@ class InMemoryContextManager:
         del turn_number
         return "\n".join(item.content for item in self.by_scope.get(scope_id, []))
 
-    def enforce_budget(self, scope_id: str, turn_number: int, current_goal: str | None) -> list[str]:
+    def enforce_budget(
+        self, scope_id: str, turn_number: int, current_goal: str | None
+    ) -> list[str]:
         del scope_id, turn_number, current_goal
         return []
 
@@ -212,11 +214,15 @@ class InMemoryWorkItemStore:
     async def list_by_parent(self, parent_id: str) -> list[WorkItem]:
         return [i.model_copy(deep=True) for i in self.items.values() if i.parent == parent_id]
 
-    async def update_status(self, work_item_id: str, status: WorkItemStatus, budget_used: BudgetUsed) -> None:
+    async def update_status(
+        self, work_item_id: str, status: WorkItemStatus, budget_used: BudgetUsed
+    ) -> None:
         self.status_updates.append((work_item_id, status, budget_used.model_copy(deep=True)))
         item = self.items.get(work_item_id)
         if item is not None:
-            self.items[work_item_id] = item.model_copy(update={"status": status, "budget_used": budget_used.model_copy(deep=True)})
+            self.items[work_item_id] = item.model_copy(
+                update={"status": status, "budget_used": budget_used.model_copy(deep=True)}
+            )
 
 
 @dataclass(slots=True)
@@ -249,7 +255,9 @@ class InMemoryChannel:
         self.suggestion_cards.append({"recipient_id": recipient_id, "suggestion": suggestion})
         return {"selected_value": None, "freetext": None, "approved": False}
 
-    async def push_message(self, text: str, sender_id: str = "owner", scope_id: str = "owner") -> None:
+    async def push_message(
+        self, text: str, sender_id: str = "owner", scope_id: str = "owner"
+    ) -> None:
         message = ChannelMessage(
             channel=self.channel_name,
             sender_id=sender_id,
@@ -356,9 +364,7 @@ class FakePersonalityEngine:
     preset_calls: list[tuple[str, str]] = field(default_factory=list)
     adjust_calls: list[tuple[str, dict[str, float], bool, bool]] = field(default_factory=list)
 
-    async def detect_context(
-        self, message: ChannelMessage, route_hint: str | None = None
-    ) -> str:
+    async def detect_context(self, message: ChannelMessage, route_hint: str | None = None) -> str:
         self.detect_calls.append((message, route_hint))
         if route_hint:
             return route_hint
@@ -375,7 +381,9 @@ class FakePersonalityEngine:
 
     async def render_directives(self, scope_id: str, context_key: str) -> str:
         self.render_calls.append((scope_id, context_key))
-        return self.directives_by_scope_context.get((scope_id, context_key), self.directives_default)
+        return self.directives_by_scope_context.get(
+            (scope_id, context_key), self.directives_default
+        )
 
     async def apply_event(
         self,

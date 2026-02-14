@@ -47,10 +47,7 @@ async def request_research(
         },
     )
     await router.route(msg)  # type: ignore[union-attr]
-    return (
-        f"Research dispatched (request_id={request_id}). "
-        "Result will arrive as next message."
-    )
+    return f"Research dispatched (request_id={request_id}). Result will arrive as next message."
 
 
 async def validate_plan(
@@ -71,6 +68,7 @@ async def validate_plan(
     # Graceful degradation lets the tool be registered without hard deps.
     try:
         from silas.plan_parser import parse_plan  # type: ignore[import-not-found]
+
         result = parse_plan(plan_markdown)
         if result.errors:
             error_lines = "\n".join(f"- {e}" for e in result.errors)

@@ -102,7 +102,9 @@ class LiveContextManager:
                 )
         return "\n\n".join(blocks)
 
-    def enforce_budget(self, scope_id: str, turn_number: int, current_goal: str | None) -> list[str]:
+    def enforce_budget(
+        self, scope_id: str, turn_number: int, current_goal: str | None
+    ) -> list[str]:
         self._apply_observation_masking(scope_id, turn_number)
 
         usage = self.token_usage(scope_id)
@@ -120,7 +122,11 @@ class LiveContextManager:
             # least-valuable items first, not just the oldest.
             if self._use_scorer:
                 evicted += self._evict_scored(
-                    scope_id, zone, zone_budget, usage, current_goal or "",
+                    scope_id,
+                    zone,
+                    zone_budget,
+                    usage,
+                    current_goal or "",
                 )
             else:
                 # Tier-1 fallback: pure heuristic (FIFO + relevance).

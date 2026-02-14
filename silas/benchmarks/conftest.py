@@ -11,4 +11,6 @@ import pytest
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    config.addinivalue_line("markers", "benchmark: mark test as a benchmark (deselect with '-m \"not benchmark\"')")
+    config.addinivalue_line(
+        "markers", "benchmark: mark test as a benchmark (deselect with '-m \"not benchmark\"')"
+    )

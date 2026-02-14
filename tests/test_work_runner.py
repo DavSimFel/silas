@@ -80,11 +80,13 @@ class TestRetryOnSuccess:
 
     @pytest.mark.asyncio
     async def test_succeeds_after_retries(self) -> None:
-        executor = FakeExecutor([
-            _failure_result("wi-test-001"),
-            _failure_result("wi-test-001"),
-            _success_result("wi-test-001"),
-        ])
+        executor = FakeExecutor(
+            [
+                _failure_result("wi-test-001"),
+                _failure_result("wi-test-001"),
+                _success_result("wi-test-001"),
+            ]
+        )
         runner = WorkItemRunner(executor, backoff_base_seconds=0.01)
         result = await runner.run(_make_work_item(max_attempts=3))
         assert result.status == WorkItemStatus.done
@@ -120,36 +122,44 @@ class TestOnFailureEscalate:
         async def on_escalate(wi: WorkItem, action: EscalationAction) -> None:
             escalation_called.append(action.action)
 
-        executor = FakeExecutor([
-            _failure_result("wi-test-001"),
-            _failure_result("wi-test-001"),
-        ])
+        executor = FakeExecutor(
+            [
+                _failure_result("wi-test-001"),
+                _failure_result("wi-test-001"),
+            ]
+        )
         runner = WorkItemRunner(
             executor,
             backoff_base_seconds=0.01,
             on_escalate=on_escalate,
         )
-        result = await runner.run(_make_work_item(
-            on_failure="escalate",
-            max_attempts=5,
-            escalation={"default": EscalationAction(action="notify_owner")},
-        ))
+        result = await runner.run(
+            _make_work_item(
+                on_failure="escalate",
+                max_attempts=5,
+                escalation={"default": EscalationAction(action="notify_owner")},
+            )
+        )
         assert executor.call_count == 2  # one retry, then stop
         assert "Escalated" in result.summary
         assert escalation_called == ["notify_owner"]
 
     @pytest.mark.asyncio
     async def test_escalate_without_handler(self) -> None:
-        executor = FakeExecutor([
-            _failure_result("wi-test-001"),
-            _failure_result("wi-test-001"),
-        ])
+        executor = FakeExecutor(
+            [
+                _failure_result("wi-test-001"),
+                _failure_result("wi-test-001"),
+            ]
+        )
         runner = WorkItemRunner(executor, backoff_base_seconds=0.01)
-        result = await runner.run(_make_work_item(
-            on_failure="escalate",
-            max_attempts=5,
-            escalation={"default": EscalationAction(action="notify_owner")},
-        ))
+        result = await runner.run(
+            _make_work_item(
+                on_failure="escalate",
+                max_attempts=5,
+                escalation={"default": EscalationAction(action="notify_owner")},
+            )
+        )
         assert executor.call_count == 2
         assert "Escalated" in result.summary
 
@@ -157,10 +167,12 @@ class TestOnFailureEscalate:
 class TestBudgetTracking:
     @pytest.mark.asyncio
     async def test_attempts_tracked(self) -> None:
-        executor = FakeExecutor([
-            _failure_result("wi-test-001"),
-            _success_result("wi-test-001"),
-        ])
+        executor = FakeExecutor(
+            [
+                _failure_result("wi-test-001"),
+                _success_result("wi-test-001"),
+            ]
+        )
         runner = WorkItemRunner(executor, backoff_base_seconds=0.01)
         result = await runner.run(_make_work_item(max_attempts=3))
         assert result.budget_used.attempts == 2

@@ -74,6 +74,7 @@ _DEFAULT_AGENT_NAME = "Silas"
 _OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 _DEFAULT_CONNECTION_HEALTH_INTERVAL_S = 60
 
+
 @dataclass(slots=True)
 class _ConnectionMetadata:
     skill_name: str
@@ -342,7 +343,9 @@ def _resolve_approval_signing_key(
         try:
             return Ed25519PrivateKey.from_private_bytes(signing_key)
         except (TypeError, ValueError):
-            logger.warning("Invalid raw signing key bytes for approval verifier; generating ephemeral key")
+            logger.warning(
+                "Invalid raw signing key bytes for approval verifier; generating ephemeral key"
+            )
     return Ed25519PrivateKey.generate()
 
 

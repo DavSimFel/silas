@@ -107,9 +107,7 @@ class GuardrailsChecker:
                 return val
         return ""
 
-    def _run_single_validator(
-        self, hub_name: str, content: str, gate: Gate
-    ) -> dict[str, Any]:
+    def _run_single_validator(self, hub_name: str, content: str, gate: Gate) -> dict[str, Any]:
         """Run one guardrails-ai validator. Isolated for easy mocking in tests."""
         import guardrails as gd
 

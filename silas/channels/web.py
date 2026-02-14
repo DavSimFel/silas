@@ -139,7 +139,10 @@ class WebChannel(ChannelAdapterCore):
                 return self._serve_static(asset_path)
 
     async def _register_websocket(
-        self, session_id: str, connection_key: str, websocket: WebSocket,
+        self,
+        session_id: str,
+        connection_key: str,
+        websocket: WebSocket,
     ) -> None:
         """Track a new websocket connection in session and connection maps."""
         async with self._ws_lock:
@@ -149,7 +152,10 @@ class WebChannel(ChannelAdapterCore):
                 self._websocket = websocket
 
     async def _unregister_websocket(
-        self, session_id: str, connection_key: str, websocket: WebSocket,
+        self,
+        session_id: str,
+        connection_key: str,
+        websocket: WebSocket,
     ) -> None:
         """Clean up websocket tracking on disconnect, promoting next available socket."""
         async with self._ws_lock:
@@ -359,7 +365,9 @@ class WebChannel(ChannelAdapterCore):
         try:
             config_data = self._load_config_mapping()
         except (OSError, ValueError, yaml.YAMLError):
-            logger.warning("Failed to read config for secrets data_dir; using default", exc_info=True)
+            logger.warning(
+                "Failed to read config for secrets data_dir; using default", exc_info=True
+            )
             return Path("./data")
 
         silas_section = config_data.get("silas")
@@ -599,7 +607,9 @@ class WebChannel(ChannelAdapterCore):
     # --- RichCardChannel implementation ---
 
     async def send_approval_request(
-        self, recipient_id: str, work_item: object,
+        self,
+        recipient_id: str,
+        work_item: object,
     ) -> ApprovalDecision:
         """Present a plan for approval and collect the user's decision."""
         card_data: dict[str, object] = {
@@ -611,7 +621,9 @@ class WebChannel(ChannelAdapterCore):
                 if hasattr(work_item, "budget") and hasattr(work_item.budget, "model_dump")
                 else {}
             ),
-            "skills": list(work_item.skills) if hasattr(work_item, "skills") and work_item.skills else [],
+            "skills": list(work_item.skills)
+            if hasattr(work_item, "skills") and work_item.skills
+            else [],
         }
         response = await self._send_card_and_wait(recipient_id, "approval_request", card_data)
         verdict_str = str(response.get("verdict", "declined"))
@@ -645,7 +657,9 @@ class WebChannel(ChannelAdapterCore):
         return action if action in {"approve", "block"} else "block"
 
     async def send_checkpoint(
-        self, message: str, options: list[dict[str, object]],
+        self,
+        message: str,
+        options: list[dict[str, object]],
     ) -> dict[str, object]:
         """Present a checkpoint with options and collect the user's choice."""
         card_data: dict[str, object] = {"message": message, "options": options}
@@ -653,7 +667,9 @@ class WebChannel(ChannelAdapterCore):
         return response
 
     async def send_batch_review(
-        self, recipient_id: str, batch: object,
+        self,
+        recipient_id: str,
+        batch: object,
     ) -> BatchActionDecision:
         """Present a batch for review."""
         from silas.models.review import BatchActionVerdict
@@ -714,9 +730,7 @@ class WebChannel(ChannelAdapterCore):
         """Present a decision card with options."""
         card_data: dict[str, object] = {
             "question": question,
-            "options": [
-                o.model_dump() if hasattr(o, "model_dump") else o for o in options
-            ],
+            "options": [o.model_dump() if hasattr(o, "model_dump") else o for o in options],
             "allow_freetext": allow_freetext,
         }
         response = await self._send_card_and_wait(recipient_id, "decision", card_data)
@@ -727,7 +741,9 @@ class WebChannel(ChannelAdapterCore):
         )
 
     async def send_suggestion(
-        self, recipient_id: str, suggestion: object,
+        self,
+        recipient_id: str,
+        suggestion: object,
     ) -> DecisionResult:
         """Present a proactive suggestion card."""
         card_data: dict[str, object] = {
@@ -741,20 +757,26 @@ class WebChannel(ChannelAdapterCore):
         )
 
     async def send_autonomy_threshold_review(
-        self, recipient_id: str, proposal: object,
+        self,
+        recipient_id: str,
+        proposal: object,
     ) -> object:
         """Present an autonomy threshold proposal."""
         card_data: dict[str, object] = {
             "proposal": proposal.model_dump() if hasattr(proposal, "model_dump") else {},
         }
         response = await self._send_card_and_wait(
-            recipient_id, "autonomy_threshold_review", card_data,
+            recipient_id,
+            "autonomy_threshold_review",
+            card_data,
         )
         decision_str = str(response.get("decision", "decline"))
         return decision_str  # caller interprets as AutonomyThresholdDecision
 
     async def send_secure_input(
-        self, recipient_id: str, request: object,
+        self,
+        recipient_id: str,
+        request: object,
     ) -> object:
         """Present a secure input card.
 
@@ -778,7 +800,9 @@ class WebChannel(ChannelAdapterCore):
         )
 
     async def send_connection_setup_step(
-        self, recipient_id: str, step: object,
+        self,
+        recipient_id: str,
+        step: object,
     ) -> object:
         """Present a connection setup step card."""
         from silas.models.connections import SetupStepResponse
@@ -787,7 +811,9 @@ class WebChannel(ChannelAdapterCore):
             "step": step.model_dump() if hasattr(step, "model_dump") else {},
         }
         response = await self._send_card_and_wait(
-            recipient_id, "connection_setup_step", card_data,
+            recipient_id,
+            "connection_setup_step",
+            card_data,
         )
         return SetupStepResponse(
             step_type=str(response.get("step_type", "unknown")),
@@ -810,7 +836,9 @@ class WebChannel(ChannelAdapterCore):
             "reason": reason,
         }
         response = await self._send_card_and_wait(
-            recipient_id, "permission_escalation", card_data,
+            recipient_id,
+            "permission_escalation",
+            card_data,
         )
         return DecisionResult(
             selected_value=response.get("selected_value"),  # type: ignore[arg-type]
@@ -819,14 +847,18 @@ class WebChannel(ChannelAdapterCore):
         )
 
     async def send_connection_failure(
-        self, recipient_id: str, failure: object,
+        self,
+        recipient_id: str,
+        failure: object,
     ) -> DecisionResult:
         """Present a connection failure card with recovery options."""
         card_data: dict[str, object] = {
             "failure": failure.model_dump() if hasattr(failure, "model_dump") else {},
         }
         response = await self._send_card_and_wait(
-            recipient_id, "connection_failure", card_data,
+            recipient_id,
+            "connection_failure",
+            card_data,
         )
         return DecisionResult(
             selected_value=response.get("selected_value"),  # type: ignore[arg-type]
@@ -871,9 +903,7 @@ class WebChannel(ChannelAdapterCore):
         # resolved_by is always the authenticated owner — never from client payload.
         resolved_by = self.scope_id
         verdict = (
-            ApprovalVerdict.approved
-            if normalized_action == "approve"
-            else ApprovalVerdict.declined
+            ApprovalVerdict.approved if normalized_action == "approve" else ApprovalVerdict.declined
         )
         result = handler(card_id, verdict, resolved_by)
         if inspect.isawaitable(result):

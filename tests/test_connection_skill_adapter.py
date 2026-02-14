@@ -17,6 +17,7 @@ from silas.skills.registry import SkillRegistry
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_registry_and_executor(
     skill_name: str = "conn-skill",
     handler_result: dict[str, object] | None = None,
@@ -123,7 +124,11 @@ class TestLiveConnectionManagerSkillIntegration:
 
         status = await mgr.health_check(handle.id)
         # Single failure → still healthy (sliding window), but the check failed
-        assert status.level in {HealthStatusLevel.healthy, HealthStatusLevel.degraded, HealthStatusLevel.unhealthy}
+        assert status.level in {
+            HealthStatusLevel.healthy,
+            HealthStatusLevel.degraded,
+            HealthStatusLevel.unhealthy,
+        }
         await mgr.close()
 
     @pytest.mark.asyncio
@@ -160,7 +165,11 @@ class TestLiveConnectionManagerSkillIntegration:
 
         # Should not raise — just does HTTP check (which will fail)
         status = await mgr.health_check(handle.id)
-        assert status.level in {HealthStatusLevel.healthy, HealthStatusLevel.degraded, HealthStatusLevel.unhealthy}
+        assert status.level in {
+            HealthStatusLevel.healthy,
+            HealthStatusLevel.degraded,
+            HealthStatusLevel.unhealthy,
+        }
         assert handle.config.skill_id is None
         await mgr.close()
 

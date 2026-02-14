@@ -164,7 +164,11 @@ class SilasVerificationRunner:
         if ".." in input_path.parts:
             raise ValueError("Path outside permitted directories")
 
-        candidate = (self._verify_dir / input_path).resolve() if not input_path.is_absolute() else input_path.resolve()
+        candidate = (
+            (self._verify_dir / input_path).resolve()
+            if not input_path.is_absolute()
+            else input_path.resolve()
+        )
         if not any(self._is_relative_to(candidate, root) for root in self._allowed_roots):
             raise ValueError("Path outside permitted directories")
         return candidate

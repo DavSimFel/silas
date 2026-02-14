@@ -73,18 +73,14 @@ class SQLiteWorkItemStore:
     async def list_by_status(self, status: WorkItemStatus) -> list[WorkItem]:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT * FROM work_items WHERE status = ?", (status.value,)
-            )
+            cursor = await db.execute("SELECT * FROM work_items WHERE status = ?", (status.value,))
             rows = await cursor.fetchall()
             return [_row_to_work_item(r) for r in rows]
 
     async def list_by_parent(self, parent_id: str) -> list[WorkItem]:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT * FROM work_items WHERE parent = ?", (parent_id,)
-            )
+            cursor = await db.execute("SELECT * FROM work_items WHERE parent = ?", (parent_id,))
             rows = await cursor.fetchall()
             return [_row_to_work_item(r) for r in rows]
 

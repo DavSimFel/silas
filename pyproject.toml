@@ -36,6 +36,7 @@ dev = [
   "pytest-split>=0.10",
   "pyright>=1.1.397",
   "ruff>=0.6",
+  "pytest-cov>=6.0",
 ]
 
 [project.scripts]

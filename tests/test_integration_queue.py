@@ -111,7 +111,9 @@ def router(store: DurableQueueStore) -> QueueRouter:
 class TestQueueBridgeDispatchTurn:
     """Verify dispatch_turn enqueues user_message to proxy_queue."""
 
-    async def test_enqueues_user_message(self, store: DurableQueueStore, router: QueueRouter) -> None:
+    async def test_enqueues_user_message(
+        self, store: DurableQueueStore, router: QueueRouter
+    ) -> None:
         orchestrator = QueueOrchestrator(store=store, router=router, consumers=[])
         bridge = QueueBridge(orchestrator=orchestrator, router=router, store=store)
         trace_id = str(uuid.uuid4())
@@ -141,7 +143,9 @@ class TestQueueBridgeDispatchTurn:
 class TestQueueBridgeDispatchGoal:
     """Verify dispatch_goal enqueues plan_request to planner_queue."""
 
-    async def test_enqueues_plan_request(self, store: DurableQueueStore, router: QueueRouter) -> None:
+    async def test_enqueues_plan_request(
+        self, store: DurableQueueStore, router: QueueRouter
+    ) -> None:
         orchestrator = QueueOrchestrator(store=store, router=router, consumers=[])
         bridge = QueueBridge(orchestrator=orchestrator, router=router, store=store)
         trace_id = str(uuid.uuid4())
@@ -164,7 +168,9 @@ class TestQueueBridgeDispatchGoal:
 class TestQueueBridgeCollectResponse:
     """Verify collect_response polls for matching agent_response."""
 
-    async def test_returns_matching_response(self, store: DurableQueueStore, router: QueueRouter) -> None:
+    async def test_returns_matching_response(
+        self, store: DurableQueueStore, router: QueueRouter
+    ) -> None:
         orchestrator = QueueOrchestrator(store=store, router=router, consumers=[])
         bridge = QueueBridge(orchestrator=orchestrator, router=router, store=store)
         trace_id = "trace-123"
@@ -183,7 +189,9 @@ class TestQueueBridgeCollectResponse:
         assert result.payload["text"] == "Here is your answer"
         assert result.trace_id == trace_id
 
-    async def test_returns_none_on_timeout(self, store: DurableQueueStore, router: QueueRouter) -> None:
+    async def test_returns_none_on_timeout(
+        self, store: DurableQueueStore, router: QueueRouter
+    ) -> None:
         orchestrator = QueueOrchestrator(store=store, router=router, consumers=[])
         bridge = QueueBridge(orchestrator=orchestrator, router=router, store=store)
 
@@ -309,7 +317,9 @@ class TestTraceIdPropagation:
     """Verify trace_id flows across queue hops."""
 
     async def test_trace_id_preserved_on_dispatch_turn(
-        self, store: DurableQueueStore, router: QueueRouter,
+        self,
+        store: DurableQueueStore,
+        router: QueueRouter,
     ) -> None:
         orchestrator = QueueOrchestrator(store=store, router=router, consumers=[])
         bridge = QueueBridge(orchestrator=orchestrator, router=router, store=store)
@@ -322,7 +332,9 @@ class TestTraceIdPropagation:
         assert msg.trace_id == trace_id
 
     async def test_trace_id_preserved_on_dispatch_goal(
-        self, store: DurableQueueStore, router: QueueRouter,
+        self,
+        store: DurableQueueStore,
+        router: QueueRouter,
     ) -> None:
         orchestrator = QueueOrchestrator(store=store, router=router, consumers=[])
         bridge = QueueBridge(orchestrator=orchestrator, router=router, store=store)
@@ -386,7 +398,9 @@ class TestQueueDefaultPath:
     """Queue path is the default when bridge is configured and healthy."""
 
     def test_should_use_queue_when_bridge_set_and_running(
-        self, store: DurableQueueStore, router: QueueRouter,
+        self,
+        store: DurableQueueStore,
+        router: QueueRouter,
     ) -> None:
         """_should_use_queue_path returns True when orchestrator is running."""
         from types import SimpleNamespace
@@ -401,13 +415,27 @@ class TestQueueDefaultPath:
         orchestrator._running = True
 
         tc = SimpleNamespace(
-            scope_id="owner", config=None, proxy=None, planner=None,
-            work_executor=None, gate_runner=None, embedder=None,
-            personality_engine=None, skill_loader=None, skill_resolver=None,
-            skill_registry=None, skill_executor=None, approval_manager=None,
-            suggestion_engine=None, autonomy_calibrator=None, audit=None,
-            memory_store=None, chronicle_store=None, context_manager=None,
-            live_context_manager=None, turn_number=0,
+            scope_id="owner",
+            config=None,
+            proxy=None,
+            planner=None,
+            work_executor=None,
+            gate_runner=None,
+            embedder=None,
+            personality_engine=None,
+            skill_loader=None,
+            skill_resolver=None,
+            skill_registry=None,
+            skill_executor=None,
+            approval_manager=None,
+            suggestion_engine=None,
+            autonomy_calibrator=None,
+            audit=None,
+            memory_store=None,
+            chronicle_store=None,
+            context_manager=None,
+            live_context_manager=None,
+            turn_number=0,
         )
         channel = SimpleNamespace(send=None, listen=None)
         stream = Stream(
@@ -418,7 +446,9 @@ class TestQueueDefaultPath:
         assert stream._should_use_queue_path() is True
 
     def test_falls_back_when_orchestrator_not_running(
-        self, store: DurableQueueStore, router: QueueRouter,
+        self,
+        store: DurableQueueStore,
+        router: QueueRouter,
     ) -> None:
         """Falls back to procedural when orchestrator hasn't started."""
         from types import SimpleNamespace
@@ -432,13 +462,27 @@ class TestQueueDefaultPath:
         # orchestrator._running is False by default
 
         tc = SimpleNamespace(
-            scope_id="owner", config=None, proxy=None, planner=None,
-            work_executor=None, gate_runner=None, embedder=None,
-            personality_engine=None, skill_loader=None, skill_resolver=None,
-            skill_registry=None, skill_executor=None, approval_manager=None,
-            suggestion_engine=None, autonomy_calibrator=None, audit=None,
-            memory_store=None, chronicle_store=None, context_manager=None,
-            live_context_manager=None, turn_number=0,
+            scope_id="owner",
+            config=None,
+            proxy=None,
+            planner=None,
+            work_executor=None,
+            gate_runner=None,
+            embedder=None,
+            personality_engine=None,
+            skill_loader=None,
+            skill_resolver=None,
+            skill_registry=None,
+            skill_executor=None,
+            approval_manager=None,
+            suggestion_engine=None,
+            autonomy_calibrator=None,
+            audit=None,
+            memory_store=None,
+            chronicle_store=None,
+            context_manager=None,
+            live_context_manager=None,
+            turn_number=0,
         )
         channel = SimpleNamespace(send=None, listen=None)
         stream = Stream(
@@ -455,13 +499,27 @@ class TestQueueDefaultPath:
         from silas.core.stream import Stream
 
         tc = SimpleNamespace(
-            scope_id="owner", config=None, proxy=None, planner=None,
-            work_executor=None, gate_runner=None, embedder=None,
-            personality_engine=None, skill_loader=None, skill_resolver=None,
-            skill_registry=None, skill_executor=None, approval_manager=None,
-            suggestion_engine=None, autonomy_calibrator=None, audit=None,
-            memory_store=None, chronicle_store=None, context_manager=None,
-            live_context_manager=None, turn_number=0,
+            scope_id="owner",
+            config=None,
+            proxy=None,
+            planner=None,
+            work_executor=None,
+            gate_runner=None,
+            embedder=None,
+            personality_engine=None,
+            skill_loader=None,
+            skill_resolver=None,
+            skill_registry=None,
+            skill_executor=None,
+            approval_manager=None,
+            suggestion_engine=None,
+            autonomy_calibrator=None,
+            audit=None,
+            memory_store=None,
+            chronicle_store=None,
+            context_manager=None,
+            live_context_manager=None,
+            turn_number=0,
         )
         channel = SimpleNamespace(send=None, listen=None)
         stream = Stream(
@@ -471,7 +529,9 @@ class TestQueueDefaultPath:
         assert stream._should_use_queue_path() is False
 
     def test_config_flag_disables_queue_path(
-        self, store: DurableQueueStore, router: QueueRouter,
+        self,
+        store: DurableQueueStore,
+        router: QueueRouter,
     ) -> None:
         """use_queue_path=False in config forces procedural path."""
         from types import SimpleNamespace
@@ -489,13 +549,27 @@ class TestQueueDefaultPath:
             execution=SimpleNamespace(use_queue_path=False),
         )
         tc = SimpleNamespace(
-            scope_id="owner", config=config, proxy=None, planner=None,
-            work_executor=None, gate_runner=None, embedder=None,
-            personality_engine=None, skill_loader=None, skill_resolver=None,
-            skill_registry=None, skill_executor=None, approval_manager=None,
-            suggestion_engine=None, autonomy_calibrator=None, audit=None,
-            memory_store=None, chronicle_store=None, context_manager=None,
-            live_context_manager=None, turn_number=0,
+            scope_id="owner",
+            config=config,
+            proxy=None,
+            planner=None,
+            work_executor=None,
+            gate_runner=None,
+            embedder=None,
+            personality_engine=None,
+            skill_loader=None,
+            skill_resolver=None,
+            skill_registry=None,
+            skill_executor=None,
+            approval_manager=None,
+            suggestion_engine=None,
+            autonomy_calibrator=None,
+            audit=None,
+            memory_store=None,
+            chronicle_store=None,
+            context_manager=None,
+            live_context_manager=None,
+            turn_number=0,
         )
         channel = SimpleNamespace(send=None, listen=None)
         stream = Stream(
@@ -511,7 +585,9 @@ class TestQueueOrchestratorLifecycle:
 
     @pytest.mark.asyncio
     async def test_start_calls_orchestrator_start(
-        self, store: DurableQueueStore, router: QueueRouter,
+        self,
+        store: DurableQueueStore,
+        router: QueueRouter,
     ) -> None:
         """Stream._start_queue_orchestrator starts the orchestrator."""
         from types import SimpleNamespace
@@ -524,13 +600,27 @@ class TestQueueOrchestratorLifecycle:
         bridge = QueueBridge(orchestrator=orchestrator, router=router, store=store)
 
         tc = SimpleNamespace(
-            scope_id="owner", config=None, proxy=None, planner=None,
-            work_executor=None, gate_runner=None, embedder=None,
-            personality_engine=None, skill_loader=None, skill_resolver=None,
-            skill_registry=None, skill_executor=None, approval_manager=None,
-            suggestion_engine=None, autonomy_calibrator=None, audit=None,
-            memory_store=None, chronicle_store=None, context_manager=None,
-            live_context_manager=None, turn_number=0,
+            scope_id="owner",
+            config=None,
+            proxy=None,
+            planner=None,
+            work_executor=None,
+            gate_runner=None,
+            embedder=None,
+            personality_engine=None,
+            skill_loader=None,
+            skill_resolver=None,
+            skill_registry=None,
+            skill_executor=None,
+            approval_manager=None,
+            suggestion_engine=None,
+            autonomy_calibrator=None,
+            audit=None,
+            memory_store=None,
+            chronicle_store=None,
+            context_manager=None,
+            live_context_manager=None,
+            turn_number=0,
         )
         channel = SimpleNamespace(send=None, listen=None)
         stream = Stream(
@@ -551,10 +641,12 @@ class TestExecutionConfig:
 
     def test_default_use_queue_path_true(self) -> None:
         from silas.config import ExecutionConfig
+
         config = ExecutionConfig()
         assert config.use_queue_path is True
 
     def test_silas_settings_includes_execution(self) -> None:
         from silas.config import SilasSettings
+
         settings = SilasSettings()
         assert settings.execution.use_queue_path is True

@@ -78,17 +78,13 @@ class TestFatigueLevel:
         # Trend ~30% puts us at medium or above
         assert analysis.fatigue_level in {FatigueLevel.medium, FatigueLevel.high}
 
-    def test_high_fatigue_many_rapid_decisions(
-        self, mitigator: ApprovalFatigueMitigator
-    ) -> None:
+    def test_high_fatigue_many_rapid_decisions(self, mitigator: ApprovalFatigueMitigator) -> None:
         decisions = _make_decisions(30)
         analysis = mitigator.analyze_fatigue(decisions)
         assert analysis.fatigue_level == FatigueLevel.high
         assert analysis.recommendation == "auto_approve_low_risk"
 
-    def test_high_fatigue_extreme_trend(
-        self, mitigator: ApprovalFatigueMitigator
-    ) -> None:
+    def test_high_fatigue_extreme_trend(self, mitigator: ApprovalFatigueMitigator) -> None:
         # Few decisions but decision time doubles
         decisions = _make_decisions(6, trend_factor=1.2)
         analysis = mitigator.analyze_fatigue(decisions)
@@ -133,9 +129,7 @@ class TestAutoApprove:
         assert not mitigator.should_auto_approve(analysis, ApprovalScope.self_update)
         assert not mitigator.should_auto_approve(analysis, ApprovalScope.budget)
 
-    def test_low_fatigue_never_auto_approves(
-        self, mitigator: ApprovalFatigueMitigator
-    ) -> None:
+    def test_low_fatigue_never_auto_approves(self, mitigator: ApprovalFatigueMitigator) -> None:
         decisions = _make_decisions(3)
         analysis = mitigator.analyze_fatigue(decisions)
         assert not mitigator.should_auto_approve(analysis, ApprovalScope.single_step)

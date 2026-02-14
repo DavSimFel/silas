@@ -255,7 +255,8 @@ class RehydrationMixin:
                 await chronicle_store.append(scope_id, item)
 
     async def _resume_in_progress_work_items(
-        self, in_progress_items: list[WorkItem],
+        self,
+        in_progress_items: list[WorkItem],
     ) -> None:
         if not in_progress_items:
             return

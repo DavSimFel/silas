@@ -299,7 +299,11 @@ class SilasConnectionManager:
         if "success" in response:
             success = bool(response.get("success", False))
             message = response.get("message")
-            text = str(message) if message is not None else ("recovered" if success else "recovery failed")
+            text = (
+                str(message)
+                if message is not None
+                else ("recovered" if success else "recovery failed")
+            )
             self._connections[connection_id] = connection.model_copy(
                 update={
                     "status": "active" if success else "error",
@@ -410,7 +414,10 @@ class SilasConnectionManager:
         await stream.drain()
 
     def _parse_setup_event(
-        self, event_type: str, event: dict[str, object], skill_name: str,
+        self,
+        event_type: str,
+        event: dict[str, object],
+        skill_name: str,
     ) -> SetupStep | None:
         """Convert a single NDJSON setup event into a SetupStep, or None if unrecognized."""
         if event_type == "setup_step":

@@ -174,9 +174,7 @@ class UXMetricsCollector:
         decline_count = sum(1 for outcome in outcomes if outcome == "declined")
         undo_count = sum(1 for outcome in outcomes if outcome == "undo")
         correction_count = sum(
-            1
-            for outcome in outcomes
-            if outcome in {"declined", "edit_selection", "undo"}
+            1 for outcome in outcomes if outcome in {"declined", "edit_selection", "undo"}
         )
 
         total_selection_events = len(free_text_modes)

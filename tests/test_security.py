@@ -76,10 +76,7 @@ def _spawn_policy_hash(
         "skills": sorted(set(skills)),
         "gates": sorted(_canonical_json(gate) for gate in gates),
         "verify": sorted(_canonical_json(check) for check in verify),
-        "escalation_config": {
-            key: escalation_config[key]
-            for key in sorted(escalation_config)
-        },
+        "escalation_config": {key: escalation_config[key] for key in sorted(escalation_config)},
     }
     return hashlib.sha256(_canonical_json(canonical).encode("utf-8")).hexdigest()
 
@@ -103,7 +100,10 @@ def _goal(goal_id: str = "goal-sec") -> Goal:
 
 
 def _msg(
-    text: str, sender_id: str = "owner", *, is_authenticated: bool = True,
+    text: str,
+    sender_id: str = "owner",
+    *,
+    is_authenticated: bool = True,
 ) -> ChannelMessage:
     return ChannelMessage(
         channel="web",
@@ -214,6 +214,7 @@ class TestLiveApprovalManager:
         token = manager.request_approval(_work_item("wi-expired"), ApprovalScope.full_plan)
 
         import time
+
         time.sleep(0.01)  # ensure expiry
 
         assert token.expires_at <= _utc_now()

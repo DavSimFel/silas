@@ -22,15 +22,26 @@ from pydantic_ai_backends.toolsets import create_console_toolset
 # Why a module-level constant matching the spec §5.2.1: this is the
 # security boundary for research mode. Tools not in this set are
 # structurally absent from the toolset — not just prompt-filtered.
-RESEARCH_TOOL_ALLOWLIST: frozenset[str] = frozenset({
-    "read_file", "grep", "glob", "ls", "web_search", "memory_search",
-})
+RESEARCH_TOOL_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "read_file",
+        "grep",
+        "glob",
+        "ls",
+        "web_search",
+        "memory_search",
+    }
+)
 
 # Console tools that involve filesystem mutation or code execution.
 # Used to strip dangerous tools from read-only toolsets.
-_MUTATION_TOOLS: frozenset[str] = frozenset({
-    "write_file", "edit_file", "execute",
-})
+_MUTATION_TOOLS: frozenset[str] = frozenset(
+    {
+        "write_file",
+        "edit_file",
+        "execute",
+    }
+)
 
 
 def build_readonly_console_toolset(workspace: Path) -> FunctionToolset:  # type: ignore[type-arg]

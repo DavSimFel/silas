@@ -56,7 +56,8 @@ class SimpleAutonomyCalibrator:
             corrections = sum(
                 1
                 for event in grouped_events
-                if isinstance(event.get("outcome"), str) and event["outcome"] in _CORRECTION_OUTCOMES
+                if isinstance(event.get("outcome"), str)
+                and event["outcome"] in _CORRECTION_OUTCOMES
             )
             correction_rate = corrections / len(grouped_events)
 

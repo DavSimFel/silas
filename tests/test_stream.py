@@ -44,7 +44,10 @@ from tests.fakes import (
 
 
 def _msg(
-    text: str, sender_id: str = "owner", *, is_authenticated: bool = True,
+    text: str,
+    sender_id: str = "owner",
+    *,
+    is_authenticated: bool = True,
 ) -> ChannelMessage:
     return ChannelMessage(
         channel="web",
@@ -509,8 +512,7 @@ async def test_process_turn_stores_raw_memory_with_session_id(
     await stream._process_turn(_msg("persist this turn"))
 
     raw_items = [
-        item for item in memory_store.items.values()
-        if item.source_kind == "conversation_raw"
+        item for item in memory_store.items.values() if item.source_kind == "conversation_raw"
     ]
     # Step 3.5 ingests input, step 11.5 ingests output — expect 2.
     assert len(raw_items) == 2
@@ -641,7 +643,10 @@ async def test_planner_route_response_runs_through_output_gates(
 
     result = await stream._process_turn(_msg("build a 5-step plan"))
 
-    assert gate_runner.calls[0][0] == "I need to plan this request before execution. Planner execution is not available yet."
+    assert (
+        gate_runner.calls[0][0]
+        == "I need to plan this request before execution. Planner execution is not available yet."
+    )
     assert result == "I cannot share that"
     assert channel.outgoing[0]["text"] == "I cannot share that"
 
@@ -728,7 +733,13 @@ class PlannerRouteWithPlanActionsModel:
             routed,
             "plan_actions",
             [
-                {"id": "plan-a", "type": "task", "title": "Run first action", "body": "Execute first planner action.", "skills": ["skill_a"]},
+                {
+                    "id": "plan-a",
+                    "type": "task",
+                    "title": "Run first action",
+                    "body": "Execute first planner action.",
+                    "skills": ["skill_a"],
+                },
                 {
                     "id": "plan-b",
                     "type": "task",
@@ -784,7 +795,17 @@ async def test_planner_route_executes_plan_actions_and_returns_summary(
     turn_context.planner = planner_model
     skill_registry = SkillRegistry()
     for name in ("skill_a", "skill_b"):
-        skill_registry.register(SkillDefinition(name=name, description=f"test {name}", version="1.0.0", input_schema={"type": "object"}, output_schema={"type": "object"}, requires_approval=False, timeout_seconds=5))
+        skill_registry.register(
+            SkillDefinition(
+                name=name,
+                description=f"test {name}",
+                version="1.0.0",
+                input_schema={"type": "object"},
+                output_schema={"type": "object"},
+                requires_approval=False,
+                timeout_seconds=5,
+            )
+        )
     skill_executor = SkillExecutor(skill_registry=skill_registry)
     execution_order: list[str] = []
 
@@ -1009,6 +1030,7 @@ class _StubQueueBridge:
         del trace_id
         self.collect_timeouts.append(timeout_s)
         from types import SimpleNamespace
+
         return SimpleNamespace(payload={"text": self._response_text})
 
 

@@ -135,7 +135,8 @@ class Stream(
             channel=self.channel,
         )
         self._approval_flow.register_channel_handler(
-            self.channel, self._on_approval_response,
+            self.channel,
+            self._on_approval_response,
         )
 
     def _sync_turn_context_fields(self) -> None:
@@ -236,7 +237,8 @@ class Stream(
         )
 
     def _activate_turn_processor(
-        self, processor: TurnProcessor,
+        self,
+        processor: TurnProcessor,
     ) -> tuple[Token[TurnContext | None], Token[str | None]]:
         turn_token = self._active_turn_context.set(processor.turn_context)
         session_token = self._active_session_id.set(processor.session_id)
@@ -302,7 +304,9 @@ class Stream(
 
         connections = await manager.list_connections()
         active_connections = [
-            connection for connection in connections if getattr(connection, "status", "") == "active"
+            connection
+            for connection in connections
+            if getattr(connection, "status", "") == "active"
         ]
         active_connections.sort(key=lambda connection: connection.connection_id)
         health_results = await manager.run_health_checks()
@@ -531,7 +535,9 @@ class Stream(
                 self._deactivate_turn_processor(turn_token, session_token)
 
     async def _process_turn_with_active_context(
-        self, message: ChannelMessage, connection_id: str,
+        self,
+        message: ChannelMessage,
+        connection_id: str,
     ) -> str:
         tc = self._turn_context()
         session_id = self._ensure_session_id()
@@ -554,7 +560,11 @@ class Stream(
                 active_gate_count=len(active_gates),
             )
             high_confidence_suggestions = await self._collect_suggestions(connection_id)
-            processed_message_text, blocked_response, input_gate_results = await self._run_input_gates(
+            (
+                processed_message_text,
+                blocked_response,
+                input_gate_results,
+            ) = await self._run_input_gates(
                 active_gates=active_gates,
                 message=message,
                 connection_id=connection_id,
@@ -595,7 +605,9 @@ class Stream(
                 await tc.chronicle_store.append(scope_id, chronicle_item)
 
             await self._auto_retrieve_memories(signed.message.text, cm, signed.taint, turn_number)
-            await self._ingest_raw_memory(signed.message.text, signed.taint, session_id, turn_number)
+            await self._ingest_raw_memory(
+                signed.message.text, signed.taint, session_id, turn_number
+            )
 
             evicted_ctx_ids: list[str] = []
             if cm is not None:
@@ -604,7 +616,9 @@ class Stream(
                     turn_number=turn_number,
                     current_goal=None,
                 )
-            await self._handle_evicted_context(cm, scope_id, evicted_ctx_ids, session_id, turn_number)
+            await self._handle_evicted_context(
+                cm, scope_id, evicted_ctx_ids, session_id, turn_number
+            )
             available_skills = self._available_skill_names()
             await self._audit(
                 "skill_availability_checked",
@@ -621,8 +635,14 @@ class Stream(
             # Procedural path is the fallback for when queue infra is unavailable.
             if self._should_use_queue_path():
                 return await self._process_turn_via_queue(
-                    processed_message_text, turn_id, turn_number,
-                    scope_id, cm, tc, connection_id, message,
+                    processed_message_text,
+                    turn_id,
+                    turn_number,
+                    scope_id,
+                    cm,
+                    tc,
+                    connection_id,
+                    message,
                     taint_tracker=taint_tracker,
                     high_confidence_suggestions=high_confidence_suggestions,
                     session_id=session_id,
@@ -694,13 +714,20 @@ class Stream(
 
             # Step 9 — execute memory queries the agent requested
             await self._process_memory_queries(
-                routed.response, accumulated_taint, session_id, scope_id,
-                cm, turn_number,
+                routed.response,
+                accumulated_taint,
+                session_id,
+                scope_id,
+                cm,
+                turn_number,
             )
 
             # Step 10 — execute memory write ops (gated)
             await self._process_memory_ops(
-                routed.response, accumulated_taint, session_id, turn_number,
+                routed.response,
+                accumulated_taint,
+                session_id,
+                turn_number,
             )
 
             response_item = ContextItem(
@@ -721,7 +748,10 @@ class Stream(
 
             # Step 11.5 — ingest agent output as raw memory for future recall
             await self._ingest_raw_memory(
-                response_text, accumulated_taint, session_id, turn_number,
+                response_text,
+                accumulated_taint,
+                session_id,
+                turn_number,
             )
             await self.channel.send(connection_id, response_text, reply_to=message.reply_to)
             await self._audit("phase1a_noop", step=14, note="access state updates skipped")
@@ -785,7 +815,8 @@ class Stream(
             },
         )
         queue_response = await self.queue_bridge.collect_response(
-            trace_id=turn_id, timeout_s=self._queue_timeout_seconds(),
+            trace_id=turn_id,
+            timeout_s=self._queue_timeout_seconds(),
         )
         queue_text = ""
         if queue_response is not None:
@@ -796,7 +827,8 @@ class Stream(
         # Step 13 (partial) — prepend high-confidence suggestions
         if high_confidence_suggestions:
             queue_text = self._prepend_high_confidence_suggestions(
-                queue_text, high_confidence_suggestions,
+                queue_text,
+                high_confidence_suggestions,
             )
 
         accumulated_taint = TaintLevel.owner
@@ -806,19 +838,29 @@ class Stream(
         # Step 8 — output gates (security boundary)
         blocked_gate_names: list[str] = []
         queue_text, blocked_gate_names = await self._evaluate_output_gates(
-            queue_text, accumulated_taint, message.sender_id, turn_number,
+            queue_text,
+            accumulated_taint,
+            message.sender_id,
+            turn_number,
         )
 
         agent_response = None
         if queue_response is not None:
             agent_response = queue_response.payload.get("agent_response")
         await self._process_memory_queries(
-            agent_response, accumulated_taint, session_id, scope_id,
-            cm, turn_number,
+            agent_response,
+            accumulated_taint,
+            session_id,
+            scope_id,
+            cm,
+            turn_number,
         )
 
         await self._process_memory_ops(
-            agent_response, accumulated_taint, session_id, turn_number,
+            agent_response,
+            accumulated_taint,
+            session_id,
+            turn_number,
         )
 
         response_item = ContextItem(
@@ -838,7 +880,10 @@ class Stream(
             await tc.chronicle_store.append(scope_id, response_item)
 
         await self._ingest_raw_memory(
-            queue_text, accumulated_taint, session_id, turn_number,
+            queue_text,
+            accumulated_taint,
+            session_id,
+            turn_number,
         )
 
         await self.channel.send(connection_id, queue_text, reply_to=message.reply_to)
@@ -868,25 +913,57 @@ class Stream(
         low = [s for s in idle if s.confidence <= 0.80]
         for suggestion in low:
             await self._push_suggestion_to_side_panel(connection_id, suggestion)
-        await self._audit("proactive_queue_reviewed", step=0.5, surfaced=len(idle), high_confidence=len(high), side_panel=len(low))
+        await self._audit(
+            "proactive_queue_reviewed",
+            step=0.5,
+            surfaced=len(idle),
+            high_confidence=len(high),
+            side_panel=len(low),
+        )
         return high
 
-    async def _push_suggestion_to_side_panel(self, connection_id: str, suggestion: SuggestionProposal) -> None:
+    async def _push_suggestion_to_side_panel(
+        self, connection_id: str, suggestion: SuggestionProposal
+    ) -> None:
         send_suggestion = getattr(self.channel, "send_suggestion", None)
         if callable(send_suggestion):
             await send_suggestion(connection_id, suggestion)
-            await self._audit("suggestion_side_panel_enqueued", suggestion_id=suggestion.id, confidence=suggestion.confidence, source=suggestion.source, category=suggestion.category)
+            await self._audit(
+                "suggestion_side_panel_enqueued",
+                suggestion_id=suggestion.id,
+                confidence=suggestion.confidence,
+                source=suggestion.source,
+                category=suggestion.category,
+            )
             return
-        await self._audit("suggestion_side_panel_unavailable", suggestion_id=suggestion.id, confidence=suggestion.confidence, source=suggestion.source, category=suggestion.category)
+        await self._audit(
+            "suggestion_side_panel_unavailable",
+            suggestion_id=suggestion.id,
+            confidence=suggestion.confidence,
+            source=suggestion.source,
+            category=suggestion.category,
+        )
 
-    async def _record_autonomy_outcome(self, *, turn_number: int, route: str, blocked: bool) -> None:
+    async def _record_autonomy_outcome(
+        self, *, turn_number: int, route: str, blocked: bool
+    ) -> None:
         calibrator = self._get_autonomy_calibrator()
         if calibrator is None:
-            await self._audit("phase1a_noop", step=15, note="personality/autonomy post-turn updates skipped")
+            await self._audit(
+                "phase1a_noop", step=15, note="personality/autonomy post-turn updates skipped"
+            )
             return
         outcome = "declined" if blocked else "approved"
-        await calibrator.record_outcome(self._turn_context().scope_id, action_family=route, outcome=outcome)
-        await self._audit("autonomy_calibration_recorded", step=15, turn_number=turn_number, action_family=route, outcome=outcome)
+        await calibrator.record_outcome(
+            self._turn_context().scope_id, action_family=route, outcome=outcome
+        )
+        await self._audit(
+            "autonomy_calibration_recorded",
+            step=15,
+            turn_number=turn_number,
+            action_family=route,
+            outcome=outcome,
+        )
 
     # ── Queue Infrastructure ───────────────────────────────────────────
 
@@ -900,9 +977,7 @@ class Stream(
 
         orchestrator = self.queue_bridge.orchestrator
         if not orchestrator.running:
-            logger.warning(
-                "Queue orchestrator not running — falling back to procedural path"
-            )
+            logger.warning("Queue orchestrator not running — falling back to procedural path")
             return False
 
         return True
@@ -915,7 +990,8 @@ class Stream(
             await self._audit("queue_orchestrator_started")
         except Exception as exc:
             await self._audit(
-                "queue_orchestrator_start_failed", error=str(exc),
+                "queue_orchestrator_start_failed",
+                error=str(exc),
             )
 
     async def _stop_queue_orchestrator(self) -> None:
@@ -926,12 +1002,25 @@ class Stream(
             await self._audit("queue_orchestrator_stopped")
         except Exception as exc:
             await self._audit(
-                "queue_orchestrator_stop_failed", error=str(exc),
+                "queue_orchestrator_stop_failed",
+                error=str(exc),
             )
 
-    async def _on_approval_response(self, token_id: str, verdict: ApprovalVerdict, resolved_by: str) -> None:
+    async def _on_approval_response(
+        self, token_id: str, verdict: ApprovalVerdict, resolved_by: str
+    ) -> None:
         resolved = await self._approval_flow.handle_response(token_id, verdict, resolved_by)
         if resolved:
-            await self._audit("approval_resolved", token_id=token_id, verdict=verdict.value, resolved_by=resolved_by)
+            await self._audit(
+                "approval_resolved",
+                token_id=token_id,
+                verdict=verdict.value,
+                resolved_by=resolved_by,
+            )
         else:
-            await self._audit("approval_response_ignored", token_id=token_id, verdict=verdict.value, resolved_by=resolved_by)
+            await self._audit(
+                "approval_response_ignored",
+                token_id=token_id,
+                verdict=verdict.value,
+                resolved_by=resolved_by,
+            )

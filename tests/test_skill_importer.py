@@ -42,9 +42,7 @@ def valid_skill_dir(tmp_path: Path) -> Path:
 
 
 class TestImportSkill:
-    def test_import_valid_manifest(
-        self, importer: SkillImporter, valid_skill_dir: Path
-    ) -> None:
+    def test_import_valid_manifest(self, importer: SkillImporter, valid_skill_dir: Path) -> None:
         """A well-formed skill package should produce a SkillDefinition."""
         skill = importer.import_skill(valid_skill_dir, adapt=False)
 
@@ -54,9 +52,7 @@ class TestImportSkill:
         assert skill.description == "A test skill for validation"
         assert skill.taint_level == "external"
 
-    def test_import_json_manifest(
-        self, importer: SkillImporter, tmp_path: Path
-    ) -> None:
+    def test_import_json_manifest(self, importer: SkillImporter, tmp_path: Path) -> None:
         """skill.json should work as an alternative to skill.yaml."""
         import json
 
@@ -72,9 +68,7 @@ class TestImportSkill:
         skill = importer.import_skill(skill_dir, adapt=False)
         assert skill.name == "json-skill"
 
-    def test_import_missing_manifest_raises(
-        self, importer: SkillImporter, tmp_path: Path
-    ) -> None:
+    def test_import_missing_manifest_raises(self, importer: SkillImporter, tmp_path: Path) -> None:
         """Directory without a manifest file should raise SkillImportError."""
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
@@ -82,15 +76,11 @@ class TestImportSkill:
         with pytest.raises(SkillImportError, match="no manifest found"):
             importer.import_skill(empty_dir)
 
-    def test_import_not_a_directory_raises(
-        self, importer: SkillImporter, tmp_path: Path
-    ) -> None:
+    def test_import_not_a_directory_raises(self, importer: SkillImporter, tmp_path: Path) -> None:
         with pytest.raises(SkillImportError, match="not a directory"):
             importer.import_skill(tmp_path / "nonexistent")
 
-    def test_import_invalid_manifest_raises(
-        self, importer: SkillImporter, tmp_path: Path
-    ) -> None:
+    def test_import_invalid_manifest_raises(self, importer: SkillImporter, tmp_path: Path) -> None:
         """Manifest missing required fields should fail validation."""
         skill_dir = tmp_path / "bad-skill"
         skill_dir.mkdir()
@@ -137,9 +127,7 @@ class TestHashComputation:
 
 
 class TestAdaptation:
-    def test_env_var_replacement(
-        self, importer: SkillImporter, tmp_path: Path
-    ) -> None:
+    def test_env_var_replacement(self, importer: SkillImporter, tmp_path: Path) -> None:
         """${ENV_VAR} in description should be replaced during adaptation."""
         skill_dir = tmp_path / "env-skill"
         skill_dir.mkdir()
@@ -158,9 +146,7 @@ class TestAdaptation:
         )
         assert skill.description == "Connects to localhost on port 8080"
 
-    def test_unresolved_env_var_kept(
-        self, importer: SkillImporter, tmp_path: Path
-    ) -> None:
+    def test_unresolved_env_var_kept(self, importer: SkillImporter, tmp_path: Path) -> None:
         """Unmatched ${VAR} placeholders should be left as-is."""
         skill_dir = tmp_path / "partial-env"
         skill_dir.mkdir()
@@ -176,9 +162,7 @@ class TestAdaptation:
         assert "resolved" in skill.description
         assert "${UNKNOWN}" in skill.description
 
-    def test_missing_dependency_raises(
-        self, importer: SkillImporter, tmp_path: Path
-    ) -> None:
+    def test_missing_dependency_raises(self, importer: SkillImporter, tmp_path: Path) -> None:
         """Dependencies not on PATH should raise DependencyError."""
         skill_dir = tmp_path / "dep-skill"
         skill_dir.mkdir()
@@ -193,9 +177,7 @@ class TestAdaptation:
         with pytest.raises(DependencyError, match="missing dependencies"):
             importer.import_skill(skill_dir, adapt=True)
 
-    def test_available_dependency_ok(
-        self, importer: SkillImporter, tmp_path: Path
-    ) -> None:
+    def test_available_dependency_ok(self, importer: SkillImporter, tmp_path: Path) -> None:
         """Dependencies that exist on PATH should pass validation."""
         skill_dir = tmp_path / "ok-dep"
         skill_dir.mkdir()
@@ -220,9 +202,7 @@ class TestTaintPropagation:
         skill = importer.import_skill(valid_skill_dir, adapt=False)
         assert skill.taint_level == "external"
 
-    def test_no_taint_level_defaults_none(
-        self, importer: SkillImporter, tmp_path: Path
-    ) -> None:
+    def test_no_taint_level_defaults_none(self, importer: SkillImporter, tmp_path: Path) -> None:
         skill_dir = tmp_path / "no-taint"
         skill_dir.mkdir()
         manifest = {
@@ -238,14 +218,10 @@ class TestTaintPropagation:
 
 class TestSkillManifestModel:
     def test_valid_manifest(self) -> None:
-        m = SkillManifest(
-            name="test", version="1.0.0", description="A test skill"
-        )
+        m = SkillManifest(name="test", version="1.0.0", description="A test skill")
         assert m.entry_point == "main.py"
         assert m.dependencies == []
 
     def test_invalid_taint_level(self) -> None:
         with pytest.raises(ValueError, match="taint_level"):
-            SkillManifest(
-                name="x", version="1.0.0", description="d", taint_level="bad"
-            )
+            SkillManifest(name="x", version="1.0.0", description="d", taint_level="bad")

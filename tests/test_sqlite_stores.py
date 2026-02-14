@@ -21,6 +21,7 @@ pytestmark = pytest.mark.asyncio
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -33,10 +34,12 @@ def _utc(minutes_ago: int = 0) -> datetime:
 # Migration Runner
 # ---------------------------------------------------------------------------
 
+
 class TestMigrationRunner:
     async def test_migrations_apply_idempotently(self, tmp_path: Path) -> None:
         """Running migrations twice should not fail."""
         from silas.persistence.migrations import run_migrations
+
         db_path = tmp_path / "test.db"
         await run_migrations(str(db_path))
         await run_migrations(str(db_path))  # second run = idempotent
@@ -44,6 +47,7 @@ class TestMigrationRunner:
     async def test_migrations_create_tables(self, tmp_path: Path) -> None:
         import aiosqlite
         from silas.persistence.migrations import run_migrations
+
         db_path = tmp_path / "test.db"
         await run_migrations(str(db_path))
         async with aiosqlite.connect(str(db_path)) as db:
@@ -64,11 +68,13 @@ class TestMigrationRunner:
 # SQLiteMemoryStore
 # ---------------------------------------------------------------------------
 
+
 class TestSQLiteMemoryStore:
     @pytest.fixture
     async def store(self, tmp_path: Path):
         from silas.memory.sqlite_store import SQLiteMemoryStore
         from silas.persistence.migrations import run_migrations
+
         db_path = tmp_path / "test.db"
         await run_migrations(str(db_path))
         return SQLiteMemoryStore(str(db_path))
@@ -76,6 +82,7 @@ class TestSQLiteMemoryStore:
     async def test_store_and_get(self, store) -> None:
         from silas.models.memory import MemoryItem, MemoryType
         from silas.models.messages import TaintLevel
+
         item = MemoryItem(
             memory_id="m1",
             content="the quick brown fox",
@@ -96,6 +103,7 @@ class TestSQLiteMemoryStore:
     async def test_update(self, store) -> None:
         from silas.models.memory import MemoryItem, MemoryType
         from silas.models.messages import TaintLevel
+
         item = MemoryItem(
             memory_id="m2",
             content="original",
@@ -112,6 +120,7 @@ class TestSQLiteMemoryStore:
     async def test_delete(self, store) -> None:
         from silas.models.memory import MemoryItem, MemoryType
         from silas.models.messages import TaintLevel
+
         item = MemoryItem(
             memory_id="m3",
             content="to delete",
@@ -126,14 +135,25 @@ class TestSQLiteMemoryStore:
     async def test_keyword_search_fts5(self, store) -> None:
         from silas.models.memory import MemoryItem, MemoryType
         from silas.models.messages import TaintLevel
-        await store.store(MemoryItem(
-            memory_id="m4", content="python async programming",
-            memory_type=MemoryType.fact, taint=TaintLevel.owner, source_kind="test",
-        ))
-        await store.store(MemoryItem(
-            memory_id="m5", content="rust ownership model",
-            memory_type=MemoryType.fact, taint=TaintLevel.owner, source_kind="test",
-        ))
+
+        await store.store(
+            MemoryItem(
+                memory_id="m4",
+                content="python async programming",
+                memory_type=MemoryType.fact,
+                taint=TaintLevel.owner,
+                source_kind="test",
+            )
+        )
+        await store.store(
+            MemoryItem(
+                memory_id="m5",
+                content="rust ownership model",
+                memory_type=MemoryType.fact,
+                taint=TaintLevel.owner,
+                source_kind="test",
+            )
+        )
         results = await store.search_keyword("python", limit=10)
         assert len(results) >= 1
         assert any(r.memory_id == "m4" for r in results)
@@ -146,16 +166,27 @@ class TestSQLiteMemoryStore:
     async def test_search_session(self, store) -> None:
         from silas.models.memory import MemoryItem, MemoryType
         from silas.models.messages import TaintLevel
-        await store.store(MemoryItem(
-            memory_id="m6", content="session data",
-            memory_type=MemoryType.episode, taint=TaintLevel.owner,
-            source_kind="test", session_id="sess-1",
-        ))
-        await store.store(MemoryItem(
-            memory_id="m7", content="other session",
-            memory_type=MemoryType.episode, taint=TaintLevel.owner,
-            source_kind="test", session_id="sess-2",
-        ))
+
+        await store.store(
+            MemoryItem(
+                memory_id="m6",
+                content="session data",
+                memory_type=MemoryType.episode,
+                taint=TaintLevel.owner,
+                source_kind="test",
+                session_id="sess-1",
+            )
+        )
+        await store.store(
+            MemoryItem(
+                memory_id="m7",
+                content="other session",
+                memory_type=MemoryType.episode,
+                taint=TaintLevel.owner,
+                source_kind="test",
+                session_id="sess-2",
+            )
+        )
         results = await store.search_session("sess-1")
         assert len(results) == 1
         assert results[0].memory_id == "m6"
@@ -163,18 +194,34 @@ class TestSQLiteMemoryStore:
     async def test_search_by_type_filters_results(self, store) -> None:
         from silas.models.memory import MemoryItem, MemoryType
         from silas.models.messages import TaintLevel
-        await store.store(MemoryItem(
-            memory_id="m-type-1", content="entity one",
-            memory_type=MemoryType.entity, taint=TaintLevel.owner, source_kind="test",
-        ))
-        await store.store(MemoryItem(
-            memory_id="m-type-2", content="fact one",
-            memory_type=MemoryType.fact, taint=TaintLevel.owner, source_kind="test",
-        ))
-        await store.store(MemoryItem(
-            memory_id="m-type-3", content="entity two",
-            memory_type=MemoryType.entity, taint=TaintLevel.owner, source_kind="test",
-        ))
+
+        await store.store(
+            MemoryItem(
+                memory_id="m-type-1",
+                content="entity one",
+                memory_type=MemoryType.entity,
+                taint=TaintLevel.owner,
+                source_kind="test",
+            )
+        )
+        await store.store(
+            MemoryItem(
+                memory_id="m-type-2",
+                content="fact one",
+                memory_type=MemoryType.fact,
+                taint=TaintLevel.owner,
+                source_kind="test",
+            )
+        )
+        await store.store(
+            MemoryItem(
+                memory_id="m-type-3",
+                content="entity two",
+                memory_type=MemoryType.entity,
+                taint=TaintLevel.owner,
+                source_kind="test",
+            )
+        )
 
         results = await store.search_by_type(MemoryType.entity, limit=10)
         assert {item.memory_id for item in results} == {"m-type-1", "m-type-3"}
@@ -183,28 +230,41 @@ class TestSQLiteMemoryStore:
     async def test_list_recent_orders_by_updated_at_desc(self, store) -> None:
         from silas.models.memory import MemoryItem, MemoryType
         from silas.models.messages import TaintLevel
+
         now = _utc_now()
-        await store.store(MemoryItem(
-            memory_id="m-recent-1", content="oldest",
-            memory_type=MemoryType.fact, taint=TaintLevel.owner,
-            source_kind="test",
-            created_at=now - timedelta(minutes=3),
-            updated_at=now - timedelta(minutes=3),
-        ))
-        await store.store(MemoryItem(
-            memory_id="m-recent-2", content="middle",
-            memory_type=MemoryType.fact, taint=TaintLevel.owner,
-            source_kind="test",
-            created_at=now - timedelta(minutes=2),
-            updated_at=now - timedelta(minutes=2),
-        ))
-        await store.store(MemoryItem(
-            memory_id="m-recent-3", content="newest",
-            memory_type=MemoryType.fact, taint=TaintLevel.owner,
-            source_kind="test",
-            created_at=now - timedelta(minutes=1),
-            updated_at=now - timedelta(minutes=1),
-        ))
+        await store.store(
+            MemoryItem(
+                memory_id="m-recent-1",
+                content="oldest",
+                memory_type=MemoryType.fact,
+                taint=TaintLevel.owner,
+                source_kind="test",
+                created_at=now - timedelta(minutes=3),
+                updated_at=now - timedelta(minutes=3),
+            )
+        )
+        await store.store(
+            MemoryItem(
+                memory_id="m-recent-2",
+                content="middle",
+                memory_type=MemoryType.fact,
+                taint=TaintLevel.owner,
+                source_kind="test",
+                created_at=now - timedelta(minutes=2),
+                updated_at=now - timedelta(minutes=2),
+            )
+        )
+        await store.store(
+            MemoryItem(
+                memory_id="m-recent-3",
+                content="newest",
+                memory_type=MemoryType.fact,
+                taint=TaintLevel.owner,
+                source_kind="test",
+                created_at=now - timedelta(minutes=1),
+                updated_at=now - timedelta(minutes=1),
+            )
+        )
 
         results = await store.list_recent(limit=3)
         assert [item.memory_id for item in results] == [
@@ -216,6 +276,7 @@ class TestSQLiteMemoryStore:
     async def test_increment_access_updates_count_and_last_accessed(self, store) -> None:
         from silas.models.memory import MemoryItem, MemoryType
         from silas.models.messages import TaintLevel
+
         item = MemoryItem(
             memory_id="m-access-1",
             content="track access",
@@ -243,9 +304,12 @@ class TestSQLiteMemoryStore:
     async def test_store_raw_and_search_raw(self, store) -> None:
         from silas.models.memory import MemoryItem, MemoryType, ReingestionTier
         from silas.models.messages import TaintLevel
+
         item = MemoryItem(
-            memory_id="raw1", content="raw conversation log",
-            memory_type=MemoryType.episode, taint=TaintLevel.owner,
+            memory_id="raw1",
+            content="raw conversation log",
+            memory_type=MemoryType.episode,
+            taint=TaintLevel.owner,
             source_kind="conversation_raw",
             reingestion_tier=ReingestionTier.low_reingestion,
         )
@@ -258,11 +322,13 @@ class TestSQLiteMemoryStore:
 # SQLiteChronicleStore
 # ---------------------------------------------------------------------------
 
+
 class TestSQLiteChronicleStore:
     @pytest.fixture
     async def store(self, tmp_path: Path):
         from silas.persistence.chronicle_store import SQLiteChronicleStore
         from silas.persistence.migrations import run_migrations
+
         db_path = tmp_path / "test.db"
         await run_migrations(str(db_path))
         return SQLiteChronicleStore(str(db_path))
@@ -270,6 +336,7 @@ class TestSQLiteChronicleStore:
     def _make_item(self, turn: int, content: str = "msg") -> object:
         from silas.models.context import ContextItem, ContextZone
         from silas.models.messages import TaintLevel
+
         return ContextItem(
             ctx_id=f"c-{turn}",
             zone=ContextZone.chronicle,
@@ -312,17 +379,20 @@ class TestSQLiteChronicleStore:
 # SQLiteWorkItemStore
 # ---------------------------------------------------------------------------
 
+
 class TestSQLiteWorkItemStore:
     @pytest.fixture
     async def store(self, tmp_path: Path):
         from silas.persistence.migrations import run_migrations
         from silas.persistence.work_item_store import SQLiteWorkItemStore
+
         db_path = tmp_path / "test.db"
         await run_migrations(str(db_path))
         return SQLiteWorkItemStore(str(db_path))
 
     def _make_item(self, id: str = "wi-1", **kwargs) -> object:
         from silas.models.work import WorkItem, WorkItemType
+
         defaults = {"id": id, "type": WorkItemType.task, "title": "Test", "body": "Do it"}
         defaults.update(kwargs)
         return WorkItem(**defaults)
@@ -340,6 +410,7 @@ class TestSQLiteWorkItemStore:
 
     async def test_list_by_status(self, store) -> None:
         from silas.models.work import WorkItemStatus
+
         await store.save(self._make_item("wi-1"))
         await store.save(self._make_item("wi-2"))
         results = await store.list_by_status(WorkItemStatus.pending)
@@ -354,6 +425,7 @@ class TestSQLiteWorkItemStore:
 
     async def test_update_status(self, store) -> None:
         from silas.models.work import BudgetUsed, WorkItemStatus
+
         await store.save(self._make_item("wi-u"))
         used = BudgetUsed(tokens=500, attempts=2)
         await store.update_status("wi-u", WorkItemStatus.running, used)
@@ -366,6 +438,7 @@ class TestSQLiteWorkItemStore:
     async def test_approval_token_roundtrip(self, store) -> None:
         """ApprovalToken with Base64Bytes signature must survive SQLite roundtrip."""
         from silas.models.approval import ApprovalScope, ApprovalToken, ApprovalVerdict
+
         token = ApprovalToken(
             token_id="tok-1",
             plan_hash="hash123",
@@ -390,11 +463,13 @@ class TestSQLiteWorkItemStore:
 # SQLiteAuditLog
 # ---------------------------------------------------------------------------
 
+
 class TestSQLiteAuditLog:
     @pytest.fixture
     async def audit(self, tmp_path: Path):
         from silas.audit.sqlite_audit import SQLiteAuditLog
         from silas.persistence.migrations import run_migrations
+
         db_path = tmp_path / "test.db"
         await run_migrations(str(db_path))
         return SQLiteAuditLog(str(db_path))
@@ -425,11 +500,13 @@ class TestSQLiteAuditLog:
 # SQLiteNonceStore
 # ---------------------------------------------------------------------------
 
+
 class TestSQLiteNonceStore:
     @pytest.fixture
     async def nonce_store(self, tmp_path: Path):
         from silas.persistence.migrations import run_migrations
         from silas.persistence.nonce_store import SQLiteNonceStore
+
         db_path = tmp_path / "test.db"
         await run_migrations(str(db_path))
         return SQLiteNonceStore(str(db_path))

@@ -82,7 +82,9 @@ class PlannerAgent:
                 toolsets=[tool_bundle.console_toolset] if self._use_tools and tool_bundle else [],
             )
         except (ImportError, ValueError, TypeError, RuntimeError) as exc:
-            logger.warning("Failed to initialize Planner Agent; falling back to deterministic planner: %s", exc)
+            logger.warning(
+                "Failed to initialize Planner Agent; falling back to deterministic planner: %s", exc
+            )
             self.agent = None
             self._llm_available = False
 
@@ -115,7 +117,9 @@ class PlannerAgent:
                 )
                 return self._coerce_response(raw, user_request)
             except (ConnectionError, TimeoutError, ValueError, RuntimeError):
-                logger.warning("Planner LLM call failed; using deterministic fallback", exc_info=True)
+                logger.warning(
+                    "Planner LLM call failed; using deterministic fallback", exc_info=True
+                )
 
         return self._fallback_response(user_request)
 
@@ -146,7 +150,11 @@ class PlannerAgent:
 
     def _ensure_plan_markdown(self, response: AgentResponse, user_request: str) -> AgentResponse:
         plan_action = response.plan_action
-        if plan_action is not None and plan_action.plan_markdown and plan_action.plan_markdown.strip():
+        if (
+            plan_action is not None
+            and plan_action.plan_markdown
+            and plan_action.plan_markdown.strip()
+        ):
             return response
 
         fallback_markdown = self._fallback_markdown(user_request)
@@ -177,12 +185,7 @@ class PlannerAgent:
     def _build_prompt(self, user_request: str, rendered_context: str) -> str:
         if not rendered_context.strip():
             return user_request
-        return (
-            "[CONTEXT]\n"
-            f"{rendered_context}\n\n"
-            "[USER REQUEST]\n"
-            f"{user_request}"
-        )
+        return f"[CONTEXT]\n{rendered_context}\n\n[USER REQUEST]\n{user_request}"
 
     def _fallback_markdown(self, user_request: str) -> str:
         request_text = " ".join(user_request.strip().split()) or "No request provided."

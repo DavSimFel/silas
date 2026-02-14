@@ -126,9 +126,7 @@ async def test_concurrent_request_approval_unique_nonces() -> None:
 
     tokens = await asyncio.gather(
         *[
-            asyncio.to_thread(
-                manager.request_approval, wi, ApprovalScope.full_plan
-            )
+            asyncio.to_thread(manager.request_approval, wi, ApprovalScope.full_plan)
             for wi in work_items
         ]
     )
@@ -148,9 +146,7 @@ async def test_concurrent_issue_token_unique_nonces(
     work_items = [_work_item(f"wi-issue-{i}") for i in range(10)]
     decision = ApprovalDecision(verdict=ApprovalVerdict.approved)
 
-    tokens = await asyncio.gather(
-        *[verifier.issue_token(wi, decision) for wi in work_items]
-    )
+    tokens = await asyncio.gather(*[verifier.issue_token(wi, decision) for wi in work_items])
 
     nonces = [t.nonce for t in tokens]
     assert len(set(nonces)) == 10
@@ -318,7 +314,9 @@ async def test_manager_expiry_prunes_pending() -> None:
     # Force expiry by backdating the token.
     pending = manager._pending[token.token_id]
     past = datetime.now(UTC) - timedelta(seconds=10)
-    expired_token = pending.token.model_copy(update={"expires_at": past, "issued_at": past - timedelta(seconds=1)})
+    expired_token = pending.token.model_copy(
+        update={"expires_at": past, "issued_at": past - timedelta(seconds=1)}
+    )
     manager._pending[token.token_id] = pending.model_copy(update={"token": expired_token})
 
     # Token was issued with 0s timeout → already expired.

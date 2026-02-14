@@ -12,11 +12,13 @@ from silas.proactivity.ux_metrics import UXMetricsCollector
 
 # -- helpers ----------------------------------------------------------------
 
+
 def _fixed_now(offset_hours: float = 0.0) -> datetime:
     return datetime(2026, 1, 15, 12, 0, tzinfo=UTC) + timedelta(hours=offset_hours)
 
 
 # -- basic recording & retrieval -------------------------------------------
+
 
 def test_empty_metrics_returns_zeroes() -> None:
     collector = UXMetricsCollector()
@@ -67,6 +69,7 @@ def test_decisions_per_hour() -> None:
 
 # -- fatigue score ---------------------------------------------------------
 
+
 def test_fatigue_score_increases_with_slower_decisions() -> None:
     """When later decisions take much longer, fatigue should rise."""
     collector = UXMetricsCollector()
@@ -103,6 +106,7 @@ def test_fatigue_score_zero_with_few_events() -> None:
 
 # -- window filtering ------------------------------------------------------
 
+
 def test_window_filtering_excludes_old_events() -> None:
     collector = UXMetricsCollector()
 
@@ -131,6 +135,7 @@ def test_window_filtering_excludes_old_events() -> None:
 
 # -- ring buffer eviction --------------------------------------------------
 
+
 def test_ring_buffer_evicts_old_events() -> None:
     collector = UXMetricsCollector(max_events=5)
 
@@ -153,6 +158,7 @@ def test_ring_buffer_evicts_batch_events() -> None:
 
 
 # -- pydantic models -------------------------------------------------------
+
 
 def test_ux_metrics_summary_fatigue_clamped() -> None:
     """fatigue_score must be in [0, 1]."""
@@ -187,6 +193,7 @@ def test_batch_event_model() -> None:
 
 
 # -- manager integration ---------------------------------------------------
+
 
 def test_manager_records_ux_metrics_on_resolve() -> None:
     """LiveApprovalManager should feed the collector on resolve()."""

@@ -15,6 +15,7 @@ from silas.models.portability import SCHEMA_VERSION, MemoryBundle
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_item(
     memory_id: str = "m1",
     content: str = "hello",
@@ -56,12 +57,21 @@ class InMemoryStore:
     # Unused but required by protocol
     async def update(self, memory_id: str, **kwargs: object) -> None: ...
     async def delete(self, memory_id: str) -> None: ...
-    async def search_keyword(self, query: str, limit: int) -> list[MemoryItem]: return []
-    async def search_by_type(self, memory_type: object, limit: int) -> list[MemoryItem]: return []
+    async def search_keyword(self, query: str, limit: int) -> list[MemoryItem]:
+        return []
+
+    async def search_by_type(self, memory_type: object, limit: int) -> list[MemoryItem]:
+        return []
+
     async def increment_access(self, memory_id: str) -> None: ...
-    async def search_session(self, session_id: str) -> list[MemoryItem]: return []
-    async def store_raw(self, item: MemoryItem) -> str: return await self.store(item)
-    async def search_raw(self, query: str, limit: int) -> list[MemoryItem]: return []
+    async def search_session(self, session_id: str) -> list[MemoryItem]:
+        return []
+
+    async def store_raw(self, item: MemoryItem) -> str:
+        return await self.store(item)
+
+    async def search_raw(self, query: str, limit: int) -> list[MemoryItem]:
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +90,9 @@ def mgr(store: InMemoryStore) -> MemoryPortabilityManager:
 
 
 @pytest.mark.asyncio
-async def test_export_produces_valid_bundle(mgr: MemoryPortabilityManager, store: InMemoryStore) -> None:
+async def test_export_produces_valid_bundle(
+    mgr: MemoryPortabilityManager, store: InMemoryStore
+) -> None:
     await store.store(_make_item("m1", "first"))
     raw = await mgr.export_bundle()
     bundle = MemoryBundle.model_validate_json(raw)
@@ -91,7 +103,9 @@ async def test_export_produces_valid_bundle(mgr: MemoryPortabilityManager, store
 
 
 @pytest.mark.asyncio
-async def test_import_skip_keeps_existing(mgr: MemoryPortabilityManager, store: InMemoryStore) -> None:
+async def test_import_skip_keeps_existing(
+    mgr: MemoryPortabilityManager, store: InMemoryStore
+) -> None:
     existing = _make_item("m1", "original")
     await store.store(existing)
 
@@ -108,7 +122,9 @@ async def test_import_skip_keeps_existing(mgr: MemoryPortabilityManager, store: 
 
 
 @pytest.mark.asyncio
-async def test_import_overwrite_replaces_existing(mgr: MemoryPortabilityManager, store: InMemoryStore) -> None:
+async def test_import_overwrite_replaces_existing(
+    mgr: MemoryPortabilityManager, store: InMemoryStore
+) -> None:
     await store.store(_make_item("m1", "old"))
     bundle = await mgr.export_bundle()
 
@@ -121,7 +137,9 @@ async def test_import_overwrite_replaces_existing(mgr: MemoryPortabilityManager,
 
 
 @pytest.mark.asyncio
-async def test_import_merge_keeps_newer(mgr: MemoryPortabilityManager, store: InMemoryStore) -> None:
+async def test_import_merge_keeps_newer(
+    mgr: MemoryPortabilityManager, store: InMemoryStore
+) -> None:
     old_time = datetime(2025, 1, 1, tzinfo=UTC)
     new_time = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -141,7 +159,9 @@ async def test_import_merge_keeps_newer(mgr: MemoryPortabilityManager, store: In
 
 
 @pytest.mark.asyncio
-async def test_import_merge_replaces_with_newer_incoming(mgr: MemoryPortabilityManager, store: InMemoryStore) -> None:
+async def test_import_merge_replaces_with_newer_incoming(
+    mgr: MemoryPortabilityManager, store: InMemoryStore
+) -> None:
     old_time = datetime(2025, 1, 1, tzinfo=UTC)
     new_time = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -159,7 +179,9 @@ async def test_import_merge_replaces_with_newer_incoming(mgr: MemoryPortabilityM
 
 
 @pytest.mark.asyncio
-async def test_schema_version_validation(mgr: MemoryPortabilityManager, store: InMemoryStore) -> None:
+async def test_schema_version_validation(
+    mgr: MemoryPortabilityManager, store: InMemoryStore
+) -> None:
     await store.store(_make_item("m1"))
     raw = await mgr.export_bundle()
     # Tamper with schema version to simulate incompatible bundle
@@ -172,7 +194,9 @@ async def test_schema_version_validation(mgr: MemoryPortabilityManager, store: I
 
 
 @pytest.mark.asyncio
-async def test_filtered_export_by_taint(mgr: MemoryPortabilityManager, store: InMemoryStore) -> None:
+async def test_filtered_export_by_taint(
+    mgr: MemoryPortabilityManager, store: InMemoryStore
+) -> None:
     await store.store(_make_item("m1", taint=TaintLevel.owner))
     await store.store(_make_item("m2", taint=TaintLevel.external))
 
@@ -183,15 +207,19 @@ async def test_filtered_export_by_taint(mgr: MemoryPortabilityManager, store: In
 
 
 @pytest.mark.asyncio
-async def test_filtered_export_by_date_range(mgr: MemoryPortabilityManager, store: InMemoryStore) -> None:
+async def test_filtered_export_by_date_range(
+    mgr: MemoryPortabilityManager, store: InMemoryStore
+) -> None:
     early = datetime(2025, 1, 1, tzinfo=UTC)
     late = datetime(2026, 6, 1, tzinfo=UTC)
     await store.store(_make_item("m1", created_at=early, updated_at=early))
     await store.store(_make_item("m2", created_at=late, updated_at=late))
 
-    raw = await mgr.export_bundle(filters={
-        "date_from": datetime(2026, 1, 1, tzinfo=UTC),
-    })
+    raw = await mgr.export_bundle(
+        filters={
+            "date_from": datetime(2026, 1, 1, tzinfo=UTC),
+        }
+    )
     bundle = MemoryBundle.model_validate_json(raw)
     assert len(bundle.items) == 1
     assert bundle.items[0].memory_id == "m2"

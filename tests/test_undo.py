@@ -23,7 +23,12 @@ class TestRegisterAndExecute:
         entry = mgr.record_execution(SCOPE, EXEC_ID, REVERSE, summary="wrote file", now=NOW)
 
         applied: list[dict[str, object]] = []
-        result = mgr.execute_undo(SCOPE, entry.entry_id, apply_reverse_action=applied.append, now=NOW + timedelta(seconds=60))
+        result = mgr.execute_undo(
+            SCOPE,
+            entry.entry_id,
+            apply_reverse_action=applied.append,
+            now=NOW + timedelta(seconds=60),
+        )
 
         assert result.success
         assert not result.expired

@@ -199,10 +199,7 @@ class LiveWorkItemExecutor:
                 len(items),
                 self._scope_id,
             )
-            coros = [
-                self._pool.dispatch(item, self._scope_id)
-                for item in items
-            ]
+            coros = [self._pool.dispatch(item, self._scope_id) for item in items]
             return list(await asyncio.gather(*coros))
 
         # Serial fallback (single item or no pool)
@@ -369,9 +366,11 @@ class LiveWorkItemExecutor:
         work_item: WorkItem,
         used: BudgetUsed,
     ) -> tuple[WorkItemResult | None, str | None]:
-        verification_ok, verification_results, verification_error = (
-            await self._run_external_verification(work_item)
-        )
+        (
+            verification_ok,
+            verification_results,
+            verification_error,
+        ) = await self._run_external_verification(work_item)
         work_item.verification_results = [dict(result) for result in verification_results]
         if not verification_ok:
             return None, verification_error or "verification failed"
@@ -550,12 +549,12 @@ class LiveWorkItemExecutor:
         )
         attempt_ok, attempt_error = await self._execute_attempt(work_item, used, attempt_body)
         if attempt_ok:
-            verification_ok, verification_results, verification_error = (
-                await self._run_external_verification(work_item)
-            )
-            work_item.verification_results = [
-                dict(result) for result in verification_results
-            ]
+            (
+                verification_ok,
+                verification_results,
+                verification_error,
+            ) = await self._run_external_verification(work_item)
+            work_item.verification_results = [dict(result) for result in verification_results]
             if verification_ok:
                 work_item.status = WorkItemStatus.done
                 work_item.budget_used = used.model_copy(deep=True)
@@ -735,8 +734,7 @@ class LiveWorkItemExecutor:
         if work_item.executor_type == WorkItemExecutorType.python:
             parsed = self._parse_json_body(work_item.body)
             if isinstance(parsed, dict) and (
-                isinstance(parsed.get("script"), str)
-                or isinstance(parsed.get("script_path"), str)
+                isinstance(parsed.get("script"), str) or isinstance(parsed.get("script_path"), str)
             ):
                 return dict(parsed)
             script = work_item.body.strip()
@@ -796,10 +794,7 @@ class LiveWorkItemExecutor:
         if not isinstance(report, VerificationReport):
             return False, [], "verification runner returned invalid report"
 
-        results = [
-            result.model_dump(mode="json")
-            for result in report.results
-        ]
+        results = [result.model_dump(mode="json") for result in report.results]
         if report.all_passed:
             return True, results, None
 
@@ -951,7 +946,9 @@ class LiveWorkItemExecutor:
         error: str,
         budget_used: BudgetUsed | None = None,
     ) -> WorkItemResult:
-        used = budget_used.model_copy(deep=True) if budget_used is not None else root_item.budget_used
+        used = (
+            budget_used.model_copy(deep=True) if budget_used is not None else root_item.budget_used
+        )
         root_item.status = WorkItemStatus.blocked
         root_item.budget_used = used.model_copy(deep=True)
         await self._persist(root_item)
@@ -973,7 +970,9 @@ class LiveWorkItemExecutor:
         error: str,
         budget_used: BudgetUsed | None = None,
     ) -> WorkItemResult:
-        used = budget_used.model_copy(deep=True) if budget_used is not None else root_item.budget_used
+        used = (
+            budget_used.model_copy(deep=True) if budget_used is not None else root_item.budget_used
+        )
         root_item.status = WorkItemStatus.failed
         root_item.budget_used = used.model_copy(deep=True)
         await self._persist(root_item)

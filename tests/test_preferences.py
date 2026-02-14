@@ -84,7 +84,9 @@ def test_inferred_preference_confidence_clamping() -> None:
 def test_preference_inference_record_and_infer_three_signals() -> None:
     engine = PreferenceInferenceEngine(signal_store=[])
     for idx in range(3):
-        engine.record_signal(_signal(f"sig-{idx}", signal_type="style_feedback", context="response tone"))
+        engine.record_signal(
+            _signal(f"sig-{idx}", signal_type="style_feedback", context="response tone")
+        )
 
     inferred = engine.infer_preferences("owner")
     assert len(inferred) == 1
@@ -95,7 +97,9 @@ def test_preference_inference_record_and_infer_three_signals() -> None:
 def test_preference_inference_ten_signals_confidence() -> None:
     engine = PreferenceInferenceEngine(signal_store=[])
     for idx in range(10):
-        engine.record_signal(_signal(f"sig-{idx}", signal_type="correction", context="shell command style"))
+        engine.record_signal(
+            _signal(f"sig-{idx}", signal_type="correction", context="shell command style")
+        )
 
     inferred = engine.infer_preferences("owner")
     assert len(inferred) == 1
@@ -105,7 +109,9 @@ def test_preference_inference_ten_signals_confidence() -> None:
 def test_preference_inference_respects_min_signals_threshold() -> None:
     engine = PreferenceInferenceEngine(signal_store=[])
     for idx in range(4):
-        engine.record_signal(_signal(f"sig-{idx}", signal_type="correction", context="task planning"))
+        engine.record_signal(
+            _signal(f"sig-{idx}", signal_type="correction", context="task planning")
+        )
 
     inferred = engine.infer_preferences("owner", min_signals=5)
     assert inferred == []

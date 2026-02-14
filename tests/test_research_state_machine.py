@@ -231,12 +231,14 @@ class TestPlannerConsumerResearchFlow:
         self, store: DurableQueueStore, router: QueueRouter
     ) -> None:
         """No research requests → plan_result returned directly."""
-        agent = _FakePlannerAgent([
-            _FakeOutput(
-                plan_action=_FakePlanAction("# My Plan"),
-                message="done",
-            ),
-        ])
+        agent = _FakePlannerAgent(
+            [
+                _FakeOutput(
+                    plan_action=_FakePlanAction("# My Plan"),
+                    message="done",
+                ),
+            ]
+        )
         consumer = PlannerConsumer(store, router, agent)
 
         msg = QueueMessage(
@@ -255,14 +257,21 @@ class TestPlannerConsumerResearchFlow:
         self, store: DurableQueueStore, router: QueueRouter
     ) -> None:
         """Planner requests research → research_request messages routed."""
-        agent = _FakePlannerAgent([
-            _FakeOutput(
-                message="need research",
-                research_requests=[
-                    {"request_id": "r1", "query": "what is X?", "return_format": "short", "max_tokens": 200},
-                ],
-            ),
-        ])
+        agent = _FakePlannerAgent(
+            [
+                _FakeOutput(
+                    message="need research",
+                    research_requests=[
+                        {
+                            "request_id": "r1",
+                            "query": "what is X?",
+                            "return_format": "short",
+                            "max_tokens": 200,
+                        },
+                    ],
+                ),
+            ]
+        )
 
         # Track what gets routed
         routed: list[QueueMessage] = []
@@ -291,24 +300,29 @@ class TestPlannerConsumerResearchFlow:
         assert consumer.research_sm.state == ResearchState.awaiting_research
 
     @pytest.mark.asyncio
-    async def test_full_research_flow(
-        self, store: DurableQueueStore, router: QueueRouter
-    ) -> None:
+    async def test_full_research_flow(self, store: DurableQueueStore, router: QueueRouter) -> None:
         """Full cycle: plan → research dispatched → result received → finalize."""
-        agent = _FakePlannerAgent([
-            # First call: planner requests research
-            _FakeOutput(
-                message="researching",
-                research_requests=[
-                    {"request_id": "r1", "query": "stack info", "return_format": "list", "max_tokens": 200},
-                ],
-            ),
-            # Second call: planner finalizes with research context
-            _FakeOutput(
-                plan_action=_FakePlanAction("# Final Plan with research"),
-                message="plan ready",
-            ),
-        ])
+        agent = _FakePlannerAgent(
+            [
+                # First call: planner requests research
+                _FakeOutput(
+                    message="researching",
+                    research_requests=[
+                        {
+                            "request_id": "r1",
+                            "query": "stack info",
+                            "return_format": "list",
+                            "max_tokens": 200,
+                        },
+                    ],
+                ),
+                # Second call: planner finalizes with research context
+                _FakeOutput(
+                    plan_action=_FakePlanAction("# Final Plan with research"),
+                    message="plan ready",
+                ),
+            ]
+        )
 
         consumer = PlannerConsumer(store, router, agent)
 
@@ -346,20 +360,32 @@ class TestPlannerConsumerResearchFlow:
         # Use tiny timeout for testing
         sm = ResearchStateMachine(timeout_s=0.0)  # instant timeout
 
-        agent = _FakePlannerAgent([
-            _FakeOutput(
-                message="researching",
-                research_requests=[
-                    {"request_id": "r1", "query": "q1", "return_format": "f", "max_tokens": 100},
-                    {"request_id": "r2", "query": "q2", "return_format": "f", "max_tokens": 100},
-                ],
-            ),
-            # Finalize call
-            _FakeOutput(
-                plan_action=_FakePlanAction("# Partial Plan"),
-                message="partial",
-            ),
-        ])
+        agent = _FakePlannerAgent(
+            [
+                _FakeOutput(
+                    message="researching",
+                    research_requests=[
+                        {
+                            "request_id": "r1",
+                            "query": "q1",
+                            "return_format": "f",
+                            "max_tokens": 100,
+                        },
+                        {
+                            "request_id": "r2",
+                            "query": "q2",
+                            "return_format": "f",
+                            "max_tokens": 100,
+                        },
+                    ],
+                ),
+                # Finalize call
+                _FakeOutput(
+                    plan_action=_FakePlanAction("# Partial Plan"),
+                    message="partial",
+                ),
+            ]
+        )
 
         consumer = PlannerConsumer(store, router, agent, research_sm=sm)
 

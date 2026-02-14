@@ -70,7 +70,11 @@ class Gate(BaseModel):
                 self.lane = GateLane.policy
         if self.provider == GateProvider.llm and self.lane == GateLane.policy:
             self.promote_to_policy = True
-        if self.provider == GateProvider.llm and self.lane == GateLane.quality and self.promote_to_policy:
+        if (
+            self.provider == GateProvider.llm
+            and self.lane == GateLane.quality
+            and self.promote_to_policy
+        ):
             raise ValueError("llm gates in quality lane cannot set promote_to_policy=true")
         return self
 

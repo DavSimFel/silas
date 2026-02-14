@@ -89,6 +89,7 @@ class TestMarkdownPlanParser:
     @pytest.fixture
     def parser(self):
         from silas.core.plan_parser import MarkdownPlanParser
+
         return MarkdownPlanParser()
 
     def test_minimal_plan(self, parser) -> None:
@@ -119,11 +120,13 @@ class TestMarkdownPlanParser:
 
     def test_full_plan_interaction_mode(self, parser) -> None:
         from silas.models.agents import InteractionMode
+
         wi = parser.parse(FULL_PLAN)
         assert wi.interaction_mode == InteractionMode.act_and_report
 
     def test_full_plan_executor_type(self, parser) -> None:
         from silas.models.work import WorkItemExecutorType
+
         wi = parser.parse(FULL_PLAN)
         assert wi.executor_type == WorkItemExecutorType.shell
 

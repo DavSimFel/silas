@@ -35,7 +35,9 @@ class SilasKeyManager:
         )
         public_key_hex = public_key_raw.hex()
 
-        self._set_secret(owner_id, _PRIVATE_KEY_LABEL, base64.b64encode(private_key_raw).decode("utf-8"))
+        self._set_secret(
+            owner_id, _PRIVATE_KEY_LABEL, base64.b64encode(private_key_raw).decode("utf-8")
+        )
         self._set_secret(owner_id, _PUBLIC_KEY_LABEL, public_key_hex)
         return public_key_hex
 
@@ -57,7 +59,11 @@ class SilasKeyManager:
             public_key.verify(signature, payload)
         except InvalidSignature:
             return False, "Invalid signature"
-        except (ValueError, TypeError, OSError) as exc:  # pragma: no cover - backend and key errors vary by platform
+        except (
+            ValueError,
+            TypeError,
+            OSError,
+        ) as exc:  # pragma: no cover - backend and key errors vary by platform
             return False, str(exc)
 
         return True, "Valid"

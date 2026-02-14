@@ -208,7 +208,9 @@ class UndoManager:
         scope_ids = [scope_id] if scope_id is not None else list(self._entries_by_scope)
         for current_scope in scope_ids:
             entries = self._entries_by_scope.get(current_scope, {})
-            expired_ids = [entry_id for entry_id, entry in entries.items() if now_utc > entry.expires_at]
+            expired_ids = [
+                entry_id for entry_id, entry in entries.items() if now_utc > entry.expires_at
+            ]
             for entry_id in expired_ids:
                 del entries[entry_id]
             removed += len(expired_ids)

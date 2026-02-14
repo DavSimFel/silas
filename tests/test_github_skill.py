@@ -39,9 +39,7 @@ class TestRunHelper:
 
     def test_called_process_error(self) -> None:
         with patch("subprocess.run") as mock:
-            mock.side_effect = subprocess.CalledProcessError(
-                1, "git", output="", stderr="fatal"
-            )
+            mock.side_effect = subprocess.CalledProcessError(1, "git", output="", stderr="fatal")
             result = _run(["git", "status"])
         assert "error" in result
         assert result["returncode"] == 1
@@ -107,9 +105,7 @@ class TestCreateBranch:
     async def test_success(self) -> None:
         with patch("silas.skills.shipped.github_skill._run") as mock:
             mock.return_value = {"stdout": "", "stderr": "", "returncode": 0}
-            result = await create_branch(
-                {"repo_path": "/tmp/repo", "branch_name": "feat/x"}
-            )
+            result = await create_branch({"repo_path": "/tmp/repo", "branch_name": "feat/x"})
         assert result["branch"] == "feat/x"
         assert result["base"] == "dev"
         assert mock.call_count == 2  # fetch + checkout
@@ -118,9 +114,7 @@ class TestCreateBranch:
     async def test_fetch_error(self) -> None:
         with patch("silas.skills.shipped.github_skill._run") as mock:
             mock.return_value = {"error": "network", "returncode": 1}
-            result = await create_branch(
-                {"repo_path": "/tmp/repo", "branch_name": "feat/x"}
-            )
+            result = await create_branch({"repo_path": "/tmp/repo", "branch_name": "feat/x"})
         assert "error" in result
 
 
@@ -133,23 +127,17 @@ class TestReadFile:
     @pytest.mark.asyncio
     async def test_success(self, tmp_path: Path) -> None:
         (tmp_path / "hello.txt").write_text("world")
-        result = await read_file(
-            {"repo_path": str(tmp_path), "file_path": "hello.txt"}
-        )
+        result = await read_file({"repo_path": str(tmp_path), "file_path": "hello.txt"})
         assert result["content"] == "world"
 
     @pytest.mark.asyncio
     async def test_not_found(self, tmp_path: Path) -> None:
-        result = await read_file(
-            {"repo_path": str(tmp_path), "file_path": "nope.txt"}
-        )
+        result = await read_file({"repo_path": str(tmp_path), "file_path": "nope.txt"})
         assert "error" in result
 
     @pytest.mark.asyncio
     async def test_path_traversal(self, tmp_path: Path) -> None:
-        result = await read_file(
-            {"repo_path": str(tmp_path), "file_path": "../../etc/passwd"}
-        )
+        result = await read_file({"repo_path": str(tmp_path), "file_path": "../../etc/passwd"})
         assert "error" in result
         assert "traversal" in str(result["error"])
 
@@ -189,9 +177,7 @@ class TestCommitAndPush:
     async def test_success(self) -> None:
         with patch("silas.skills.shipped.github_skill._run") as mock:
             mock.return_value = {"stdout": "", "stderr": "", "returncode": 0}
-            result = await commit_and_push(
-                {"repo_path": "/tmp/repo", "message": "feat: x"}
-            )
+            result = await commit_and_push({"repo_path": "/tmp/repo", "message": "feat: x"})
         assert result["committed"] is True
         assert mock.call_count == 3  # add, commit, push
 
@@ -199,7 +185,9 @@ class TestCommitAndPush:
     async def test_commit_error(self) -> None:
         call_count = 0
 
-        def side_effect(cmd: list[str], *, cwd: str | None = None, check: bool = True) -> dict[str, object]:
+        def side_effect(
+            cmd: list[str], *, cwd: str | None = None, check: bool = True
+        ) -> dict[str, object]:
             nonlocal call_count
             call_count += 1
             if call_count == 2:  # commit step
@@ -207,9 +195,7 @@ class TestCommitAndPush:
             return {"stdout": "", "stderr": "", "returncode": 0}
 
         with patch("silas.skills.shipped.github_skill._run", side_effect=side_effect):
-            result = await commit_and_push(
-                {"repo_path": "/tmp/repo", "message": "feat: x"}
-            )
+            result = await commit_and_push({"repo_path": "/tmp/repo", "message": "feat: x"})
         assert "error" in result
 
 

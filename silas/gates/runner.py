@@ -25,9 +25,7 @@ if TYPE_CHECKING:
 
 # PII patterns live here so both input and output paths share one definition.
 _EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
-_PHONE_PATTERN = re.compile(
-    r"\b(?:\+?\d{1,2}[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b"
-)
+_PHONE_PATTERN = re.compile(r"\b(?:\+?\d{1,2}[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b")
 _API_KEY_PATTERN = re.compile(r"\bsk-[A-Za-z0-9]{16,}\b")
 _TAINT_ORDER: dict[TaintLevel, int] = {
     TaintLevel.owner: 0,
@@ -77,7 +75,9 @@ class SilasGateRunner(GateRunner):
             for provider_name, provider in providers.items():
                 self.register_provider(provider_name, provider)
 
-    def register_provider(self, provider_name: GateProvider | str, provider: GateCheckProvider) -> None:
+    def register_provider(
+        self, provider_name: GateProvider | str, provider: GateCheckProvider
+    ) -> None:
         self._providers[self._provider_key(provider_name)] = provider
 
     def precompile_turn_gates(
@@ -122,7 +122,9 @@ class SilasGateRunner(GateRunner):
         trigger: GateTrigger,
         context: dict[str, object],
     ) -> tuple[list[GateResult], list[GateResult], dict[str, object]]:
-        step_index = self._step_index_from_context(context) if trigger == GateTrigger.after_step else None
+        step_index = (
+            self._step_index_from_context(context) if trigger == GateTrigger.after_step else None
+        )
         matched = self._matching_gates(gates, trigger, step_index)
         working_context = dict(context)
 
@@ -286,7 +288,11 @@ class SilasGateRunner(GateRunner):
         for gate in gates:
             if gate.on != trigger:
                 continue
-            if trigger == GateTrigger.after_step and step_index is not None and gate.after_step != step_index:
+            if (
+                trigger == GateTrigger.after_step
+                and step_index is not None
+                and gate.after_step != step_index
+            ):
                 continue
             matched.append(gate)
         return matched
@@ -335,7 +341,10 @@ class SilasGateRunner(GateRunner):
             if gate.lane != GateLane.policy:
                 continue
             result = self._evaluate_output_policy_gate(
-                gate, working_response, response_taint, sender_id,
+                gate,
+                working_response,
+                response_taint,
+                sender_id,
             )
             policy_results.append(result)
             if result.action == "continue":
@@ -348,7 +357,10 @@ class SilasGateRunner(GateRunner):
                 continue
             quality_results.append(
                 self._evaluate_output_quality_gate(
-                    gate, working_response, response_taint, sender_id,
+                    gate,
+                    working_response,
+                    response_taint,
+                    sender_id,
                 )
             )
 
@@ -363,7 +375,10 @@ class SilasGateRunner(GateRunner):
         sender_id: str,
     ) -> GateResult:
         result = self._evaluate_output_gate_check(
-            gate, response_text, response_taint, sender_id,
+            gate,
+            response_text,
+            response_taint,
+            sender_id,
         )
         if result.action != "block":
             return result
@@ -377,7 +392,10 @@ class SilasGateRunner(GateRunner):
         sender_id: str,
     ) -> GateResult:
         raw = self._evaluate_output_gate_check(
-            gate, response_text, response_taint, sender_id,
+            gate,
+            response_text,
+            response_taint,
+            sender_id,
         )
         return self._normalize_quality_result(gate, raw)
 
@@ -390,7 +408,8 @@ class SilasGateRunner(GateRunner):
     ) -> GateResult:
         if gate.on != GateTrigger.every_agent_response:
             return self._output_continue(
-                gate.name, f"skipped trigger={gate.on.value}",
+                gate.name,
+                f"skipped trigger={gate.on.value}",
             )
 
         check_name = self._output_check_name(gate)
@@ -593,7 +612,9 @@ class SilasGateRunner(GateRunner):
             action = self._normalize_escalation_action(raw.get("action") or raw.get("type"))
             if action is None:
                 return None
-            message = self._message_from_raw(raw.get("message") or raw.get("msg") or raw.get("text"))
+            message = self._message_from_raw(
+                raw.get("message") or raw.get("msg") or raw.get("text")
+            )
             return _Escalation(action=action, message=message)
         return None
 
@@ -616,7 +637,11 @@ class SilasGateRunner(GateRunner):
         if not isinstance(raw, str):
             return None
         normalized = raw.strip().lower().replace("-", "_").replace(" ", "_")
-        aliases = {"block": "block_with_message", "respond": "block_with_message", "report": "block_with_message"}
+        aliases = {
+            "block": "block_with_message",
+            "respond": "block_with_message",
+            "report": "block_with_message",
+        }
         normalized = aliases.get(normalized, normalized)
         if normalized not in {"block_with_message", "redact", "require_approval", "log_and_pass"}:
             return None

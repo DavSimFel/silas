@@ -156,7 +156,9 @@ def available_manual_scenarios() -> list[ManualScenario]:
             title="External verification determines completion",
             objective="Ensure failed verification does not report success from agent self-claims.",
             spec_refs=["§5.3", "INV-03"],
-            preconditions=["Plan with explicit verification checks where one check can be forced to fail"],
+            preconditions=[
+                "Plan with explicit verification checks where one check can be forced to fail"
+            ],
             steps=[
                 "Execute a task whose tool step appears successful but verification check is intentionally failing.",
                 "Observe final status and reported verification details.",
@@ -325,7 +327,9 @@ def available_manual_scenarios() -> list[ManualScenario]:
             title="Suggestion and autonomy calibration loop",
             objective="Check proactive suggestion cadence and threshold-proposal review flow.",
             spec_refs=["§5.1.6", "§5.9"],
-            preconditions=["Heartbeat scheduler enabled and enough interaction history for metrics"],
+            preconditions=[
+                "Heartbeat scheduler enabled and enough interaction history for metrics"
+            ],
             steps=[
                 "Allow suggestion heartbeat to run and review generated cards.",
                 "Drive correction outcomes to hit autonomy proposal thresholds.",
@@ -495,7 +499,9 @@ def _interactive_prompt_for_scenario(
 
 
 def _render_markdown_report(run: ManualHarnessRun, scenarios: list[ManualScenario]) -> str:
-    scenario_map: dict[str, ManualScenario] = {scenario.scenario_id: scenario for scenario in scenarios}
+    scenario_map: dict[str, ManualScenario] = {
+        scenario.scenario_id: scenario for scenario in scenarios
+    }
 
     lines: list[str] = [
         f"# Silas Manual Harness Report ({run.profile})",
@@ -528,7 +534,9 @@ def _render_markdown_report(run: ManualHarnessRun, scenarios: list[ManualScenari
         lines.append(f"- Status: `{result.status}`")
         lines.append(f"- Completed (UTC): `{result.completed_at.isoformat()}`")
         lines.append(f"- Objective: {scenario.objective}")
-        lines.append(f"- Spec refs: {', '.join(scenario.spec_refs) if scenario.spec_refs else 'none'}")
+        lines.append(
+            f"- Spec refs: {', '.join(scenario.spec_refs) if scenario.spec_refs else 'none'}"
+        )
         lines.append(f"- Notes: {result.notes or '(none)'}")
         lines.append(f"- Evidence: {', '.join(result.evidence) if result.evidence else '(none)'}")
         lines.append("")

@@ -184,24 +184,39 @@ class GateMixin:
         return decision.verdict == ApprovalVerdict.approved
 
     async def _evaluate_output_gates(
-        self, response_text: str, response_taint: TaintLevel, sender_id: str, turn_number: int,
+        self,
+        response_text: str,
+        response_taint: TaintLevel,
+        sender_id: str,
+        turn_number: int,
     ) -> tuple[str, list[str]]:
         blocked_gate_names: list[str] = []
         if self.output_gate_runner is None:
-            await self._audit("output_gates_evaluated", turn_number=turn_number, results=[], configured=False)
+            await self._audit(
+                "output_gates_evaluated", turn_number=turn_number, results=[], configured=False
+            )
             return response_text, blocked_gate_names
 
         response_text, gate_results = self.output_gate_runner.evaluate_output(
-            response_text=response_text, response_taint=response_taint, sender_id=sender_id,
+            response_text=response_text,
+            response_taint=response_taint,
+            sender_id=sender_id,
         )
         results_payload = [r.model_dump(mode="json") for r in gate_results]
         warnings = [r.model_dump(mode="json") for r in gate_results if "warn" in r.flags]
         blocked_gate_names = [r.gate_name for r in gate_results if r.action == "block"]
 
-        await self._audit("output_gates_evaluated", turn_number=turn_number, results=results_payload, configured=True)
+        await self._audit(
+            "output_gates_evaluated",
+            turn_number=turn_number,
+            results=results_payload,
+            configured=True,
+        )
         if warnings:
             await self._audit("output_gate_warnings", turn_number=turn_number, warnings=warnings)
         if blocked_gate_names:
             response_text = "I cannot share that"
-            await self._audit("output_gate_blocked", turn_number=turn_number, blocked_gates=blocked_gate_names)
+            await self._audit(
+                "output_gate_blocked", turn_number=turn_number, blocked_gates=blocked_gate_names
+            )
         return response_text, blocked_gate_names

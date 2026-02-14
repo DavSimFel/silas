@@ -107,7 +107,9 @@ class TokenBudget(BaseModel):
         system_actual = min(system_zone_tokens, self.system_max)
         return max(self.total - system_actual, 0)
 
-    def zone_budget(self, zone: ContextZone, profile: ContextProfile, system_zone_tokens: int) -> int:
+    def zone_budget(
+        self, zone: ContextZone, profile: ContextProfile, system_zone_tokens: int
+    ) -> int:
         allocable = self.allocable_budget(system_zone_tokens)
         if zone == ContextZone.chronicle:
             return floor(allocable * profile.chronicle_pct)

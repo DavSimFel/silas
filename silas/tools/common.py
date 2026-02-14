@@ -77,6 +77,7 @@ class AgentDeps:
             # Why lazy import: avoids import-time dependency on pydantic_ai_backends
             # for callers that don't use console tools.
             from pydantic_ai_backends import LocalBackend
+
             self._backend = LocalBackend(root_dir=str(self.workspace_path))
         return self._backend
 

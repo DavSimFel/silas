@@ -36,9 +36,7 @@ class ConnectionSkillAdapter:
         inputs: dict[str, object] = {"action": "activate", **(params or {})}
         result = await self._executor.execute(self._skill_id, inputs)
         if not result.success:
-            raise RuntimeError(
-                f"skill '{self._skill_id}' activate failed: {result.error}"
-            )
+            raise RuntimeError(f"skill '{self._skill_id}' activate failed: {result.error}")
         return dict(result.output)
 
     async def probe(self, params: dict[str, object] | None = None) -> dict[str, object]:
@@ -52,9 +50,7 @@ class ConnectionSkillAdapter:
         inputs: dict[str, object] = {"action": "refresh", **(params or {})}
         result = await self._executor.execute(self._skill_id, inputs)
         if not result.success:
-            raise RuntimeError(
-                f"skill '{self._skill_id}' refresh failed: {result.error}"
-            )
+            raise RuntimeError(f"skill '{self._skill_id}' refresh failed: {result.error}")
         return dict(result.output)
 
     async def deactivate(self, params: dict[str, object] | None = None) -> dict[str, object]:
@@ -62,9 +58,7 @@ class ConnectionSkillAdapter:
         inputs: dict[str, object] = {"action": "deactivate", **(params or {})}
         result = await self._executor.execute(self._skill_id, inputs)
         if not result.success:
-            logger.warning(
-                "skill '%s' deactivate failed: %s", self._skill_id, result.error
-            )
+            logger.warning("skill '%s' deactivate failed: %s", self._skill_id, result.error)
         return dict(result.output)
 
 

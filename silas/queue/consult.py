@@ -85,7 +85,8 @@ class ConsultPlannerManager:
         await self._router.route(request_msg)
         logger.info(
             "Consult request sent for work_item=%s trace=%s",
-            work_item_id, trace_id,
+            work_item_id,
+            trace_id,
         )
 
         # Step 2: Poll runtime_queue for the planner_guidance response.
@@ -119,7 +120,8 @@ class ConsultPlannerManager:
 
         logger.warning(
             "Consult timeout for work_item=%s after %.1fs",
-            work_item_id, timeout_s,
+            work_item_id,
+            timeout_s,
         )
         return None
 

@@ -54,7 +54,9 @@ class ReplanManager:
         if current_depth >= MAX_REPLAN_DEPTH:
             logger.warning(
                 "Replan depth %d >= max %d for work_item=%s — escalating to user",
-                current_depth, MAX_REPLAN_DEPTH, work_item_id,
+                current_depth,
+                MAX_REPLAN_DEPTH,
+                work_item_id,
             )
             return False
 
@@ -72,7 +74,8 @@ class ReplanManager:
         await self._router.route(msg)
         logger.info(
             "Replan enqueued for work_item=%s depth=%d",
-            work_item_id, current_depth + 1,
+            work_item_id,
+            current_depth + 1,
         )
         return True
 

@@ -91,7 +91,9 @@ class GoalRun(BaseModel):
             raise ValueError("started_at and completed_at must be timezone-aware")
         return value
 
-    def transition_to(self, status: Literal["pending", "running", "completed", "failed", "skipped"]) -> None:
+    def transition_to(
+        self, status: Literal["pending", "running", "completed", "failed", "skipped"]
+    ) -> None:
         allowed: dict[str, set[str]] = {
             "pending": {"running", "failed", "skipped"},
             "running": {"completed", "failed", "skipped"},

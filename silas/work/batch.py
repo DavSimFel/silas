@@ -78,7 +78,9 @@ class BatchExecutor:
         )
 
     def _execute_single_item(
-        self, action: str, item: BatchActionItem,
+        self,
+        action: str,
+        item: BatchActionItem,
     ) -> dict[str, object]:
         """Execute one batch item with gate check, returning success/error dict."""
         payload = {"item_id": item.item_id, "title": item.title, "actor": item.actor}

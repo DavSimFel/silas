@@ -41,7 +41,13 @@ def test_init_skips_when_already_configured(tmp_path: Path) -> None:
     cfg = tmp_path / "silas.yaml"
     cfg.write_text(
         yaml.safe_dump(
-            {"silas": {"owner_id": "real-user", "agent_name": "Pal", "data_dir": str(tmp_path / "data")}},
+            {
+                "silas": {
+                    "owner_id": "real-user",
+                    "agent_name": "Pal",
+                    "data_dir": str(tmp_path / "data"),
+                }
+            },
             sort_keys=False,
         ),
         encoding="utf-8",
@@ -102,7 +108,9 @@ def test_init_retries_invalid_key(config_file: Path) -> None:
 def web_config_file(tmp_path: Path) -> Path:
     cfg = tmp_path / "silas.yaml"
     cfg.write_text(
-        yaml.safe_dump({"silas": {"owner_id": "owner", "data_dir": str(tmp_path / "data")}}, sort_keys=False),
+        yaml.safe_dump(
+            {"silas": {"owner_id": "owner", "data_dir": str(tmp_path / "data")}}, sort_keys=False
+        ),
         encoding="utf-8",
     )
     return cfg
@@ -131,7 +139,9 @@ async def test_registration_status_open_by_default(web_channel) -> None:
 async def test_onboard_endpoint_success(web_channel, web_config_file: Path) -> None:
     from fastapi.testclient import TestClient
 
-    with patch.object(web_channel, "_validate_openrouter_key", new_callable=AsyncMock, return_value=True):
+    with patch.object(
+        web_channel, "_validate_openrouter_key", new_callable=AsyncMock, return_value=True
+    ):
         client = TestClient(web_channel.app)
         resp = client.post(
             "/api/onboard",
@@ -183,7 +193,9 @@ async def test_registration_status_closed_after_onboard(web_channel) -> None:
     from fastapi.testclient import TestClient
 
     client = TestClient(web_channel.app)
-    with patch.object(web_channel, "_validate_openrouter_key", new_callable=AsyncMock, return_value=True):
+    with patch.object(
+        web_channel, "_validate_openrouter_key", new_callable=AsyncMock, return_value=True
+    ):
         onboard_resp = client.post(
             "/api/onboard",
             json={"agent_name": "Pal", "api_key": "sk-test", "owner_name": "Tester"},
@@ -200,7 +212,9 @@ async def test_registration_status_closed_after_onboard(web_channel) -> None:
 async def test_onboard_endpoint_invalid_key(web_channel) -> None:
     from fastapi.testclient import TestClient
 
-    with patch.object(web_channel, "_validate_openrouter_key", new_callable=AsyncMock, return_value=False):
+    with patch.object(
+        web_channel, "_validate_openrouter_key", new_callable=AsyncMock, return_value=False
+    ):
         client = TestClient(web_channel.app)
         resp = client.post(
             "/api/onboard",

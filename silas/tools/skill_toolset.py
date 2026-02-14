@@ -109,8 +109,7 @@ class SkillToolset:
 
         tool_defs = skill_tools or [self._tool_from_skill(meta) for meta in self.skill_metadata]
         self._skill_tools: dict[str, ToolDefinition] = {
-            tool.name: self._copy_tool(tool)
-            for tool in tool_defs
+            tool.name: self._copy_tool(tool) for tool in tool_defs
         }
 
     def list_tools(self) -> list[ToolDefinition]:

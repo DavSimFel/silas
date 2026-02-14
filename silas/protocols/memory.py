@@ -49,7 +49,9 @@ class MemoryConsolidator(Protocol):
 
 @runtime_checkable
 class MemoryPortability(Protocol):
-    async def export_bundle(self, since: datetime | None = None, include_raw: bool = True) -> bytes: ...
+    async def export_bundle(
+        self, since: datetime | None = None, include_raw: bool = True
+    ) -> bytes: ...
 
     async def import_bundle(self, bundle: bytes, mode: str = "merge") -> dict[str, object]: ...
 

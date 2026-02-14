@@ -19,6 +19,7 @@ from silas.models.skills import SkillDefinition
 # Subprocess helpers
 # ---------------------------------------------------------------------------
 
+
 def _run(
     cmd: list[str],
     *,
@@ -62,6 +63,7 @@ async def _arun(
 # Tool implementations
 # ---------------------------------------------------------------------------
 
+
 async def read_issue(inputs: dict[str, object]) -> dict[str, object]:
     """Fetch issue details (title, body, labels, comments)."""
     repo = _req_str(inputs, "repo")
@@ -69,9 +71,14 @@ async def read_issue(inputs: dict[str, object]) -> dict[str, object]:
 
     result = await _arun(
         [
-            "gh", "issue", "view", str(issue_number),
-            "--repo", repo,
-            "--json", "title,body,labels,comments,state,number",
+            "gh",
+            "issue",
+            "view",
+            str(issue_number),
+            "--repo",
+            repo,
+            "--json",
+            "title,body,labels,comments,state,number",
         ],
     )
     if "error" in result:
@@ -173,11 +180,17 @@ async def create_pr(inputs: dict[str, object]) -> dict[str, object]:
     head = str(inputs.get("head", ""))
 
     cmd = [
-        "gh", "pr", "create",
-        "--repo", repo,
-        "--base", base,
-        "--title", title,
-        "--body", body,
+        "gh",
+        "pr",
+        "create",
+        "--repo",
+        repo,
+        "--base",
+        base,
+        "--title",
+        title,
+        "--body",
+        body,
     ]
     if head:
         cmd += ["--head", head]
@@ -193,6 +206,7 @@ async def create_pr(inputs: dict[str, object]) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 # Input helpers
 # ---------------------------------------------------------------------------
+
 
 def _req_str(inputs: dict[str, object], key: str) -> str:
     val = inputs.get(key)

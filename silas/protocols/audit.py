@@ -11,7 +11,9 @@ class AuditLog(Protocol):
 
     async def write_checkpoint(self) -> str: ...
 
-    async def verify_from_checkpoint(self, checkpoint_id: str | None = None) -> tuple[bool, int]: ...
+    async def verify_from_checkpoint(
+        self, checkpoint_id: str | None = None
+    ) -> tuple[bool, int]: ...
 
 
 __all__ = ["AuditLog"]

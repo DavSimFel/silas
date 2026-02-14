@@ -373,7 +373,9 @@ class TestSilasPersonalityEngine:
             source="channel",
             metadata={"delta_axes": {"assertiveness": 0.4}},
         )
-        assert updated.baseline_axes.assertiveness == pytest.approx(state.baseline_axes.assertiveness)
+        assert updated.baseline_axes.assertiveness == pytest.approx(
+            state.baseline_axes.assertiveness
+        )
         assert updated.mood.frustration > state.mood.frustration
         assert len(store.events) == 1
         assert store.events[0].trusted is False

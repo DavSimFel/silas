@@ -254,7 +254,9 @@ class TestDirectRouteFullLoop:
     """user_message → proxy_queue → proxy consumer → agent_response → collected."""
 
     async def test_dispatch_through_collect(
-        self, store: DurableQueueStore, router: QueueRouter,
+        self,
+        store: DurableQueueStore,
+        router: QueueRouter,
     ) -> None:
         proxy = DirectProxyAgent(router)
         planner = PlannerAgentWithWorkItem(router=router)
@@ -293,13 +295,18 @@ class TestDirectRouteFullLoop:
         assert proxy.call_count >= 1
 
     async def test_trace_id_propagation_in_audit(
-        self, store: DurableQueueStore, router: QueueRouter,
+        self,
+        store: DurableQueueStore,
+        router: QueueRouter,
     ) -> None:
         """Verify the processed_messages table records the proxy consumer's work."""
         proxy = DirectProxyAgent(router)
         proxy_consumer = ProxyConsumer(store, router, proxy)
         orchestrator = QueueOrchestrator(
-            store=store, router=router, consumers=[proxy_consumer], poll_interval_s=0.05,
+            store=store,
+            router=router,
+            consumers=[proxy_consumer],
+            poll_interval_s=0.05,
         )
         bridge = QueueBridge(orchestrator=orchestrator, router=router, store=store)
 
@@ -332,7 +339,9 @@ class TestPlannerRouteFullLoop:
     """user_message → proxy → plan_request → planner → execution_request → executor → status."""
 
     async def test_full_planner_executor_flow(
-        self, store: DurableQueueStore, router: QueueRouter,
+        self,
+        store: DurableQueueStore,
+        router: QueueRouter,
     ) -> None:
         proxy = PlannerRouteProxyAgent()
         planner = PlannerAgentWithWorkItem(router=router)
@@ -357,11 +366,7 @@ class TestPlannerRouteFullLoop:
         await orchestrator.start()
 
         await wait_until(
-            lambda: (
-                proxy.call_count >= 1
-                and planner.call_count >= 1
-                and executor.call_count >= 1
-            ),
+            lambda: proxy.call_count >= 1 and planner.call_count >= 1 and executor.call_count >= 1,
             timeout=3.0,
         )
         await orchestrator.stop()
@@ -377,7 +382,9 @@ class TestPlannerRouteFullLoop:
         assert any("Execute the plan step" in p for p in executor.prompts)
 
     async def test_plan_and_execution_status_reach_proxy_queue(
-        self, store: DurableQueueStore, router: QueueRouter,
+        self,
+        store: DurableQueueStore,
+        router: QueueRouter,
     ) -> None:
         """Plan result and execution_status both route back to proxy_queue."""
         proxy = PlannerRouteProxyAgent()
@@ -398,24 +405,23 @@ class TestPlannerRouteFullLoop:
             poll_interval_s=0.05,
         )
 
-        await router.route(QueueMessage(
-            message_kind="user_message",
-            sender="user",
-            trace_id=trace_id,
-            payload={"text": "Build a dashboard"},
-        ))
+        await router.route(
+            QueueMessage(
+                message_kind="user_message",
+                sender="user",
+                trace_id=trace_id,
+                payload={"text": "Build a dashboard"},
+            )
+        )
 
         await orchestrator.start()
         await wait_until(
-            lambda: (
-                proxy.call_count >= 1
-                and planner.call_count >= 1
-                and executor.call_count >= 1
-            ),
+            lambda: proxy.call_count >= 1 and planner.call_count >= 1 and executor.call_count >= 1,
             timeout=5.0,
         )
         # Extra settle time for return messages to be processed
         import asyncio as _asyncio
+
         await _asyncio.sleep(0.5)
         await orchestrator.stop()
 
@@ -439,9 +445,7 @@ class TestPlannerRouteFullLoop:
             assert row is not None
             # Why >= 2: proxy_queue consumer processes user_message + at least
             # plan_result or execution_status flowing back.
-            assert row[0] >= 2, (
-                f"Proxy consumer should process multiple messages, got {row[0]}"
-            )
+            assert row[0] >= 2, f"Proxy consumer should process multiple messages, got {row[0]}"
 
 
 # ── Test 3: Failure Cascade ────────────────────────────────────────────
@@ -451,7 +455,9 @@ class TestFailureCascade:
     """Executor fails → consult-planner → retry with guidance → success."""
 
     async def test_consult_retry_succeeds(
-        self, store: DurableQueueStore, router: QueueRouter,
+        self,
+        store: DurableQueueStore,
+        router: QueueRouter,
     ) -> None:
         """Full failure cascade: fail → consult planner → guided retry → success."""
         from silas.queue.consult import ConsultPlannerManager
@@ -460,7 +466,10 @@ class TestFailureCascade:
         consult_mgr = ConsultPlannerManager(store=store, router=router)
 
         executor_consumer = ExecutorConsumer(
-            store, router, executor, consult_manager=consult_mgr,
+            store,
+            router,
+            executor,
+            consult_manager=consult_mgr,
         )
 
         trace_id = str(uuid.uuid4())
@@ -523,7 +532,9 @@ class TestFailureCascade:
         # processed_messages or the plan_request message kind)
 
     async def test_consult_timeout_produces_failure_status(
-        self, store: DurableQueueStore, router: QueueRouter,
+        self,
+        store: DurableQueueStore,
+        router: QueueRouter,
     ) -> None:
         """When consult times out, executor reports failure (no guidance arrives)."""
         from unittest.mock import AsyncMock
@@ -537,7 +548,10 @@ class TestFailureCascade:
         consult_mgr.consult = AsyncMock(return_value=None)  # type: ignore[method-assign]
 
         executor_consumer = ExecutorConsumer(
-            store, router, executor, consult_manager=consult_mgr,
+            store,
+            router,
+            executor,
+            consult_manager=consult_mgr,
         )
 
         trace_id = str(uuid.uuid4())
@@ -569,7 +583,9 @@ class TestConcurrentTraces:
     """3 simultaneous dispatch_turns with different trace_ids — no cross-contamination."""
 
     async def test_three_parallel_traces(
-        self, store: DurableQueueStore, router: QueueRouter,
+        self,
+        store: DurableQueueStore,
+        router: QueueRouter,
     ) -> None:
         """3 concurrent dispatches with different trace_ids get correct responses.
 
@@ -583,7 +599,10 @@ class TestConcurrentTraces:
 
         # No orchestrator running — we'll drive processing manually
         orchestrator = QueueOrchestrator(
-            store=store, router=router, consumers=[], poll_interval_s=0.05,
+            store=store,
+            router=router,
+            consumers=[],
+            poll_interval_s=0.05,
         )
         bridge = QueueBridge(orchestrator=orchestrator, router=router, store=store)
 
@@ -610,10 +629,7 @@ class TestConcurrentTraces:
         # But collect_response uses lease_filtered (trace_id + message_kind),
         # which is atomic. We collect before the consumer can interfere.
         results = await asyncio.gather(
-            *[
-                bridge.collect_response(trace_id=tid, timeout_s=3.0)
-                for tid, _ in traces
-            ]
+            *[bridge.collect_response(trace_id=tid, timeout_s=3.0) for tid, _ in traces]
         )
 
         for i, (trace_id, prompt) in enumerate(traces):

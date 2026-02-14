@@ -80,7 +80,9 @@ class ExecutorAgent:
                 toolsets=[tool_bundle.console_toolset] if self._use_tools and tool_bundle else [],
             )
         except (ImportError, ValueError, TypeError, RuntimeError) as exc:
-            logger.warning("Failed to initialize Executor Agent; using deterministic fallback: %s", exc)
+            logger.warning(
+                "Failed to initialize Executor Agent; using deterministic fallback: %s", exc
+            )
             self.agent = None
             self._llm_available = False
 
@@ -104,7 +106,9 @@ class ExecutorAgent:
                 output = self._coerce_output(raw)
                 return self._materialize_tool_calls(output)
             except (ConnectionError, TimeoutError, ValueError, RuntimeError):
-                logger.warning("Executor LLM call failed; using deterministic fallback", exc_info=True)
+                logger.warning(
+                    "Executor LLM call failed; using deterministic fallback", exc_info=True
+                )
 
         fallback = ExecutorAgentOutput(
             summary="Executor fallback: unable to obtain structured model output.",
