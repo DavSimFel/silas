@@ -53,7 +53,9 @@ class HelpersMixin(StreamBase if TYPE_CHECKING else object):  # type: ignore[mis
             return ""
 
     def _queue_timeout_seconds(self) -> float:
-        value = self._config_value("queue_timeout_s", default=120.0)
+        value = self._config_value("queue_bridge_timeout_s", default=None)
+        if not isinstance(value, (int, float)) or value <= 0:
+            value = self._config_value("queue_timeout_s", default=120.0)
         if isinstance(value, (int, float)) and value > 0:
             return float(value)
         return 120.0
@@ -129,7 +131,9 @@ class HelpersMixin(StreamBase if TYPE_CHECKING else object):  # type: ignore[mis
             return ""
 
     def _queue_timeout_seconds(self) -> float:
-        value = self._config_value("queue_timeout_s", default=120.0)
+        value = self._config_value("queue_bridge_timeout_s", default=None)
+        if not isinstance(value, (int, float)) or value <= 0:
+            value = self._config_value("queue_timeout_s", default=120.0)
         if isinstance(value, (int, float)) and value > 0:
             return float(value)
         return 120.0
