@@ -139,6 +139,14 @@ class ExecutionConfig(BaseModel):
     use_queue_path: bool = True
 
 
+class TelemetryConfig(BaseModel):
+    """OpenTelemetry tracing configuration."""
+
+    enabled: bool = True
+    endpoint: str = "localhost:4317"
+    env: str = "dev"
+
+
 class StreamConfig(BaseModel):
     streaming_enabled: bool = True
     chunk_size: int = Field(default=50, ge=1)
@@ -157,6 +165,7 @@ class SilasSettings(BaseSettings):
     stream: StreamConfig = Field(default_factory=StreamConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     output_gates: list[Gate] = Field(default_factory=list)
     queue_bridge_timeout_s: float = 120.0
     # Backward-compatible alias; prefer queue_bridge_timeout_s.

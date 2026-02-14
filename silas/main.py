@@ -802,6 +802,11 @@ def start_command(config_path: str) -> None:
     if not settings.channels.web.enabled:
         raise click.ClickException("Phase 1a requires channels.web.enabled=true")
 
+    # Re-initialize logging with observability config (Loki handler)
+    obs = settings.observability
+    if obs.loki_url:
+        setup_logging(loki_url=obs.loki_url, loki_env=obs.env)
+
     passphrase = _resolve_signing_passphrase()
 
     try:
@@ -847,6 +852,60 @@ def manual_harness_command(profile: str, base_url: str, output_dir: Path, dry_ru
         base_url=base_url,
         output_dir=output_dir,
     )
+
+
+@cli.command("inspect-harness")
+@click.option(
+    "--profile",
+    type=click.Choice(["core", "full"], case_sensitive=False),
+    default="core",
+    show_default=True,
+)
+@click.option(
+    "--base-url",
+    default="http://127.0.0.1:8420",
+    show_default=True,
+)
+@click.option(
+    "--auth-token",
+    default=None,
+    help="WebSocket auth token for the running Silas instance.",
+)
+@click.option(
+    "--model",
+    "model_name",
+    default=None,
+    help="Inspect AI model to use (default: no model, Silas is the solver).",
+)
+def inspect_harness_command(
+    profile: str, base_url: str, auth_token: str | None, model_name: str | None
+) -> None:
+    """Run the automated acceptance harness via Inspect AI."""
+    try:
+        from inspect_ai import eval as inspect_eval
+
+        from silas.benchmarks.tasks.harness import configure, harness_suite
+    except ImportError as exc:
+        click.echo(f"Error: inspect-ai not installed. Install with: uv sync --group dev\n{exc}")
+        raise SystemExit(1) from exc
+
+    configure(base_url=base_url, auth_token=auth_token)
+    tasks = harness_suite(profile.lower())
+
+    click.echo(f"Silas Inspect Harness — profile={profile}, {len(tasks)} tasks")
+    click.echo(f"Target: {base_url}")
+
+    results = inspect_eval(
+        tasks,
+        model=model_name or "mockllm/model",
+        log_dir="reports/inspect-harness",
+    )
+
+    for log in results:
+        status = log.status
+        click.echo(f"  {log.eval.task}: {status}")
+
+    click.echo("Inspect harness complete. Logs in reports/inspect-harness/")
 
 
 __all__ = ["build_stream", "cli"]
