@@ -229,13 +229,14 @@ Non-regression requirement:
 Large reference material has been moved into companion files to keep this document executable and easier to navigate:
 
 - `specs/project-structure.md` — Section 1 project tree and onboarding/frontend structure
-- `specs/models.md` — Section 3 data models (`3.1` to `3.12`)
-- `specs/protocols.md` — Section 4 protocols (`4.1` to `4.24`)
-- `specs/examples.md` — Section 13 example plans
+- `specs/reference/models.md` — Section 3 data models (`3.1` to `3.12`)
+- `specs/reference/protocols.md` — Section 4 protocols (`4.1` to `4.24`)
+- `specs/reference/examples.md` — Section 13 example plans
 - `specs/testing.md` — Section 14 testing strategy
-- `specs/security-model.md` — Section 15 security model matrix and prohibited-capability list
+- `specs/reference/security-model.md` — Section 15 security model matrix and prohibited-capability list
 - `specs/adrs.md` — Section 16 architecture decision records
 - `specs/operations-roadmap.md` — Sections 17-18 operations, reliability, roadmap
+- Section 19 (Agent Loop Architecture v3) — integrated directly in this document
 
 Section numbering is preserved in companion files so existing references remain semantically stable.
 
@@ -380,13 +381,13 @@ The package exposes a single CLI command: `silas`, mapped to `silas.main:cli`.
 
 ## 3. Data Models
 
-Moved to `specs/models.md` (normative reference). Contains sections `3.1` through `3.12` with full field-level contracts.
+Moved to `specs/reference/models.md` (normative reference). Contains sections `3.1` through `3.12` with full field-level contracts.
 
 ---
 
 ## 4. Protocols
 
-Moved to `specs/protocols.md` (normative reference). Contains sections `4.1` through `4.24` with full method-level contracts.
+Moved to `specs/reference/protocols.md` (normative reference). Contains sections `4.1` through `4.24` with full method-level contracts.
 
 ---
 ## 5. Core Implementations
@@ -2397,7 +2398,7 @@ The work executor MUST be created AFTER channels (it needs a channel reference f
 
 ## 13. Example Plans
 
-Moved to `specs/examples.md` (informative reference).
+Moved to `specs/reference/examples.md` (informative reference).
 
 ---
 
@@ -2408,7 +2409,7 @@ Moved to `specs/testing.md` (normative test guidance).
 ---
 ## 15. Security Model Summary
 
-Moved to `specs/security-model.md` (normative reference).
+Moved to `specs/reference/security-model.md` (normative reference).
 
 Core non-negotiables are defined as `INV-01` through `INV-06` in Section 0.8.1.
 
@@ -2428,3 +2429,249 @@ Moved to `specs/operations-roadmap.md`.
 ## 18. Roadmap
 
 Moved to `specs/operations-roadmap.md#18-roadmap`.
+
+---
+
+## 19. Agent Loop Architecture v3
+
+**Status:** Draft v3 — incorporates all v2 follow-up fixes (H1, M1-M8)
+**Extends:** §5.1 (turn pipeline), §5.2 (execution), §7 (agent specs)
+**Preserves fully:** §5.2.1 (task execution/retry/verification), §5.2.2 (project execution), §5.2.3 (goal execution), §3.6 (approval tokens), §7.2 (plan markdown format), §9 (sandbox), §0.5.1 (UI surfaces), all INV-01 through INV-05
+
+> **Note:** This section was previously maintained as a standalone addendum (`specs/agent-loop-architecture.md`). It is now integrated here as the authoritative specification for the three-agent loop design, queue infrastructure, and execution modes.
+
+### 19.0 Design Principles
+
+1. **Plans are documents.** The planner writes markdown briefings (§7.2). It does not dispatch tasks or manage execution.
+2. **The runtime owns execution lifecycle.** §5.2.1 (retry, budget, verification) stays runtime-controlled. The agent chooses tactical tool calls inside each attempt; the runtime controls attempt lifecycle.
+3. **Agents communicate via typed queues.** Each agent has an inbound queue. Messages are durable and typed.
+4. **Security invariants are runtime-enforced, never model-discretionary.** Gates, approval tokens, verification, taint — all deterministic.
+5. **Executor is stateless per-run.** Receives an ExecutionEnvelope, uses tools, returns results. No persistent history.
+6. **UI surface routing is deterministic.** Runtime routes events by type/risk policy. Agents propose intent; runtime decides surface.
+7. **Migration is incremental.** Current procedural pipeline remains; queue bus runs alongside, taking over scope by scope.
+8. **Full autonomy within approval boundaries.** The system is designed for indefinite autonomous operation. The approval system (§3.6) is the sole restriction boundary. Within approved scope, the runtime acts without human intervention — no artificial "check with human" defaults, no timeouts that require human presence. Standing approvals (§5.2.3) enable long-running autonomous operation. The self-healing cascade is: retry → consult-planner → re-plan → escalate. Each level must be exhausted before moving to the next. User escalation happens ONLY when: (a) approval is required by policy, (b) a gate blocks with `require_approval`, or (c) all automated recovery paths are exhausted.
+
+### 19.1 Architecture Overview
+
+Three agent loops + runtime bus. Each agent is a pydantic-ai `Agent` with registered tools. The Stream manages queues, lifecycle, gates, approval, and UI routing.
+
+```
+                         User
+                          │
+                    ┌─────▼──────┐
+                    │   STREAM   │
+                    │  (Runtime  │
+                    │   Bus)     │
+                    │            │
+                    │ Owns:      │
+                    │ • Queues   │
+                    │ • Gates    │  Stream ──► Review
+                    │ • Approval │  Stream ──► Activity  
+                    │ • Context  │  
+                    │ • §5.2.1   │
+                    └──┬───┬───┬─┘
+                       │   │   │
+          ┌────────────┘   │   └────────────┐
+          ▼                ▼                ▼
+    ┌──────────┐    ┌──────────┐    ┌──────────┐
+    │  PROXY   │    │ PLANNER  │    │ EXECUTOR │
+    │  Agent   │    │  Agent   │    │  Agent   │
+    │  Loop    │    │  Loop    │    │  (per    │
+    │          │    │          │    │  attempt)│
+    │ model:   │    │ model:   │    │          │
+    │ fast     │    │ deep     │    │ model:   │
+    │          │    │          │    │ capable  │
+    │ HAS      │    │ HAS      │    │          │
+    │ history  │    │ history  │    │ STATELESS│
+    │ (per     │    │ (per     │    │ per-run  │
+    │  scope)  │    │  scope)  │    │          │
+    └──────────┘    └──────────┘    └──────────┘
+```
+
+### 19.2 Queue Infrastructure
+
+#### 19.2.1 QueueMessage Contract
+
+```python
+ErrorCode = Literal[
+    "tool_failure",
+    "budget_exceeded",
+    "gate_blocked",
+    "approval_denied",
+    "verification_failed",
+    "timeout",
+]
+
+ExecutionStatus = Literal[
+    "running",
+    "done",
+    "failed",
+    "stuck",
+    "blocked",
+    "verification_failed",
+]
+
+@dataclass
+class StatusPayload:
+    status: ExecutionStatus
+    detail: str | None = None
+    attempt_number: int | None = None
+    budget_remaining_tokens: int | None = None
+    budget_remaining_usd: float | None = None
+
+@dataclass
+class ErrorPayload:
+    error_code: ErrorCode
+    retryable: bool
+    origin_agent: Literal["proxy", "planner", "executor", "runtime"]
+    attempt_number: int
+    detail: str
+
+QueuePayload = StatusPayload | ErrorPayload | dict[str, object]
+
+@dataclass
+class QueueMessage:
+    message_id: str
+    trace_id: str
+    content: str
+    sender: Literal["user", "proxy", "planner", "executor", "runtime"]
+    message_kind: Literal[
+        "user_message",
+        "plan_request",
+        "plan_result",
+        "research_request",
+        "research_result",
+        "execution_status",
+        "consult_planner",
+        "planner_guidance",
+        "replan_request",
+        "system_event",
+    ]
+    scope_id: str
+    taint: TaintLevel = TaintLevel.owner
+    task_id: str | None = None
+    parent_task_id: str | None = None
+    work_item: WorkItem | None = None
+    plan_markdown: str | None = None
+    approval_token: ApprovalToken | None = None
+    artifacts: dict[str, object] | None = None
+    constraints: ResearchConstraints | None = None
+    payload: QueuePayload | None = None
+    error_code: ErrorCode | None = None
+    retryable: bool | None = None
+    origin_agent: Literal["proxy", "planner", "executor", "runtime"] | None = None
+    attempt_number: int | None = None
+    urgency: Literal["background", "informational", "needs_attention"] = "informational"
+    created_at: datetime = field(default_factory=utc_now)
+
+@dataclass
+class ResearchConstraints:
+    return_format: str
+    max_tokens: int = 500
+    tools_allowed: list[str] = field(default_factory=lambda: ["web_search", "read_file", "memory_search"])
+```
+
+Normative payload contract:
+
+- `message_kind=execution_status` MUST carry `payload=StatusPayload`.
+- Non-status error events MUST carry `payload=ErrorPayload`.
+- Any error-bearing message MUST set normalized headers: `error_code`, `retryable`, `origin_agent`, `attempt_number`.
+- `trace_id` MUST be copied unchanged across all derived messages for full-hop tracing.
+
+#### 19.2.2 Durable Queue Store
+
+Queues are backed by SQLite for crash recovery with lease semantics (`enqueue`, `lease`, `heartbeat`, `ack`, `nack`, `dead_letter`, `has_processed`, `mark_processed`). On startup: re-queue any messages in 'leased' state (crash recovery).
+
+#### 19.2.3 Idempotency + Replay Contract (normative)
+
+1. `message_id` is the idempotency key for queue delivery.
+2. Every consumer MUST call `has_processed(consumer_name, message_id)` before side effects.
+3. If already processed: consumer MUST `ack` and return without re-running side effects.
+4. Tool calls are NOT assumed idempotent. On re-delivery, runtime MUST start a fresh attempt.
+
+#### 19.2.4 Queue Routing Rules
+
+| Source | Destination | message_kind | Trigger |
+|--------|------------|-------------|---------|
+| User | proxy_queue | `user_message` | WebSocket message arrives |
+| Proxy | planner_queue | `plan_request` | Proxy routes to planner |
+| Planner | proxy_queue | `plan_result` | Planner finished plan |
+| Planner | executor_queue | `research_request` | Planner needs research |
+| Executor | planner_queue | `research_result` | Research micro-task done |
+| Runtime | proxy_queue | `execution_status` | Work item status change |
+| Runtime | planner_queue | `consult_planner` | Executor stuck (on_stuck) |
+| Planner | runtime_queue | `planner_guidance` | Revised briefing for stuck executor |
+| Runtime | planner_queue | `replan_request` | Auto re-plan after full exhaustion |
+
+### 19.3 Proxy Agent Loop
+
+- **Model:** `models.proxy` (fast/cheap)
+- **Output type:** `RouteDecision`
+- **History:** Per-scope, managed via `ContextManager.render()`
+- **Tools:** `memory_search`, `context_inspect`, `web_search` (read-only), `tell_user`
+
+The proxy gets a tool loop via pydantic-ai. Before producing its `RouteDecision`, it can call tools to gather information. No delegation tools — routing to planner happens via the `RouteDecision` output.
+
+### 19.4 Planner Agent Loop
+
+- **Model:** `models.planner` (deep reasoning)
+- **Output type:** `AgentResponse` with `plan_action.plan_markdown` (§7.2 format)
+- **History:** Per-scope, per-plan
+- **Tools:** `request_research` (non-blocking delegation to executor), `memory_search`, `validate_plan`
+
+The planner delegates fact-finding to executor micro-tasks via `request_research`. Research flow is non-blocking and queue-driven (see §19.4.1).
+
+#### 19.4.1 Planner Research State Machine (normative)
+
+States: `planning` → `awaiting_research` → `ready_to_finalize` (or `expired`).
+
+Controls: max in-flight 3, max rounds 5, per-request timeout 120s, dedupe by hash, forced finalize on cap exhaustion.
+
+#### 19.4.2 Re-Plan Handling
+
+When planner receives `replan_request`: produce a revised plan with a different approach (max depth 2, configurable). If no viable alternative exists, emit failure and escalate to user.
+
+### 19.5 Executor Agent Loop
+
+- **Model:** `models.executor` (cost-optimized, tool-capable)
+- **Output type:** `ExecutorAgentOutput`
+- **History:** NONE — stateless per-run
+
+#### 19.5.1 Research Mode (read-only)
+
+Triggered by `research_request`. Tools clamped to `RESEARCH_TOOL_ALLOWLIST` at runtime (not prompt-enforced). No approval token required. Preserves INV-01.
+
+#### 19.5.2 Execution Mode (full tools)
+
+Triggered by approved WorkItem dispatch. Runtime owns the attempt lifecycle (§5.2.1). The agent decides tool calls within an attempt; the runtime controls retry, verification, budget, and escalation.
+
+#### 19.5.3 Consult-Planner Suspend/Resume Contract (normative)
+
+On stuck: runtime suspends, enqueues `consult_planner`, waits for `planner_guidance` (90s timeout), resumes with guidance. If all attempts + consult exhausted → automatic re-plan → if that fails → escalate to user.
+
+### 19.6 Runtime Responsibilities
+
+The existing 16-step turn pipeline stays. Changes: step 7 (proxy/planner get tool loops), step 12 (queue-based dispatch). All gate enforcement points preserved.
+
+### 19.7 Parallel Execution
+
+Executor pool (max 8 per-scope, 16 global), conflict detection, artifact merge via explicit `input_artifacts_from`, git-worktree isolation for parallel executors.
+
+### 19.8 Tooling Layer: pydantic-ai-backend
+
+All agents use pydantic-ai-backend for base tooling and sandbox. Agent-to-backend mapping:
+
+| Agent | Mode | Backend | Permission Preset |
+|-------|------|---------|-------------------|
+| Proxy | — | `LocalBackend(read-only)` | `READONLY_RULESET` |
+| Planner | — | `LocalBackend(read-only)` | `READONLY_RULESET` |
+| Executor | research | `LocalBackend(read-only)` | `READONLY_RULESET` |
+| Executor | execution | `DockerSandbox` | `DEFAULT_RULESET` |
+
+### 19.9 Migration Plan
+
+Incremental phases 0–5 with feature flags, from queue infrastructure (no behavior change) through full integration (remove procedural fallback).
+
+### 19.10 What This Section Does NOT Change
+
+§5.1 steps 0-6/8-16, §5.2.1 execution lifecycle, §5.2.2/§5.2.3 project/goal execution, §3.6 approval tokens, §7.2 plan format, §9 sandbox, §0.5.1 UI surfaces, §5.3 verification, INV-01 through INV-05, toolset wrapper chain.

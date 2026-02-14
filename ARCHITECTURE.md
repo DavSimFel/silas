@@ -174,4 +174,3 @@ Delivery guarantees:
 | `silas/core/stream.py` | Turn processing pipeline |
 | `silas/core/turn_context.py` | Per-turn state |
 | `specs/` | Full behavioral contracts |
-| `STATUS.md` | Implementation status + work items |

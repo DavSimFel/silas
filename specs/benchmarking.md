@@ -1,3 +1,5 @@
+> **⚠️ Future / Not Yet Implemented:** The eviction feedback loop (§19) and benchmarking framework (§20) described below are design specs for future work. None of this is implemented yet.
+
 ## 19. Context Eviction Feedback Loop
 
 ### 19.1 Architecture
@@ -88,7 +90,7 @@ Each variant must be evaluated on the benchmarking harness (§20) using context 
 See §20.4 for integration with the benchmarking framework.
 
 
-## 20. Agent & Skill Benchmarking
+## 20. Agent & Skill Benchmarking — Future / Not Yet Implemented
 
 ### 20.1 Overview
 

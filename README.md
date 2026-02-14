@@ -91,6 +91,15 @@ Strict ruff configuration with:
 5. `dev → main`: requires human approval
 6. Delete feature branches after merge
 
+## Understanding Silas
+
+New here? Read in this order:
+
+1. **This README** — overview and setup
+2. **[ARCHITECTURE.md](ARCHITECTURE.md)** — how the three-agent system works
+3. **[CONTRIBUTING.md](CONTRIBUTING.md)** — how to contribute
+4. **[specs/](specs/README.md)** — detailed behavioral specifications and reference material
+
 ## Status
 
 **Phase**: Pre-migration (core runtime built, integration testing next)
