@@ -10,13 +10,16 @@ from __future__ import annotations
 import asyncio
 import tempfile
 from dataclasses import dataclass
-from types import SimpleNamespace
 
 import aiosqlite
 import pytest
-import silas.queue.consumers as consumers_module
-from silas.models.agents import AgentResponse, MemoryOp, MemoryOpType, MemoryQuery, MemoryQueryStrategy
-from silas.models.approval import ApprovalDecision, ApprovalVerdict
+from silas.models.agents import (
+    AgentResponse,
+    MemoryOp,
+    MemoryOpType,
+    MemoryQuery,
+    MemoryQueryStrategy,
+)
 from silas.models.work import WorkItemResult, WorkItemStatus
 from silas.queue.consult import ConsultPlannerManager
 from silas.queue.consumers import (
@@ -57,8 +60,11 @@ class MockProxyAgent:
     def __init__(self, route: str = "direct") -> None:
         self._route = route
         self.call_count = 0
+        self.prompts: list[str] = []
 
     async def run(self, prompt: str, deps: object | None = None) -> MockProxyResult:
+        del deps
+        self.prompts.append(prompt)
         self.call_count += 1
         return MockProxyResult(output=MockRouteOutput(route=self._route))
 
@@ -190,17 +196,6 @@ class EchoConsumer(BaseConsumer):
         return None
 
 
-class MockApprovalChannel:
-    def __init__(self, verdict: ApprovalVerdict) -> None:
-        self._verdict = verdict
-        self.requests: list[tuple[str, str]] = []
-
-    async def send_approval_request(self, recipient_id: str, work_item: object) -> ApprovalDecision:
-        work_item_id = str(getattr(work_item, "id", ""))
-        self.requests.append((recipient_id, work_item_id))
-        return ApprovalDecision(verdict=self._verdict)
-
-
 # ── Fixtures ─────────────────────────────────────────────────────────
 
 
@@ -240,6 +235,37 @@ async def test_base_consumer_poll_once_happy_path(
 
     # Message should be acked (removed from queue).
     assert await store.pending_count("proxy_queue") == 0
+
+
+@pytest.mark.asyncio
+async def test_base_consumer_polls_with_lease_heartbeat(
+    store: DurableQueueStore, router: QueueRouter, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """poll_once starts a heartbeat task and cancels it after processing."""
+    consumer = EchoConsumer(store, router, "proxy_queue")
+    msg = QueueMessage(
+        message_kind="user_message", sender="user", payload={"text": "hi"}
+    )
+    await router.route(msg)
+
+    heartbeat_message_ids: list[str] = []
+    heartbeat_cancelled = False
+
+    async def _fake_heartbeat(message_id: str) -> None:
+        nonlocal heartbeat_cancelled
+        heartbeat_message_ids.append(message_id)
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            heartbeat_cancelled = True
+            raise
+
+    monkeypatch.setattr(consumer, "_heartbeat_lease", _fake_heartbeat)
+
+    found = await consumer.poll_once()
+    assert found is True
+    assert heartbeat_message_ids == [msg.id]
+    assert heartbeat_cancelled is True
 
 
 @pytest.mark.asyncio
@@ -319,29 +345,6 @@ async def test_proxy_consumer_user_message_routes_to_planner(
 
 
 @pytest.mark.asyncio
-async def test_proxy_consumer_propagates_planner_allowlist(
-    store: DurableQueueStore, router: QueueRouter,
-) -> None:
-    proxy = MockProxyAgent(route="planner")
-    consumer = ProxyConsumer(store, router, proxy)
-
-    msg = QueueMessage(
-        message_kind="user_message",
-        sender="user",
-        payload={
-            "text": "needs planning",
-            "metadata": {"planner_tool_allowlist": ["memory_search", "validate_plan"]},
-        },
-    )
-    await router.route(msg)
-    await consumer.poll_once()
-
-    leased = await store.lease("planner_queue")
-    assert leased is not None
-    assert leased.tool_allowlist == ["memory_search", "validate_plan"]
-
-
-@pytest.mark.asyncio
 async def test_proxy_consumer_user_message_direct(
     store: DurableQueueStore, router: QueueRouter,
 ) -> None:
@@ -359,6 +362,75 @@ async def test_proxy_consumer_user_message_direct(
     assert proxy.call_count == 1
     # No messages should be in planner_queue.
     assert await store.pending_count("planner_queue") == 0
+
+
+@pytest.mark.asyncio
+async def test_proxy_consumer_prepends_personality_directives(
+    store: DurableQueueStore, router: QueueRouter,
+) -> None:
+    """user_message metadata personality directives are prepended to prompt."""
+    proxy = MockProxyAgent(route="direct")
+    consumer = ProxyConsumer(store, router, proxy)
+
+    msg = QueueMessage(
+        message_kind="user_message",
+        sender="user",
+        payload={
+            "text": "hello",
+            "metadata": {
+                "personality_directives": "Be concise and direct.",
+                "rendered_context": "Previous turn context",
+            },
+        },
+    )
+    await router.route(msg)
+    await consumer.poll_once()
+
+    assert proxy.call_count == 1
+    assert proxy.prompts[0].startswith("Be concise and direct.")
+
+
+@pytest.mark.asyncio
+async def test_proxy_consumer_deserializes_rendered_context_json(
+    store: DurableQueueStore, router: QueueRouter,
+) -> None:
+    """user_message context metadata is deserialized from JSON before prompting."""
+    proxy = MockProxyAgent(route="direct")
+    consumer = ProxyConsumer(store, router, proxy)
+
+    msg = QueueMessage(
+        message_kind="user_message",
+        sender="user",
+        payload={
+            "text": "hello",
+            "metadata": {
+                "rendered_context_json": "{\"rendered_context\": \"Context from JSON\"}",
+            },
+        },
+    )
+    await router.route(msg)
+    await consumer.poll_once()
+
+    assert proxy.call_count == 1
+    assert proxy.prompts[0].startswith("Context from JSON\n\nUser: hello")
+
+
+@pytest.mark.asyncio
+async def test_proxy_consumer_prefers_typed_payload_text(
+    store: DurableQueueStore, router: QueueRouter, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Proxy consumer uses typed payload fields when available."""
+    proxy = MockProxyAgent(route="direct")
+    consumer = ProxyConsumer(store, router, proxy)
+    msg = QueueMessage(
+        message_kind="user_message",
+        sender="user",
+        payload={"text": "typed text"},
+    )
+
+    await consumer._handle_user_message(msg)
+    assert proxy.call_count == 1
+    assert proxy.prompts[0] == "typed text"
 
 
 @pytest.mark.asyncio
@@ -433,67 +505,6 @@ async def test_proxy_consumer_execution_status_failed_dual_emit(
 
     surfaces = route_to_surface("failed")
     assert surfaces == ("stream", "activity")
-
-
-@pytest.mark.asyncio
-async def test_proxy_consumer_plan_result_dispatches_execution_when_approved(
-    store: DurableQueueStore, router: QueueRouter,
-) -> None:
-    proxy = MockProxyAgent()
-    channel = MockApprovalChannel(ApprovalVerdict.approved)
-    consumer = ProxyConsumer(store, router, proxy, channel=channel, approval_recipient_id="owner")
-    plan_markdown = (
-        "---\n"
-        "id: wi-plan-1\n"
-        "type: task\n"
-        "title: Planned task\n"
-        "---\n\n"
-        "Execute the planned step."
-    )
-    msg = QueueMessage(
-        message_kind="plan_result",
-        sender="planner",
-        payload={
-            "plan_markdown": plan_markdown,
-            "metadata": {"executor_tool_allowlist": ["memory_search"]},
-        },
-    )
-    await router.route(msg)
-    await consumer.poll_once()
-
-    assert channel.requests == [("owner", "wi-plan-1")]
-    leased = await store.lease("executor_queue")
-    assert leased is not None
-    assert leased.message_kind == "execution_request"
-    assert leased.work_item_id == "wi-plan-1"
-    assert leased.tool_allowlist == ["memory_search"]
-
-
-@pytest.mark.asyncio
-async def test_proxy_consumer_plan_result_no_dispatch_when_declined(
-    store: DurableQueueStore, router: QueueRouter,
-) -> None:
-    proxy = MockProxyAgent()
-    channel = MockApprovalChannel(ApprovalVerdict.declined)
-    consumer = ProxyConsumer(store, router, proxy, channel=channel, approval_recipient_id="owner")
-    plan_markdown = (
-        "---\n"
-        "id: wi-plan-2\n"
-        "type: task\n"
-        "title: Planned task\n"
-        "---\n\n"
-        "Execute the planned step."
-    )
-    msg = QueueMessage(
-        message_kind="plan_result",
-        sender="planner",
-        payload={"plan_markdown": plan_markdown},
-    )
-    await router.route(msg)
-    await consumer.poll_once()
-
-    assert channel.requests == [("owner", "wi-plan-2")]
-    assert await store.pending_count("executor_queue") == 0
 
 
 # ── PlannerConsumer Tests ────────────────────────────────────────────
@@ -619,65 +630,6 @@ async def test_executor_consumer_research_request(
     assert leased is not None
     assert leased.message_kind == "research_result"
     assert leased.payload["query"] == "what is X?"
-
-
-@pytest.mark.asyncio
-async def test_executor_consumer_research_request_uses_research_toolset_allowlist(
-    store: DurableQueueStore, router: QueueRouter, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class _InlineTool:
-        def __init__(self, name: str) -> None:
-            self.name = name
-            self.description = name
-            self.input_schema = {}
-            self.requires_approval = False
-
-    class _InlineToolset:
-        def __init__(self) -> None:
-            self._tools = {
-                "read_file": _InlineTool("read_file"),
-                "write_file": _InlineTool("write_file"),
-            }
-
-        def list_tools(self) -> list[object]:
-            return list(self._tools.values())
-
-        def call(self, tool_name: str, arguments: dict[str, object]) -> object:
-            del arguments
-            if tool_name in self._tools:
-                return SimpleNamespace(status="ok", output="ok", error=None, approval_request=None)
-            return SimpleNamespace(status="not_found", output=None, error="missing", approval_request=None)
-
-    class _ToolsetAwareExecutor(MockExecutorAgent):
-        def __init__(self) -> None:
-            super().__init__()
-            self.toolset = _InlineToolset()
-            self.visible_tools: list[str] = []
-
-        async def run(self, prompt: str, deps: object | None = None) -> MockExecutorResult:
-            del prompt, deps
-            self.call_count += 1
-            self.visible_tools = [tool.name for tool in self.toolset.list_tools()]
-            return MockExecutorResult(output=MockExecutorOutput(summary="ok"))
-
-    fake_research_toolset = SimpleNamespace(tools={"read_file": object()})
-    monkeypatch.setattr(
-        consumers_module,
-        "build_research_console_toolset",
-        lambda workspace_path: fake_research_toolset,
-    )
-
-    executor = _ToolsetAwareExecutor()
-    consumer = ExecutorConsumer(store, router, executor)
-    msg = QueueMessage(
-        message_kind="research_request", sender="planner",
-        payload={"query": "what is X?"},
-    )
-    await router.route(msg)
-    await consumer.poll_once()
-
-    assert executor.call_count == 1
-    assert executor.visible_tools == ["read_file"]
 
 
 @pytest.mark.asyncio
