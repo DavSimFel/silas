@@ -1100,14 +1100,14 @@ async def test_process_turn_via_queue_dispatches_personality_metadata() -> None:
 
 @pytest.mark.asyncio
 async def test_process_turn_via_queue_uses_configured_queue_timeout() -> None:
-    """Queue response timeout comes from settings.queue_timeout_s."""
+    """Queue response timeout comes from settings.queue_bridge_timeout_s."""
     bridge = _StubQueueBridge("ok from queue")
     stream = Stream(
         channel=InMemoryChannel(),
         turn_context=TurnContext(
             scope_id="owner",
             proxy=FakeModel(),
-            config=SimpleNamespace(queue_timeout_s=7.5),
+            config=SimpleNamespace(queue_bridge_timeout_s=7.5),
         ),
         owner_id="owner",
         default_context_profile="conversation",

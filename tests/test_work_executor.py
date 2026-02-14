@@ -1304,3 +1304,42 @@ async def test_planner_budget_exhausted_audit_event(
 
     event_names = audit.event_names()
     assert "consult_planner_budget_exhausted" in event_names
+
+
+@pytest.mark.asyncio
+async def test_consult_charges_plan_budget_not_work_item_budget(
+    work_store: InMemoryWorkItemStore,
+    skill_registry: SkillRegistry,
+    skill_executor: SkillExecutor,
+) -> None:
+    """Planner consult usage must be tracked on the plan aggregate budget."""
+    _register_skill(skill_registry, "always_fail")
+
+    async def _always_fail(_inputs: dict[str, object]) -> dict[str, object]:
+        raise RuntimeError("boom")
+
+    skill_executor.register_handler("always_fail", _always_fail)
+
+    consult_manager = _StubConsultPlannerManager(guidance=None)
+    replan_manager = _StubReplanManager(enqueued=True)
+    work_executor = LiveWorkItemExecutor(
+        skill_executor=skill_executor,
+        work_item_store=work_store,
+        approval_verifier=_StubApprovalVerifier(valid=True, reason="ok"),
+        consult_manager=consult_manager,
+        replan_manager=replan_manager,
+    )
+
+    item = _work_item(
+        "task-plan-budget-only",
+        skills=["always_fail"],
+        budget=Budget(max_attempts=1, max_planner_calls=2),
+    )
+
+    result = await work_executor.execute(item)
+
+    assert result.status == WorkItemStatus.stuck
+    assert result.budget_used.planner_calls == 1
+    loaded = await work_store.get("task-plan-budget-only")
+    assert loaded is not None
+    assert loaded.budget_used.planner_calls == 0

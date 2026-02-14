@@ -5,7 +5,7 @@ from silas.tools.backends import (
     build_readonly_console_toolset,
     build_research_console_toolset,
 )
-from silas.tools.common import AgentDeps, MemoryRetriever, WebSearchProvider
+from silas.tools.common import AgentDeps, MemorySearchProvider, WebSearchProvider
 from silas.tools.filtered import FilteredToolset
 from silas.tools.prepared import PreparedToolset
 from silas.tools.resolver import LiveSkillResolver, SkillResolver
@@ -36,7 +36,7 @@ __all__ = [
     "FilteredToolset",
     "FunctionToolset",
     "LiveSkillResolver",
-    "MemoryRetriever",
+    "MemorySearchProvider",
     "PendingApprovalCall",
     "PreparedToolset",
     "SkillResolver",

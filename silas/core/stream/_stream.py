@@ -814,10 +814,17 @@ class Stream(
                 "rendered_context_json": json.dumps({"rendered_context": rendered_context}),
             },
         )
+        queue_timeout_s = self._queue_timeout_seconds()
         queue_response = await self.queue_bridge.collect_response(
             trace_id=turn_id,
-            timeout_s=self._queue_timeout_seconds(),
+            timeout_s=queue_timeout_s,
         )
+        if queue_response is None:
+            logger.warning(
+                "queue_bridge_response_timeout trace_id=%s timeout_s=%.1f",
+                turn_id,
+                queue_timeout_s,
+            )
         queue_text = ""
         if queue_response is not None:
             queue_text = str(queue_response.payload.get("text", ""))

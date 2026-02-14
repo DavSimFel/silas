@@ -158,13 +158,19 @@ class SilasSettings(BaseSettings):
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     output_gates: list[Gate] = Field(default_factory=list)
-    queue_timeout_s: float = 120.0
+    queue_bridge_timeout_s: float = 120.0
+    # Backward-compatible alias; prefer queue_bridge_timeout_s.
+    queue_timeout_s: float | None = None
 
     model_config = SettingsConfigDict(
         env_prefix="SILAS_",
         env_nested_delimiter="__",
         extra="ignore",
     )
+
+
+# Backward-compatible alias used by older call-sites/docs.
+SilasConfig = SilasSettings
 
 
 def _coerce_env_value(value: str) -> object:
@@ -219,6 +225,7 @@ __all__ = [
     "ContextConfig",
     "ExecutionConfig",
     "ModelsConfig",
+    "SilasConfig",
     "SilasSettings",
     "StreamConfig",
     "WebChannelConfig",

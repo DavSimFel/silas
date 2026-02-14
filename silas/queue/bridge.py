@@ -114,7 +114,7 @@ class QueueBridge:
     async def collect_response(
         self,
         trace_id: str,
-        timeout_s: float = 30.0,
+        timeout_s: float = 120.0,
     ) -> QueueMessage | None:
         """Poll proxy_queue for an agent_response matching the given trace_id.
 
