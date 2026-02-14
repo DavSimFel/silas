@@ -9,8 +9,7 @@ import pytest
 import yaml
 from click.testing import CliRunner
 from silas.main import cli
-from silas.secrets import PassphraseBackend
-from silas.secrets import SecretStore
+from silas.secrets import PassphraseBackend, SecretStore
 
 # ---------------------------------------------------------------------------
 # CLI onboarding tests

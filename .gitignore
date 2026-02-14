@@ -34,3 +34,6 @@ data/.secrets.enc
 GAP_ANALYSIS.md
 GAP_ANALYSIS_V2.md
 data/
+.signing-passphrase
+.web-auth-token
+config/silas-staging.yaml
