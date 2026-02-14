@@ -209,13 +209,12 @@ class TestLiveApprovalManager:
         assert manager.list_pending() == []
 
     def test_timeout_prunes_expired_pending_approval(self) -> None:
-        # Use a tiny positive timeout so the token is valid at creation but expires almost instantly
-        manager = LiveApprovalManager(timeout=timedelta(milliseconds=1))
+        # Create with normal timeout, then force expiry by back-dating (#277).
+        manager = LiveApprovalManager(timeout=timedelta(minutes=10))
         token = manager.request_approval(_work_item("wi-expired"), ApprovalScope.full_plan)
 
-        import time
-
-        time.sleep(0.01)  # ensure expiry
+        # Force the token into the past — no sleep needed.
+        token.expires_at = _utc_now() - timedelta(seconds=1)
 
         assert token.expires_at <= _utc_now()
         # After expiry, check_approval and list_pending should prune

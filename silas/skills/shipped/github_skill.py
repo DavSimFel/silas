@@ -10,14 +10,70 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import subprocess
 from pathlib import Path
+from typing import Protocol
 
 from silas.models.skills import SkillDefinition
 
 # ---------------------------------------------------------------------------
+# Sandbox executor protocol (issue #274)
+# ---------------------------------------------------------------------------
+
+# TODO(#274): The ideal fix is to route all subprocess calls through the
+# sandbox manager (SubprocessSandboxManager or equivalent). This protocol
+# is the first step — callers can inject a sandbox-aware executor at
+# registration time. Until then, _run() falls back to direct subprocess.
+
+
+class CommandExecutor(Protocol):
+    """Protocol for running shell commands, enabling sandbox injection."""
+
+    def __call__(
+        self,
+        cmd: list[str],
+        *,
+        cwd: str | None = None,
+        check: bool = True,
+    ) -> dict[str, object]: ...
+
+
+# ---------------------------------------------------------------------------
+# Input validation (issue #274)
+# ---------------------------------------------------------------------------
+
+# Allowlist of commands that this skill is permitted to execute.
+_ALLOWED_COMMANDS = frozenset({"gh", "git"})
+
+# Reject arguments containing shell metacharacters that could enable injection.
+_SHELL_META_RE = re.compile(r"[;&|`$(){}]")
+
+
+def _validate_cmd(cmd: list[str]) -> str | None:
+    """Return an error string if *cmd* looks unsafe, else None."""
+    if not cmd:
+        return "empty command"
+    if cmd[0] not in _ALLOWED_COMMANDS:
+        return f"command not in allowlist: {cmd[0]}"
+    for arg in cmd:
+        if _SHELL_META_RE.search(arg):
+            return f"shell metacharacter in argument: {arg!r}"
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Subprocess helpers
 # ---------------------------------------------------------------------------
+
+# Module-level executor — overridden via set_command_executor() for sandboxing.
+_command_executor: CommandExecutor | None = None
+
+
+def set_command_executor(executor: CommandExecutor) -> None:
+    """Inject a sandbox-aware command executor for all github_skill calls."""
+    global _command_executor
+    _command_executor = executor
 
 
 def _run(
@@ -26,7 +82,21 @@ def _run(
     cwd: str | None = None,
     check: bool = True,
 ) -> dict[str, object]:
-    """Run *cmd* and return structured result or error."""
+    """Run *cmd* and return structured result or error.
+
+    If a :class:`CommandExecutor` was injected via :func:`set_command_executor`,
+    it is used instead of raw :func:`subprocess.run`.
+    """
+    validation_error = _validate_cmd(cmd)
+    if validation_error:
+        return {"error": validation_error, "returncode": -1}
+
+    if _command_executor is not None:
+        return _command_executor(cmd, cwd=cwd, check=check)
+
+    # TODO(#274): This direct subprocess.run bypasses the sandbox.
+    # Wire set_command_executor() from the app boot path to route through
+    # SubprocessSandboxManager instead.
     try:
         proc = subprocess.run(
             cmd,

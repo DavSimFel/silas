@@ -6,7 +6,9 @@ They will be replaced by real implementations in Phase 1b.
 
 from __future__ import annotations
 
+import os
 import uuid
+import warnings
 from dataclasses import dataclass, field
 
 
@@ -15,6 +17,16 @@ class InMemoryAuditLog:
     """In-memory audit log stub. No hash chaining, no persistence."""
 
     events: list[dict[str, object]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if os.environ.get("SILAS_TESTING") != "1":
+            warnings.warn(
+                "InMemoryAuditLog is a stub for testing only. "
+                "Use SQLiteAuditLog in production. "
+                "Set SILAS_TESTING=1 to suppress this warning.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
     async def log(self, event: str, **data: object) -> str:
         event_id = uuid.uuid4().hex

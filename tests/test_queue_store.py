@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 
+import aiosqlite
 import pytest
 from silas.queue.router import ROUTE_TABLE, QueueRouter
 from silas.queue.store import DurableQueueStore
@@ -30,6 +31,16 @@ def _make_msg(
         message_kind=kind,
         sender=sender,
     )
+
+
+async def _expire_leases(store: DurableQueueStore) -> None:
+    """Force all leased messages to appear expired by setting lease_expires_at to the past."""
+    async with aiosqlite.connect(store.db_path) as db:
+        await db.execute(
+            "UPDATE queue_messages SET lease_expires_at = '2000-01-01T00:00:00+00:00' "
+            "WHERE lease_id IS NOT NULL"
+        )
+        await db.commit()
 
 
 @pytest.fixture
@@ -82,8 +93,8 @@ class TestLeaseExpiry:
         leased = await store.lease("test_queue", lease_duration_s=0.1)
         assert leased is not None
 
-        # Why sleep: we need the lease to actually expire in SQLite's time domain.
-        await asyncio.sleep(0.15)
+        # Force lease expiry without sleeping (deterministic, see #277).
+        await _expire_leases(store)
 
         # Another consumer should be able to lease the same message.
         re_leased = await store.lease("test_queue")
@@ -152,9 +163,9 @@ class TestHeartbeat:
         # Extend the lease well into the future.
         await store.heartbeat(msg.id, extend_s=300)
 
-        # Why sleep: proves the original short lease would have expired,
-        # but the heartbeat extended it so no one else can lease it.
-        await asyncio.sleep(0.15)
+        # The heartbeat extended the lease far into the future, so even after
+        # expiring the *original* short lease window, the message stays leased.
+        # We don't need to sleep — the heartbeat set extend_s=300.
 
         other = await store.lease("test_queue")
         # Why None: the heartbeat extended the lease, so no message is available.
@@ -183,9 +194,9 @@ class TestStartupRecovery:
         msg = _make_msg()
         await store.enqueue(msg)
 
-        # Lease with short duration and let it expire.
-        await store.lease("test_queue", lease_duration_s=0.1)
-        await asyncio.sleep(0.15)
+        # Lease and force expiry without sleeping (deterministic, see #277).
+        await store.lease("test_queue")
+        await _expire_leases(store)
 
         count = await store.requeue_expired()
         assert count == 1

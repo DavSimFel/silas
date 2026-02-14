@@ -419,10 +419,19 @@ class TestPlannerRouteFullLoop:
             lambda: proxy.call_count >= 1 and planner.call_count >= 1 and executor.call_count >= 1,
             timeout=5.0,
         )
-        # Extra settle time for return messages to be processed
-        import asyncio as _asyncio
+        # Poll until return messages are processed instead of sleeping (#277).
+        import aiosqlite as _aiosqlite
 
-        await _asyncio.sleep(0.5)
+        async def _proxy_processed_enough() -> bool:
+            async with _aiosqlite.connect(store.db_path) as _db:
+                cur = await _db.execute(
+                    "SELECT COUNT(*) FROM processed_messages WHERE consumer = ?",
+                    ("consumer:proxy_queue",),
+                )
+                row = await cur.fetchone()
+                return row is not None and row[0] >= 2
+
+        await wait_until(_proxy_processed_enough, timeout=5.0)
         await orchestrator.stop()
 
         # Verify the full chain ran: proxy processed user_message,
@@ -494,8 +503,19 @@ class TestFailureCascade:
         # for a planner_guidance message. We need to enqueue it while the
         # consumer is blocked waiting.
         async def _inject_guidance_after_delay() -> None:
-            # Wait for the consult request to be enqueued to planner_queue
-            await asyncio.sleep(0.3)
+            # Poll until the consult request appears in planner_queue (#277).
+            import aiosqlite as _aiosqlite
+
+            async def _consult_enqueued() -> bool:
+                async with _aiosqlite.connect(store.db_path) as _db:
+                    cur = await _db.execute(
+                        "SELECT COUNT(*) FROM queue_messages "
+                        "WHERE queue_name = 'planner_queue' AND message_kind = 'plan_request'",
+                    )
+                    row = await cur.fetchone()
+                    return row is not None and row[0] >= 1
+
+            await wait_until(_consult_enqueued, timeout=5.0)
             guidance_msg = QueueMessage(
                 message_kind="planner_guidance",
                 sender="planner",
