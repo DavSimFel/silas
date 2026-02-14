@@ -20,12 +20,6 @@ dependencies = [
   "pynacl>=1.5",
   "cryptography>=43",
   "keyring>=25.2",
-  "pytest>=8.3",
-  "pytest-asyncio>=0.24",
-  "pytest-timeout>=2.3",
-  "pytest-split>=0.10",
-  "pyright>=1.1.397",
-  "ruff>=0.6",
   "aiosqlite>=0.22.1",
   "apscheduler>=3.11,<4",
   "pydantic-ai-backend>=0.1.6",
@@ -33,6 +27,16 @@ dependencies = [
 
 [project.optional-dependencies]
 guardrails = ["guardrails-ai"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "pytest-timeout>=2.3",
+  "pytest-split>=0.10",
+  "pyright>=1.1.397",
+  "ruff>=0.6",
+]
 
 [project.scripts]
 silas = "silas.main:cli"
