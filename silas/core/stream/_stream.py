@@ -526,7 +526,7 @@ class Stream(
     # ── Turn Processing ────────────────────────────────────────────────
 
     async def _process_turn(self, message: ChannelMessage, connection_id: str = "owner") -> str:
-        from silas.core.metrics import TURNS_TOTAL, TURN_DURATION_SECONDS
+        from silas.core.metrics import TURN_DURATION_SECONDS, TURNS_TOTAL
 
         processor = self._get_or_create_turn_processor(connection_id)
         lock = self._connection_locks.setdefault(processor.connection_key, asyncio.Lock())

@@ -31,7 +31,7 @@ def init_tracing(
     If endpoint is None or empty, returns a no-op provider so callers
     don't need conditional logic.
     """
-    global _tracer_provider  # noqa: PLW0603
+    global _tracer_provider
 
     if not endpoint:
         provider = NoOpTracerProvider()

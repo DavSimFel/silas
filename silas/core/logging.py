@@ -59,7 +59,7 @@ def _current_otel_trace_id() -> str:
         ctx = span.get_span_context()
         if ctx and ctx.trace_id:
             return format(ctx.trace_id, "032x")
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: S110
         pass
     return ""
 

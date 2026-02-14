@@ -20,9 +20,8 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from silas.core.telemetry import get_tracer
-
 from silas.core.plan_parser import MarkdownPlanParser
+from silas.core.telemetry import get_tracer
 from silas.models.approval import ApprovalVerdict
 from silas.models.work import WorkItem, WorkItemResult
 from silas.protocols.work import WorkItemExecutor
