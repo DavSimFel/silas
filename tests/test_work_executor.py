@@ -122,7 +122,9 @@ class _StubApprovalVerifier:
 
 
 class _StubVerificationRunner:
-    def __init__(self, *, all_passed: bool = True, fail_reason: str = "verification failed") -> None:
+    def __init__(
+        self, *, all_passed: bool = True, fail_reason: str = "verification failed"
+    ) -> None:
         self._all_passed = all_passed
         self._fail_reason = fail_reason
         self.run_calls: list[list[VerificationCheck]] = []
@@ -206,7 +208,9 @@ class _StubReplanManager:
 
 
 class _StubGateRunner:
-    def __init__(self, *, block_on_tool_call: bool = False, block_after_step: int | None = None) -> None:
+    def __init__(
+        self, *, block_on_tool_call: bool = False, block_after_step: int | None = None
+    ) -> None:
         self._block_on_tool_call = block_on_tool_call
         self._block_after_step = block_after_step
         self.on_tool_call_checks: list[dict[str, object]] = []
@@ -223,7 +227,13 @@ class _StubGateRunner:
             self.on_tool_call_checks.append(dict(context))
             if self._block_on_tool_call:
                 return (
-                    [type("_GateResult", (), {"action": "block", "gate_name": "tool-call", "reason": "blocked"})()],
+                    [
+                        type(
+                            "_GateResult",
+                            (),
+                            {"action": "block", "gate_name": "tool-call", "reason": "blocked"},
+                        )()
+                    ],
                     [],
                     context,
                 )
@@ -239,7 +249,13 @@ class _StubGateRunner:
         self.after_step_checks.append((step_index, dict(context)))
         if self._block_after_step is not None and step_index >= self._block_after_step:
             return (
-                [type("_GateResult", (), {"action": "block", "gate_name": "after-step", "reason": "blocked"})()],
+                [
+                    type(
+                        "_GateResult",
+                        (),
+                        {"action": "block", "gate_name": "after-step", "reason": "blocked"},
+                    )()
+                ],
                 [],
                 context,
             )
@@ -590,7 +606,9 @@ async def test_done_dependency_not_reexecuted(
     done_dep = _work_item("task-a", skills=["skill_a"], status=WorkItemStatus.done)
     await work_store.save(done_dep)
 
-    result = await work_executor.execute(_work_item("task-b", skills=["skill_b"], depends_on=["task-a"]))
+    result = await work_executor.execute(
+        _work_item("task-b", skills=["skill_b"], depends_on=["task-a"])
+    )
 
     assert result.status == WorkItemStatus.done
     assert calls == ["task-b"]
@@ -619,7 +637,9 @@ async def test_failed_dependency_stops_downstream_execution(
     skill_executor.register_handler("skill_b", _skill_b)
 
     await work_store.save(_work_item("task-a", skills=["skill_a"], budget=Budget(max_attempts=1)))
-    root = _work_item("task-b", skills=["skill_b"], depends_on=["task-a"], budget=Budget(max_attempts=1))
+    root = _work_item(
+        "task-b", skills=["skill_b"], depends_on=["task-a"], budget=Budget(max_attempts=1)
+    )
 
     result = await work_executor.execute(root)
 
@@ -1061,14 +1081,17 @@ class _CountingSkillExecutor(SkillExecutor):
             return type(
                 "_FailResult",
                 (),
-                {"success": False, "error": f"attempt {self._call_count} failed",
-                 "output": "", "duration_ms": 10.0},
+                {
+                    "success": False,
+                    "error": f"attempt {self._call_count} failed",
+                    "output": "",
+                    "duration_ms": 10.0,
+                },
             )()
         return type(
             "_OkResult",
             (),
-            {"success": True, "error": None,
-             "output": "done", "duration_ms": 10.0},
+            {"success": True, "error": None, "output": "done", "duration_ms": 10.0},
         )()
 
     @property

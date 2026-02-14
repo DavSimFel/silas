@@ -92,6 +92,7 @@ def test_result_to_dict() -> None:
 @pytest.mark.benchmark
 async def test_runner_collects_results() -> None:
     """Runner executes registered benchmarks and collects results."""
+
     # Register a known benchmark for this test
     @benchmark(name="test.runner_target", tags=["runner_test"], iterations=2)
     def _target() -> None:
@@ -113,6 +114,7 @@ async def test_runner_async_benchmark() -> None:
     @benchmark(name="test.async_target", tags=["async_test"], iterations=2)
     async def _async_target() -> None:
         import asyncio
+
         await asyncio.sleep(0.001)
 
     runner = BenchmarkRunner(tag_filter=["async_test"])

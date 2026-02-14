@@ -53,7 +53,9 @@ class ToolsetMixin:
             return None, None
 
         active_work_item = await self._find_active_toolset_work_item()
-        work_item_for_tools = active_work_item or self._build_synthetic_toolset_work_item(turn_number)
+        work_item_for_tools = active_work_item or self._build_synthetic_toolset_work_item(
+            turn_number
+        )
         active_work_item_id = active_work_item.id if active_work_item is not None else None
 
         proxy_toolset = self._build_role_toolset(
@@ -102,11 +104,13 @@ class ToolsetMixin:
         agent_role: str,
     ) -> ApprovalRequiredToolset:
         base_tools = self._base_tools_for_role(agent_role)
-        allowed_tools = sorted({
-            *[tool.name for tool in base_tools],
-            *self._available_skill_names(),
-            *work_item.skills,
-        })
+        allowed_tools = sorted(
+            {
+                *[tool.name for tool in base_tools],
+                *self._available_skill_names(),
+                *work_item.skills,
+            }
+        )
 
         try:
             prepared = resolver.prepare_toolset(

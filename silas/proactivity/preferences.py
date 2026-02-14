@@ -98,10 +98,7 @@ class PreferenceInferenceEngine:
 
     def get_preferences(self, scope_id: str) -> list[InferredPreference]:
         """Return previously inferred preferences for a scope."""
-        return [
-            p.model_copy(deep=True)
-            for p in self._preferences_by_scope.get(scope_id, [])
-        ]
+        return [p.model_copy(deep=True) for p in self._preferences_by_scope.get(scope_id, [])]
 
     def clear_preferences(self, scope_id: str) -> int:
         """Clear cached preferences for a scope. Returns count removed."""

@@ -86,7 +86,9 @@ class ReviewQueue:
             key=lambda r: (-r.priority, r.created_at),
         )
 
-    def enqueue(self, request: ApprovalRequest, *, ttl_seconds: float | None = None) -> PendingReview:
+    def enqueue(
+        self, request: ApprovalRequest, *, ttl_seconds: float | None = None
+    ) -> PendingReview:
         """Add an approval request to the review queue and return the pending review."""
         now = datetime.now(UTC)
         ttl = ttl_seconds if ttl_seconds is not None else self._default_ttl

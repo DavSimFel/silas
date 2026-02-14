@@ -54,7 +54,9 @@ class ApprovalFatigueTracker:
         median_seconds = self.median_decision_time(scope_id)
         decision_time_cue = bool(median_seconds is not None and median_seconds < 1.0)
         if decision_time_cue and not self._decision_time_cue_active.get(scope_id, False):
-            self._fatigue_triggers_by_scope[scope_id] = self._fatigue_triggers_by_scope.get(scope_id, 0) + 1
+            self._fatigue_triggers_by_scope[scope_id] = (
+                self._fatigue_triggers_by_scope.get(scope_id, 0) + 1
+            )
         self._decision_time_cue_active[scope_id] = decision_time_cue
 
         return self.status(scope_id)
@@ -63,7 +65,9 @@ class ApprovalFatigueTracker:
         queue_density_cue = medium_plus_pending > self._queue_density_threshold
         previously_active = self._queue_density_cue_active.get(scope_id, False)
         if queue_density_cue and not previously_active:
-            self._fatigue_triggers_by_scope[scope_id] = self._fatigue_triggers_by_scope.get(scope_id, 0) + 1
+            self._fatigue_triggers_by_scope[scope_id] = (
+                self._fatigue_triggers_by_scope.get(scope_id, 0) + 1
+            )
         self._queue_density_cue_active[scope_id] = queue_density_cue
         return queue_density_cue
 

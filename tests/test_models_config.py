@@ -14,7 +14,9 @@ class TestInjectApiKeyEnv:
         with patch.dict(os.environ, {}, clear=False):
             config.inject_api_key_env()
             # Should not set anything
-            assert os.environ.get("OPENROUTER_API_KEY") is None or os.environ.get("OPENROUTER_API_KEY") == os.environ.get("OPENROUTER_API_KEY")
+            assert os.environ.get("OPENROUTER_API_KEY") is None or os.environ.get(
+                "OPENROUTER_API_KEY"
+            ) == os.environ.get("OPENROUTER_API_KEY")
 
     def test_sets_openrouter_key(self) -> None:
         config = ModelsConfig(api_key="sk-or-test-123")

@@ -21,6 +21,7 @@ from silas.models.execution import SandboxConfig
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _default_config(tmp_path: Path, **overrides: object) -> SandboxConfig:
     defaults: dict[str, object] = {
         "work_dir": str(tmp_path / "work"),
@@ -35,6 +36,7 @@ def _default_config(tmp_path: Path, **overrides: object) -> SandboxConfig:
 # ---------------------------------------------------------------------------
 # 1. Path traversal — command tries to read /etc/passwd via ../../
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_path_traversal_confined_to_workdir(tmp_path: Path) -> None:
@@ -69,6 +71,7 @@ async def test_path_traversal_confined_to_workdir(tmp_path: Path) -> None:
 # 2. Environment variable leak — sensitive vars not available
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_env_vars_stripped(tmp_path: Path) -> None:
     """Sandbox must NOT inherit the parent process environment."""
@@ -80,7 +83,11 @@ async def test_env_vars_stripped(tmp_path: Path) -> None:
         with patch.dict(os.environ, {"SECRET_TOKEN": "super-secret-value"}):
             result = await mgr.exec(
                 sandbox.sandbox_id,
-                [sys.executable, "-c", "import os; print(os.environ.get('SECRET_TOKEN', 'NOT_FOUND'))"],
+                [
+                    sys.executable,
+                    "-c",
+                    "import os; print(os.environ.get('SECRET_TOKEN', 'NOT_FOUND'))",
+                ],
                 timeout_seconds=5,
             )
         assert result.exit_code == 0
@@ -104,6 +111,7 @@ async def test_env_only_contains_explicit_keys(tmp_path: Path) -> None:
         )
         assert result.exit_code == 0
         import json
+
         keys = set(json.loads(result.stdout.strip()))
         # Only PATH and HOME should be present (from _build_env)
         assert "PATH" in keys
@@ -118,6 +126,7 @@ async def test_env_only_contains_explicit_keys(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # 3. Network access — blocked when network_access=False
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_network_isolation_uses_unshare(tmp_path: Path) -> None:
@@ -147,13 +156,17 @@ async def test_network_isolation_requires_linux() -> None:
     """Network isolation must raise on non-Linux platforms."""
     mgr = SubprocessSandboxManager()
     mgr._network_isolation_checked = False
-    with patch("silas.execution.sandbox.platform.system", return_value="Darwin"), pytest.raises(RuntimeError, match="requires Linux"):
-            mgr._ensure_network_isolation_capability()
+    with (
+        patch("silas.execution.sandbox.platform.system", return_value="Darwin"),
+        pytest.raises(RuntimeError, match="requires Linux"),
+    ):
+        mgr._ensure_network_isolation_capability()
 
 
 # ---------------------------------------------------------------------------
 # 4. Resource exhaustion — rlimits enforced via preexec_fn
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_memory_limit_enforced_via_rlimit(tmp_path: Path) -> None:
@@ -165,6 +178,7 @@ async def test_memory_limit_enforced_via_rlimit(tmp_path: Path) -> None:
         preexec = mgr._build_preexec_fn(sandbox.config)
         # Call preexec and verify rlimits were set
         import resource
+
         preexec()
         soft, hard = resource.getrlimit(resource.RLIMIT_AS)
         expected = 32 * 1024 * 1024
@@ -173,6 +187,7 @@ async def test_memory_limit_enforced_via_rlimit(tmp_path: Path) -> None:
     finally:
         # Reset rlimits for the test process
         import resource
+
         resource.setrlimit(resource.RLIMIT_AS, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
         await mgr.destroy(sandbox.sandbox_id)
 
@@ -186,12 +201,14 @@ async def test_cpu_limit_enforced_via_rlimit(tmp_path: Path) -> None:
     try:
         preexec = mgr._build_preexec_fn(sandbox.config)
         import resource
+
         preexec()
         soft, hard = resource.getrlimit(resource.RLIMIT_CPU)
         assert soft == 3
         assert hard == 3
     finally:
         import resource
+
         resource.setrlimit(resource.RLIMIT_CPU, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
         await mgr.destroy(sandbox.sandbox_id)
 
@@ -216,6 +233,7 @@ async def test_timeout_kills_long_running_process(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # 5. File write outside sandbox — workdir is isolated
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_workdir_is_isolated_temp(tmp_path: Path) -> None:
@@ -252,6 +270,7 @@ async def test_home_set_to_sandbox_workdir(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # 6. Process escape — shell -c blocked, start_new_session isolates
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_shell_c_execution_blocked() -> None:
@@ -297,7 +316,9 @@ async def test_destroy_kills_lingering_processes(tmp_path: Path) -> None:
 
     # Start a long-running process
     process = await asyncio.create_subprocess_exec(
-        sys.executable, "-c", "import time; time.sleep(300)",
+        sys.executable,
+        "-c",
+        "import time; time.sleep(300)",
         cwd=sandbox.work_dir,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,

@@ -63,7 +63,9 @@ class TestScorerRecency:
 class TestScorerZonePriority:
     def test_system_ranks_above_chronicle(self) -> None:
         # Use zone-only weights to isolate the factor.
-        weights = ScorerWeights(recency=0, zone_priority=1.0, taint_match=0, keyword_overlap=0, reference_count=0)
+        weights = ScorerWeights(
+            recency=0, zone_priority=1.0, taint_match=0, keyword_overlap=0, reference_count=0
+        )
         scorer = ContextScorer(weights=weights)
 
         sys_item = _item("sys", zone=ContextZone.system)
@@ -73,7 +75,9 @@ class TestScorerZonePriority:
         assert scored[0][0].ctx_id == "sys"
 
     def test_memory_ranks_above_workspace(self) -> None:
-        weights = ScorerWeights(recency=0, zone_priority=1.0, taint_match=0, keyword_overlap=0, reference_count=0)
+        weights = ScorerWeights(
+            recency=0, zone_priority=1.0, taint_match=0, keyword_overlap=0, reference_count=0
+        )
         scorer = ContextScorer(weights=weights)
 
         mem = _item("mem", zone=ContextZone.memory)
@@ -85,7 +89,9 @@ class TestScorerZonePriority:
 
 class TestScorerKeywordOverlap:
     def test_matching_keywords_score_higher(self) -> None:
-        weights = ScorerWeights(recency=0, zone_priority=0, taint_match=0, keyword_overlap=1.0, reference_count=0)
+        weights = ScorerWeights(
+            recency=0, zone_priority=0, taint_match=0, keyword_overlap=1.0, reference_count=0
+        )
         scorer = ContextScorer(weights=weights)
 
         relevant = _item("rel", content="deploy the kubernetes cluster")
@@ -95,7 +101,9 @@ class TestScorerKeywordOverlap:
         assert scored[0][0].ctx_id == "rel"
 
     def test_empty_query_gives_zero_keyword_score(self) -> None:
-        weights = ScorerWeights(recency=0, zone_priority=0, taint_match=0, keyword_overlap=1.0, reference_count=0)
+        weights = ScorerWeights(
+            recency=0, zone_priority=0, taint_match=0, keyword_overlap=1.0, reference_count=0
+        )
         scorer = ContextScorer(weights=weights)
 
         item = _item("a", content="some content")
@@ -105,7 +113,9 @@ class TestScorerKeywordOverlap:
 
 class TestScorerReferenceCount:
     def test_referenced_items_score_higher(self) -> None:
-        weights = ScorerWeights(recency=0, zone_priority=0, taint_match=0, keyword_overlap=0, reference_count=1.0)
+        weights = ScorerWeights(
+            recency=0, zone_priority=0, taint_match=0, keyword_overlap=0, reference_count=1.0
+        )
         scorer = ContextScorer(weights=weights, referenced_ids={"ref"})
 
         ref_item = _item("ref")
@@ -117,7 +127,9 @@ class TestScorerReferenceCount:
 
 class TestScorerTaintMatch:
     def test_matching_taint_scores_higher(self) -> None:
-        weights = ScorerWeights(recency=0, zone_priority=0, taint_match=1.0, keyword_overlap=0, reference_count=0)
+        weights = ScorerWeights(
+            recency=0, zone_priority=0, taint_match=1.0, keyword_overlap=0, reference_count=0
+        )
         scorer = ContextScorer(weights=weights)
 
         owner_item = _item("own", taint=TaintLevel.owner)
@@ -131,9 +143,12 @@ class TestScorerTaintMatch:
 # Integration: LiveContextManager + scorer
 # ------------------------------------------------------------------
 
+
 def _budget(**overrides: object) -> TokenBudget:
     profiles = {
-        "conversation": ContextProfile(name="conversation", chronicle_pct=0.45, memory_pct=0.20, workspace_pct=0.15),
+        "conversation": ContextProfile(
+            name="conversation", chronicle_pct=0.45, memory_pct=0.20, workspace_pct=0.15
+        ),
     }
     defaults: dict[str, object] = {
         "total": 180_000,

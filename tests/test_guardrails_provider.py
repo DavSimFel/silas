@@ -50,7 +50,12 @@ class TestGuardrailsChecker:
         context: dict[str, object] = {"response": "Hello, how can I help?"}
 
         with patch.object(checker, "_run_single_validator") as mock_run:
-            mock_run.return_value = {"failed": False, "reason": "", "modified_content": None, "flags": []}
+            mock_run.return_value = {
+                "failed": False,
+                "reason": "",
+                "modified_content": None,
+                "flags": [],
+            }
             result = await checker.check(gate, context)
 
         assert result.action == "continue"
@@ -104,7 +109,12 @@ class TestGuardrailsChecker:
             call_order.append(hub_name)
             # Second validator (pii) fails
             if hub_name == "guardrails/detect_pii":
-                return {"failed": True, "reason": "PII found", "modified_content": None, "flags": []}
+                return {
+                    "failed": True,
+                    "reason": "PII found",
+                    "modified_content": None,
+                    "flags": [],
+                }
             return {"failed": False, "reason": "", "modified_content": None, "flags": []}
 
         with patch.object(checker, "_run_single_validator", side_effect=track_calls):
@@ -128,7 +138,12 @@ class TestGuardrailsChecker:
         context: dict[str, object] = {"message": "user input"}
 
         with patch.object(checker, "_run_single_validator") as mock_run:
-            mock_run.return_value = {"failed": False, "reason": "", "modified_content": None, "flags": []}
+            mock_run.return_value = {
+                "failed": False,
+                "reason": "",
+                "modified_content": None,
+                "flags": [],
+            }
             result = await checker.check(gate, context)
             # Verify content was extracted from 'message'
             mock_run.assert_called_once()
@@ -192,7 +207,12 @@ class TestGateConfigParsing:
         context: dict[str, object] = {"response": "test"}
 
         with patch.object(checker, "_run_single_validator") as mock_run:
-            mock_run.return_value = {"failed": False, "reason": "", "modified_content": None, "flags": []}
+            mock_run.return_value = {
+                "failed": False,
+                "reason": "",
+                "modified_content": None,
+                "flags": [],
+            }
             await checker.check(gate, context)
             # Custom name should pass through without alias resolution
             mock_run.assert_called_once_with("my_org/custom_check", "test", gate)

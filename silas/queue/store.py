@@ -199,18 +199,14 @@ class DurableQueueStore:
         ]
         for col_name, col_def in new_columns:
             if col_name not in existing:
-                await db.execute(
-                    f"ALTER TABLE queue_messages ADD COLUMN {col_name} {col_def}"
-                )
+                await db.execute(f"ALTER TABLE queue_messages ADD COLUMN {col_name} {col_def}")
 
         # Also migrate dead_letters for debugging visibility
         cursor = await db.execute("PRAGMA table_info(dead_letters)")
         dl_existing = {row[1] for row in await cursor.fetchall()}
         for col_name in ("scope_id", "taint"):
             if col_name not in dl_existing:
-                await db.execute(
-                    f"ALTER TABLE dead_letters ADD COLUMN {col_name} TEXT"
-                )
+                await db.execute(f"ALTER TABLE dead_letters ADD COLUMN {col_name} TEXT")
 
         # Why index here (after columns exist): handles both fresh and migrated DBs
         await db.execute("""
@@ -256,9 +252,7 @@ class DurableQueueStore:
             )
             await db.commit()
 
-    async def lease(
-        self, queue_name: str, lease_duration_s: int = 60
-    ) -> QueueMessage | None:
+    async def lease(self, queue_name: str, lease_duration_s: int = 60) -> QueueMessage | None:
         """Atomically lease the oldest available message from a queue.
 
         A message is available if it has no lease or its lease has expired.
@@ -271,9 +265,7 @@ class DurableQueueStore:
         now = _now_utc()
         now_str = _dt_to_str(now)
         lease_id = str(uuid.uuid4())
-        expires_str = _dt_to_str(
-            now + __import__("datetime").timedelta(seconds=lease_duration_s)
-        )
+        expires_str = _dt_to_str(now + __import__("datetime").timedelta(seconds=lease_duration_s))
 
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
@@ -334,9 +326,7 @@ class DurableQueueStore:
         now_str = _dt_to_str(_now_utc())
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT * FROM queue_messages WHERE id = ?", (message_id,)
-            )
+            cursor = await db.execute("SELECT * FROM queue_messages WHERE id = ?", (message_id,))
             row = await cursor.fetchone()
             if row is None:
                 return
@@ -375,9 +365,7 @@ class DurableQueueStore:
         Per §2.2.2: consumers with runs longer than lease_duration/3 must
         send periodic heartbeats to signal they're still alive.
         """
-        new_expires = _dt_to_str(
-            _now_utc() + __import__("datetime").timedelta(seconds=extend_s)
-        )
+        new_expires = _dt_to_str(_now_utc() + __import__("datetime").timedelta(seconds=extend_s))
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 "UPDATE queue_messages SET lease_expires_at = ? WHERE id = ?",
@@ -429,9 +417,7 @@ class DurableQueueStore:
         now = _now_utc()
         now_str = _dt_to_str(now)
         lease_id = str(uuid.uuid4())
-        expires_str = _dt_to_str(
-            now + __import__("datetime").timedelta(seconds=lease_duration_s)
-        )
+        expires_str = _dt_to_str(now + __import__("datetime").timedelta(seconds=lease_duration_s))
 
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row

@@ -45,10 +45,19 @@ def _item(
 
 def _budget(**overrides) -> TokenBudget:
     profiles = {
-        "conversation": ContextProfile(name="conversation", chronicle_pct=0.45, memory_pct=0.20, workspace_pct=0.15),
-        "coding": ContextProfile(name="coding", chronicle_pct=0.20, memory_pct=0.20, workspace_pct=0.40),
+        "conversation": ContextProfile(
+            name="conversation", chronicle_pct=0.45, memory_pct=0.20, workspace_pct=0.15
+        ),
+        "coding": ContextProfile(
+            name="coding", chronicle_pct=0.20, memory_pct=0.20, workspace_pct=0.40
+        ),
     }
-    defaults = {"total": 10000, "system_max": 1000, "profiles": profiles, "default_profile": "conversation"}
+    defaults = {
+        "total": 10000,
+        "system_max": 1000,
+        "profiles": profiles,
+        "default_profile": "conversation",
+    }
     defaults.update(overrides)
     return TokenBudget(**defaults)
 
@@ -153,16 +162,35 @@ class TestObservationMasking:
         """Tool results older than observation_mask_after_turns should be masked."""
         ctx_mgr.add(
             "owner",
-            _item("t1", ContextZone.chronicle, "npm test output: all passed", turn=1, kind="tool_result", source="shell_exec"),
+            _item(
+                "t1",
+                ContextZone.chronicle,
+                "npm test output: all passed",
+                turn=1,
+                kind="tool_result",
+                source="shell_exec",
+            ),
         )
-        rendered = ctx_mgr.render("owner", turn_number=10)  # 10 - 1 = 9 > 5 (default mask threshold)
+        rendered = ctx_mgr.render(
+            "owner", turn_number=10
+        )  # 10 - 1 = 9 > 5 (default mask threshold)
         assert "npm test output" not in rendered
-        assert "tokens" in rendered.lower() or "masked" in rendered.lower() or "result of" in rendered.lower()
+        assert (
+            "tokens" in rendered.lower()
+            or "masked" in rendered.lower()
+            or "result of" in rendered.lower()
+        )
 
     def test_recent_tool_results_not_masked(self, ctx_mgr) -> None:
         ctx_mgr.add(
             "owner",
-            _item("t1", ContextZone.chronicle, "npm test output: all passed", turn=8, kind="tool_result"),
+            _item(
+                "t1",
+                ContextZone.chronicle,
+                "npm test output: all passed",
+                turn=8,
+                kind="tool_result",
+            ),
         )
         rendered = ctx_mgr.render("owner", turn_number=10)  # 10 - 8 = 2 < 5
         assert "npm test output" in rendered
@@ -172,7 +200,9 @@ class TestHeuristicEviction:
     def test_eviction_returns_evicted_ids(self, ctx_mgr) -> None:
         # Fill up chronicle zone way past budget
         for i in range(100):
-            ctx_mgr.add("owner", _item(f"c{i}", ContextZone.chronicle, "x" * 500, turn=i, relevance=0.1))
+            ctx_mgr.add(
+                "owner", _item(f"c{i}", ContextZone.chronicle, "x" * 500, turn=i, relevance=0.1)
+            )
         evicted = ctx_mgr.enforce_budget("owner", turn_number=100, current_goal=None)
         assert len(evicted) > 0
 

@@ -28,7 +28,11 @@ class MemoryMixin:
     """Memory retrieval, ingestion, query execution, and write operations."""
 
     async def _auto_retrieve_memories(
-        self, text: str, cm: LiveContextManager | None, taint: TaintLevel, turn_number: int,
+        self,
+        text: str,
+        cm: LiveContextManager | None,
+        taint: TaintLevel,
+        turn_number: int,
     ) -> None:
         tc = self._turn_context()
         memory_store = tc.memory_store
@@ -40,7 +44,11 @@ class MemoryMixin:
         mentions = self._extract_mentions(text)
         if mentions:
             entity_candidates = await memory_store.search_by_type(MemoryType.entity, limit=50)
-            recalled_entity = [item for item in entity_candidates if self._memory_matches_any_mention(item, mentions)]
+            recalled_entity = [
+                item
+                for item in entity_candidates
+                if self._memory_matches_any_mention(item, mentions)
+            ]
 
         recalled_unique: dict[str, MemoryItem] = {}
         for item in [*recalled_keyword, *recalled_entity]:
@@ -63,7 +71,9 @@ class MemoryMixin:
                 ),
             )
 
-    async def _ingest_raw_memory(self, text: str, taint: TaintLevel, session_id: str, turn_number: int) -> None:
+    async def _ingest_raw_memory(
+        self, text: str, taint: TaintLevel, session_id: str, turn_number: int
+    ) -> None:
         tc = self._turn_context()
         memory_store = tc.memory_store
         if memory_store is None:
@@ -129,17 +139,20 @@ class MemoryMixin:
         # Inject retrieved memories into live context for the next turn.
         if all_results and cm is not None:
             for item in all_results:
-                cm.add(scope_id, ContextItem(
-                    ctx_id=f"mem_recall:{turn_number}:{item.memory_id}",
-                    zone=ContextZone.memory,
-                    content=item.content,
-                    token_count=_counter.count(item.content),
-                    created_at=datetime.now(UTC),
-                    turn_number=turn_number,
-                    source="memory:query_result",
-                    taint=item.taint,
-                    kind="memory",
-                ))
+                cm.add(
+                    scope_id,
+                    ContextItem(
+                        ctx_id=f"mem_recall:{turn_number}:{item.memory_id}",
+                        zone=ContextZone.memory,
+                        content=item.content,
+                        token_count=_counter.count(item.content),
+                        created_at=datetime.now(UTC),
+                        turn_number=turn_number,
+                        source="memory:query_result",
+                        taint=item.taint,
+                        kind="memory",
+                    ),
+                )
 
         return all_results
 

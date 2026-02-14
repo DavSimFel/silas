@@ -333,7 +333,6 @@ async def test_step11_5_output_ingested_as_raw_memory() -> None:
     assert output_raws[0].taint == TaintLevel.owner
 
 
-
 # ---------------------------------------------------------------------------
 # Step 10 - Memory ops truncation (max_memory_ops_per_turn)
 # ---------------------------------------------------------------------------

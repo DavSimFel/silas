@@ -6,7 +6,9 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class TaskScheduler(Protocol):
-    def add_cron_job(self, name: str, cron: str, callback: Callable[[], Awaitable[None]]) -> None: ...
+    def add_cron_job(
+        self, name: str, cron: str, callback: Callable[[], Awaitable[None]]
+    ) -> None: ...
 
     async def start(self) -> None: ...
 

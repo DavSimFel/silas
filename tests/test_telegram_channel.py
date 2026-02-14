@@ -17,7 +17,9 @@ def _make_channel(
         bot_token="123:FAKE",
         owner_chat_ids=owner_ids or ["111"],
     )
-    client = httpx.AsyncClient(transport=transport or httpx.MockTransport(lambda r: httpx.Response(200, json={"ok": True})))
+    client = httpx.AsyncClient(
+        transport=transport or httpx.MockTransport(lambda r: httpx.Response(200, json={"ok": True}))
+    )
     return TelegramChannel(config=config, http_client=client)
 
 
@@ -72,7 +74,9 @@ async def test_reply_to_threading() -> None:
 async def test_non_text_update_ignored() -> None:
     ch = _make_channel()
     # Photo message with no text field
-    await ch.handle_update({"update_id": 1, "message": {"message_id": 1, "chat": {"id": 111}, "photo": []}})
+    await ch.handle_update(
+        {"update_id": 1, "message": {"message_id": 1, "chat": {"id": 111}, "photo": []}}
+    )
     assert ch._incoming.empty()
 
 
@@ -125,6 +129,7 @@ async def test_send_message_calls_api() -> None:
 
     assert len(requests_made) == 1
     import json
+
     body = json.loads(requests_made[0].content)
     assert body["chat_id"] == "111"
     assert body["text"] == "hello world"
@@ -151,6 +156,7 @@ async def test_send_long_message_splits() -> None:
 async def test_send_reply_to_only_first_chunk() -> None:
     """Only the first chunk should carry reply_to; rest flow naturally."""
     import json
+
     requests_made: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:

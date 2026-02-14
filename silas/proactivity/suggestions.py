@@ -57,9 +57,7 @@ class SimpleSuggestionEngine:
     def _prune_expired(self, scope_id: str, now: datetime) -> None:
         suggestions = self._idle_by_scope.get(scope_id, [])
         self._idle_by_scope[scope_id] = [
-            suggestion
-            for suggestion in suggestions
-            if suggestion.expires_at > now
+            suggestion for suggestion in suggestions if suggestion.expires_at > now
         ]
 
 

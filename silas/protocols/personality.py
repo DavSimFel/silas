@@ -9,7 +9,9 @@ from silas.models.personality import AxisProfile, PersonaEvent, PersonaState
 
 @runtime_checkable
 class PersonalityEngine(Protocol):
-    async def detect_context(self, message: ChannelMessage, route_hint: str | None = None) -> str: ...
+    async def detect_context(
+        self, message: ChannelMessage, route_hint: str | None = None
+    ) -> str: ...
 
     async def get_effective_axes(self, scope_id: str, context_key: str) -> AxisProfile: ...
 

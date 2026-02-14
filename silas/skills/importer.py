@@ -118,10 +118,7 @@ class SkillImporter:
         # Dependency availability check — fail early so the user knows
         # what's missing before the skill is ever activated.
         if manifest is not None:
-            missing = [
-                dep for dep in manifest.dependencies
-                if not _is_dependency_available(dep)
-            ]
+            missing = [dep for dep in manifest.dependencies if not _is_dependency_available(dep)]
             if missing:
                 raise DependencyError(
                     f"missing dependencies for skill '{skill.name}': {', '.join(missing)}"

@@ -57,7 +57,9 @@ def _make_context_item(
     )
 
 
-async def _build_queue_infra(tmp_path: str) -> tuple[DurableQueueStore, QueueRouter, QueueOrchestrator, QueueBridge]:
+async def _build_queue_infra(
+    tmp_path: str,
+) -> tuple[DurableQueueStore, QueueRouter, QueueOrchestrator, QueueBridge]:
     """Spin up real queue infrastructure with file-backed SQLite.
 
     Can't use :memory: because aiosqlite opens a new connection per call,
@@ -378,9 +380,7 @@ class TestErrorIsolation:
             results["healthy"] = "completed"
             return "success"
 
-        outcomes = await asyncio.gather(
-            failing_turn(), healthy_turn(), return_exceptions=True
-        )
+        outcomes = await asyncio.gather(failing_turn(), healthy_turn(), return_exceptions=True)
 
         # Turn A failed
         assert isinstance(outcomes[0], RuntimeError)
@@ -407,9 +407,7 @@ class TestErrorIsolation:
             tracker.on_tool_output("memory_recall")
             results["survivor"] = tracker.get_current_taint()
 
-        outcomes = await asyncio.gather(
-            crashing_turn(), surviving_turn(), return_exceptions=True
-        )
+        outcomes = await asyncio.gather(crashing_turn(), surviving_turn(), return_exceptions=True)
 
         assert isinstance(outcomes[0], RuntimeError)
         # The surviving turn's taint must be unaffected by the crash
@@ -428,9 +426,7 @@ class TestErrorIsolation:
             await asyncio.sleep(0.01)
             await store.store(_make_memory_item("healthy-write", session_id="ok"))
 
-        await asyncio.gather(
-            crashing_writer(), healthy_writer(), return_exceptions=True
-        )
+        await asyncio.gather(crashing_writer(), healthy_writer(), return_exceptions=True)
 
         # Healthy turn's write must survive
         ok_items = await store.search_session("ok")
@@ -443,6 +439,7 @@ class TestErrorIsolation:
 
 
 # ── Profile helper ────────────────────────────────────────────────────
+
 
 def _make_profile(
     name: str,

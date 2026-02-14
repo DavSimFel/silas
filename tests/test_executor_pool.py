@@ -111,9 +111,7 @@ class TestExecutorPoolConcurrency:
         pool = LiveExecutorPool(_executor, max_concurrent=2, max_concurrent_global=10)
         items = [_work_item(f"t{i}", include_approval=False) for i in range(6)]
 
-        results = await asyncio.gather(
-            *[pool.dispatch(item, "scope-a") for item in items]
-        )
+        results = await asyncio.gather(*[pool.dispatch(item, "scope-a") for item in items])
 
         assert all(r.status == WorkItemStatus.done for r in results)
         assert max_running <= 2
@@ -285,7 +283,9 @@ class TestConflictDetection:
     def test_overlapping_paths_serialised(self) -> None:
         items = [
             _work_item("t1", input_artifacts_from=["shared.txt"], include_approval=False),
-            _work_item("t2", input_artifacts_from=["shared.txt", "other.txt"], include_approval=False),
+            _work_item(
+                "t2", input_artifacts_from=["shared.txt", "other.txt"], include_approval=False
+            ),
             _work_item("t3", input_artifacts_from=["unique.txt"], include_approval=False),
         ]
         groups = _detect_conflicts(items)
@@ -386,11 +386,15 @@ def _init_git_repo(path: Path) -> None:
     subprocess.run(["git", "init", str(path)], check=True, capture_output=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
-        cwd=str(path), check=True, capture_output=True,
+        cwd=str(path),
+        check=True,
+        capture_output=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
-        cwd=str(path), check=True, capture_output=True,
+        cwd=str(path),
+        check=True,
+        capture_output=True,
     )
     # Create an initial commit
     readme = path / "README.md"
@@ -398,7 +402,9 @@ def _init_git_repo(path: Path) -> None:
     subprocess.run(["git", "add", "-A"], cwd=str(path), check=True, capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", "initial"],
-        cwd=str(path), check=True, capture_output=True,
+        cwd=str(path),
+        check=True,
+        capture_output=True,
     )
 
 
@@ -470,9 +476,7 @@ class TestWorktreeManager:
         mgr = LiveWorktreeManager(str(repo))
         wt_path = await mgr.create("my-scope", "my-task", 3)
 
-        expected_suffix = os.path.join(
-            ".runtime", "worktrees", "my-scope", "my-task", "3"
-        )
+        expected_suffix = os.path.join(".runtime", "worktrees", "my-scope", "my-task", "3")
         assert wt_path.endswith(expected_suffix)
 
         await mgr.destroy(wt_path)

@@ -39,7 +39,10 @@ class SilasMemoryConsolidator:
             if item.access_count > 10 and item.reingestion_tier != ReingestionTier.core:
                 updates["reingestion_tier"] = ReingestionTier.core
                 stats["promoted"] += 1
-            elif self._is_stale(item, stale_cutoff) and item.reingestion_tier != ReingestionTier.dormant:
+            elif (
+                self._is_stale(item, stale_cutoff)
+                and item.reingestion_tier != ReingestionTier.dormant
+            ):
                 updates["reingestion_tier"] = ReingestionTier.dormant
                 stats["archived"] += 1
 
@@ -57,7 +60,9 @@ class SilasMemoryConsolidator:
             return raw
         return [item for item in raw if item.session_id in {None, scope_id}]
 
-    def _merge_duplicates(self, memories: list[MemoryItem], stats: dict[str, int]) -> dict[str, MemoryItem]:
+    def _merge_duplicates(
+        self, memories: list[MemoryItem], stats: dict[str, int]
+    ) -> dict[str, MemoryItem]:
         by_hash: dict[str, list[MemoryItem]] = {}
         for item in memories:
             content_hash = hashlib.sha256(item.content.encode("utf-8")).hexdigest()

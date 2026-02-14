@@ -39,8 +39,12 @@ class PlannerMixin:
         planner_toolset: ApprovalRequiredToolset | None,
     ) -> str:
         plan_flow_payload: dict[str, object] = {
-            "actions_seen": 0, "skills_executed": 0, "skills_skipped": 0,
-            "approval_requested": 0, "approval_approved": 0, "approval_declined": 0,
+            "actions_seen": 0,
+            "skills_executed": 0,
+            "skills_skipped": 0,
+            "approval_requested": 0,
+            "approval_approved": 0,
+            "approval_declined": 0,
         }
         if routed.route == "planner":
             plan_actions, planner_message = await self._resolve_plan_actions(
@@ -83,7 +87,9 @@ class PlannerMixin:
                     turn_number=turn_number,
                     reason=routed.reason,
                 )
-        await self._audit("plan_approval_flow_checked", step=12, turn_number=turn_number, **plan_flow_payload)
+        await self._audit(
+            "plan_approval_flow_checked", step=12, turn_number=turn_number, **plan_flow_payload
+        )
         return response_text
 
     async def _resolve_plan_actions(
@@ -110,9 +116,7 @@ class PlannerMixin:
             call_name="planner",
             default_context_profile="planning",
         )
-        actions, planner_message = self._extract_plan_actions_from_planner_output(
-            planner_output
-        )
+        actions, planner_message = self._extract_plan_actions_from_planner_output(planner_output)
         await self._audit(
             "planner_handoff_invoked",
             turn_number=turn_number,
@@ -133,7 +137,8 @@ class PlannerMixin:
         return fallback_actions, planner_message
 
     def _extract_plan_actions_from_planner_output(
-        self, planner_output: object,
+        self,
+        planner_output: object,
     ) -> tuple[list[dict[str, object]], str | None]:
         if isinstance(planner_output, RouteDecision):
             planner_message = None
@@ -142,7 +147,9 @@ class PlannerMixin:
             return self._extract_plan_actions(planner_output), planner_message
 
         if isinstance(planner_output, AgentResponse):
-            return self._extract_plan_actions_from_agent_response(planner_output), planner_output.message
+            return self._extract_plan_actions_from_agent_response(
+                planner_output
+            ), planner_output.message
 
         try:
             response = AgentResponse.model_validate(planner_output)
@@ -151,7 +158,8 @@ class PlannerMixin:
         return self._extract_plan_actions_from_agent_response(response), response.message
 
     def _extract_plan_actions_from_agent_response(
-        self, response: AgentResponse,
+        self,
+        response: AgentResponse,
     ) -> list[dict[str, object]]:
         plan_action = response.plan_action
         if plan_action is None:
@@ -184,8 +192,7 @@ class PlannerMixin:
             return None
 
         plan_actions_with_mode = [
-            {**action, "interaction_mode": interaction_mode.value}
-            for action in plan_actions
+            {**action, "interaction_mode": interaction_mode.value} for action in plan_actions
         ]
         approved_actions = await self._ensure_plan_action_approvals(
             plan_actions_with_mode,
@@ -237,17 +244,16 @@ class PlannerMixin:
             prepared_work_item = await resolve_work_item_approval(
                 work_item,
                 standing_approval_resolver=self._resolve_standing_approval_token,
-                manual_approval_requester=lambda unresolved, skill_name=skill_name, connection_id=connection_id: self._approval_flow.request_skill_approval(
-                    work_item=unresolved,
-                    scope=ApprovalScope.full_plan,
-                    skill_name=skill_name,
-                    connection_id=connection_id,
+                manual_approval_requester=lambda unresolved, skill_name=skill_name, connection_id=connection_id: (
+                    self._approval_flow.request_skill_approval(
+                        work_item=unresolved,
+                        scope=ApprovalScope.full_plan,
+                        skill_name=skill_name,
+                        connection_id=connection_id,
+                    )
                 ),
             )
-            if (
-                prepared_work_item is None
-                or prepared_work_item.approval_token is None
-            ):
+            if prepared_work_item is None or prepared_work_item.approval_token is None:
                 await self._audit(
                     "planner_action_approval_declined",
                     turn_number=turn_number,
@@ -302,8 +308,11 @@ class PlannerMixin:
         """Execute skill-based plan actions with approval flow."""
         payload: dict[str, int] = {
             "actions_seen": len(plan_actions),
-            "skills_executed": 0, "skills_skipped": 0,
-            "approval_requested": 0, "approval_approved": 0, "approval_declined": 0,
+            "skills_executed": 0,
+            "skills_skipped": 0,
+            "approval_requested": 0,
+            "approval_approved": 0,
+            "approval_declined": 0,
         }
 
         tc = self._turn_context()
@@ -347,7 +356,12 @@ class PlannerMixin:
             return None, counters
 
         skill_def = skill_registry.get(skill_name)
-        await self._audit("planner_skill_action_checked", turn_number=turn_number, skill_name=skill_name, skill_registered=skill_def is not None)
+        await self._audit(
+            "planner_skill_action_checked",
+            turn_number=turn_number,
+            skill_name=skill_name,
+            skill_registered=skill_def is not None,
+        )
         if skill_def is None:
             counters["skills_skipped"] = 1
             return f"Skipped skill '{skill_name}': skill not registered.", counters
@@ -362,16 +376,27 @@ class PlannerMixin:
 
         if skill_def.requires_approval:
             counters["approval_requested"] = 1
-            await self._audit("approval_requested", turn_number=turn_number, skill_name=skill_name, scope=ApprovalScope.tool_type.value)
+            await self._audit(
+                "approval_requested",
+                turn_number=turn_number,
+                skill_name=skill_name,
+                scope=ApprovalScope.tool_type.value,
+            )
             decision, token = await self._approval_flow.request_skill_approval(
-                work_item=work_item, scope=ApprovalScope.tool_type,
-                skill_name=skill_name, connection_id=connection_id,
+                work_item=work_item,
+                scope=ApprovalScope.tool_type,
+                skill_name=skill_name,
+                connection_id=connection_id,
             )
             if decision is None or decision.verdict != ApprovalVerdict.approved or token is None:
                 counters["approval_declined"] = 1
                 counters["skills_skipped"] = 1
-                await self._audit("skill_execution_skipped_approval", turn_number=turn_number, skill_name=skill_name,
-                                  verdict=decision.verdict.value if decision is not None else "timed_out")
+                await self._audit(
+                    "skill_execution_skipped_approval",
+                    turn_number=turn_number,
+                    skill_name=skill_name,
+                    verdict=decision.verdict.value if decision is not None else "timed_out",
+                )
                 return f"Skipped skill '{skill_name}': approval declined.", counters
 
             counters["approval_approved"] = 1
@@ -391,5 +416,11 @@ class PlannerMixin:
             counters["skills_skipped"] = 1
             line = f"Failed skill '{skill_name}': {result.error or 'execution failed'}."
 
-        await self._audit("planner_skill_action_executed", turn_number=turn_number, skill_name=skill_name, success=result.success, error=result.error)
+        await self._audit(
+            "planner_skill_action_executed",
+            turn_number=turn_number,
+            skill_name=skill_name,
+            success=result.success,
+            error=result.error,
+        )
         return line, counters

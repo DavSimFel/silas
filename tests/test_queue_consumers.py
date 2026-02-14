@@ -44,6 +44,7 @@ from tests.helpers import wait_until
 @dataclass
 class MockRouteOutput:
     """Mimics ProxyRunResult.output (RouteDecision)."""
+
     route: str = "direct"
     reason: str = "mock"
 
@@ -51,6 +52,7 @@ class MockRouteOutput:
 @dataclass
 class MockProxyResult:
     """Mimics ProxyRunResult."""
+
     output: MockRouteOutput
 
 
@@ -106,6 +108,7 @@ class MockPlanAction:
 @dataclass
 class MockPlannerOutput:
     """Mimics PlannerRunResult.output (AgentResponse)."""
+
     message: str = "Generated plan."
     plan_action: MockPlanAction | None = None
 
@@ -113,6 +116,7 @@ class MockPlannerOutput:
 @dataclass
 class MockPlannerResult:
     """Mimics PlannerRunResult."""
+
     output: MockPlannerOutput
 
 
@@ -126,15 +130,14 @@ class MockPlannerAgent:
     async def run(self, prompt: str, deps: object | None = None) -> MockPlannerResult:
         self.call_count += 1
         return MockPlannerResult(
-            output=MockPlannerOutput(
-                plan_action=MockPlanAction(plan_markdown=self._plan_markdown)
-            )
+            output=MockPlannerOutput(plan_action=MockPlanAction(plan_markdown=self._plan_markdown))
         )
 
 
 @dataclass
 class MockExecutorOutput:
     """Mimics ExecutorRunResult.output (ExecutorAgentOutput)."""
+
     summary: str = "Execution completed."
     last_error: str | None = None
 
@@ -142,6 +145,7 @@ class MockExecutorOutput:
 @dataclass
 class MockExecutorResult:
     """Mimics ExecutorRunResult."""
+
     output: MockExecutorOutput
 
 
@@ -156,9 +160,7 @@ class MockExecutorAgent:
         self.call_count += 1
         if self._fail:
             return MockExecutorResult(
-                output=MockExecutorOutput(
-                    summary="Failed.", last_error="mock_error"
-                )
+                output=MockExecutorOutput(summary="Failed.", last_error="mock_error")
             )
         return MockExecutorResult(output=MockExecutorOutput())
 
@@ -221,13 +223,12 @@ def router(store: DurableQueueStore) -> QueueRouter:
 
 @pytest.mark.asyncio
 async def test_base_consumer_poll_once_happy_path(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """Lease → process → ack. Message is removed after processing."""
     consumer = EchoConsumer(store, router, "proxy_queue")
-    msg = QueueMessage(
-        message_kind="user_message", sender="user", payload={"text": "hi"}
-    )
+    msg = QueueMessage(message_kind="user_message", sender="user", payload={"text": "hi"})
     await router.route(msg)
 
     found = await consumer.poll_once()
@@ -239,13 +240,13 @@ async def test_base_consumer_poll_once_happy_path(
 
 @pytest.mark.asyncio
 async def test_base_consumer_polls_with_lease_heartbeat(
-    store: DurableQueueStore, router: QueueRouter, monkeypatch: pytest.MonkeyPatch,
+    store: DurableQueueStore,
+    router: QueueRouter,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """poll_once starts a heartbeat task and cancels it after processing."""
     consumer = EchoConsumer(store, router, "proxy_queue")
-    msg = QueueMessage(
-        message_kind="user_message", sender="user", payload={"text": "hi"}
-    )
+    msg = QueueMessage(message_kind="user_message", sender="user", payload={"text": "hi"})
     await router.route(msg)
 
     heartbeat_message_ids: list[str] = []
@@ -270,7 +271,8 @@ async def test_base_consumer_polls_with_lease_heartbeat(
 
 @pytest.mark.asyncio
 async def test_base_consumer_poll_once_empty_queue(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """poll_once returns False when no messages are available."""
     consumer = EchoConsumer(store, router, "proxy_queue")
@@ -280,13 +282,12 @@ async def test_base_consumer_poll_once_empty_queue(
 
 @pytest.mark.asyncio
 async def test_base_consumer_process_failure_nacks(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """When _process raises, the message is nacked (attempt_count incremented)."""
     consumer = FailingConsumer(store, router, "proxy_queue")
-    msg = QueueMessage(
-        message_kind="user_message", sender="user", payload={"text": "fail"}
-    )
+    msg = QueueMessage(message_kind="user_message", sender="user", payload={"text": "fail"})
     await router.route(msg)
 
     found = await consumer.poll_once()
@@ -300,13 +301,12 @@ async def test_base_consumer_process_failure_nacks(
 
 @pytest.mark.asyncio
 async def test_base_consumer_dead_letter_on_max_attempts(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """After max_attempts, message goes to dead_letter instead of retrying."""
     consumer = FailingConsumer(store, router, "proxy_queue", max_attempts=2)
-    msg = QueueMessage(
-        message_kind="user_message", sender="user", payload={"text": "die"}
-    )
+    msg = QueueMessage(message_kind="user_message", sender="user", payload={"text": "die"})
     msg.attempt_count = 2  # Already at max
     await router.route(msg)
 
@@ -322,14 +322,16 @@ async def test_base_consumer_dead_letter_on_max_attempts(
 
 @pytest.mark.asyncio
 async def test_proxy_consumer_user_message_routes_to_planner(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """user_message → proxy (route=planner) → enqueues plan_request."""
     proxy = MockProxyAgent(route="planner")
     consumer = ProxyConsumer(store, router, proxy)
 
     msg = QueueMessage(
-        message_kind="user_message", sender="user",
+        message_kind="user_message",
+        sender="user",
         payload={"text": "refactor auth module"},
     )
     await router.route(msg)
@@ -346,14 +348,16 @@ async def test_proxy_consumer_user_message_routes_to_planner(
 
 @pytest.mark.asyncio
 async def test_proxy_consumer_user_message_direct(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """user_message → proxy (route=direct) → no further routing."""
     proxy = MockProxyAgent(route="direct")
     consumer = ProxyConsumer(store, router, proxy)
 
     msg = QueueMessage(
-        message_kind="user_message", sender="user",
+        message_kind="user_message",
+        sender="user",
         payload={"text": "hello"},
     )
     await router.route(msg)
@@ -366,7 +370,8 @@ async def test_proxy_consumer_user_message_direct(
 
 @pytest.mark.asyncio
 async def test_proxy_consumer_prepends_personality_directives(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """user_message metadata personality directives are prepended to prompt."""
     proxy = MockProxyAgent(route="direct")
@@ -392,7 +397,8 @@ async def test_proxy_consumer_prepends_personality_directives(
 
 @pytest.mark.asyncio
 async def test_proxy_consumer_deserializes_rendered_context_json(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """user_message context metadata is deserialized from JSON before prompting."""
     proxy = MockProxyAgent(route="direct")
@@ -404,7 +410,7 @@ async def test_proxy_consumer_deserializes_rendered_context_json(
         payload={
             "text": "hello",
             "metadata": {
-                "rendered_context_json": "{\"rendered_context\": \"Context from JSON\"}",
+                "rendered_context_json": '{"rendered_context": "Context from JSON"}',
             },
         },
     )
@@ -417,7 +423,9 @@ async def test_proxy_consumer_deserializes_rendered_context_json(
 
 @pytest.mark.asyncio
 async def test_proxy_consumer_prefers_typed_payload_text(
-    store: DurableQueueStore, router: QueueRouter, monkeypatch: pytest.MonkeyPatch,
+    store: DurableQueueStore,
+    router: QueueRouter,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Proxy consumer uses typed payload fields when available."""
     proxy = MockProxyAgent(route="direct")
@@ -435,7 +443,8 @@ async def test_proxy_consumer_prefers_typed_payload_text(
 
 @pytest.mark.asyncio
 async def test_proxy_consumer_includes_agent_response_memory_metadata(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """Direct proxy responses preserve memory fields in agent_response payload."""
     proxy = MockProxyAgentWithMemory()
@@ -470,14 +479,16 @@ async def test_proxy_consumer_includes_agent_response_memory_metadata(
 
 @pytest.mark.asyncio
 async def test_proxy_consumer_execution_status_done(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """execution_status with 'done' → surfaces include stream."""
     proxy = MockProxyAgent()
     consumer = ProxyConsumer(store, router, proxy)
 
     msg = QueueMessage(
-        message_kind="execution_status", sender="executor",
+        message_kind="execution_status",
+        sender="executor",
         payload={"status": "done", "work_item_id": "wi-1"},
     )
     await router.route(msg)
@@ -490,14 +501,16 @@ async def test_proxy_consumer_execution_status_done(
 
 @pytest.mark.asyncio
 async def test_proxy_consumer_execution_status_failed_dual_emit(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """execution_status with 'failed' → dual-emit to stream + activity."""
     proxy = MockProxyAgent()
     consumer = ProxyConsumer(store, router, proxy)
 
     msg = QueueMessage(
-        message_kind="execution_status", sender="executor",
+        message_kind="execution_status",
+        sender="executor",
         payload={"status": "failed", "work_item_id": "wi-1"},
     )
     await router.route(msg)
@@ -512,14 +525,16 @@ async def test_proxy_consumer_execution_status_failed_dual_emit(
 
 @pytest.mark.asyncio
 async def test_planner_consumer_plan_request(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """plan_request → runs planner → enqueues plan_result."""
     planner = MockPlannerAgent()
     consumer = PlannerConsumer(store, router, planner)
 
     msg = QueueMessage(
-        message_kind="plan_request", sender="proxy",
+        message_kind="plan_request",
+        sender="proxy",
         payload={"user_request": "refactor auth"},
     )
     await router.route(msg)
@@ -536,14 +551,16 @@ async def test_planner_consumer_plan_request(
 
 @pytest.mark.asyncio
 async def test_planner_consumer_replan_request(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """replan_request → runs planner with failure context → enqueues revised plan_result."""
     planner = MockPlannerAgent(plan_markdown="# Revised Plan")
     consumer = PlannerConsumer(store, router, planner)
 
     msg = QueueMessage(
-        message_kind="replan_request", sender="runtime",
+        message_kind="replan_request",
+        sender="runtime",
         payload={
             "original_goal": "refactor auth",
             "failure_history": [{"error": "test failed"}],
@@ -566,14 +583,16 @@ async def test_planner_consumer_replan_request(
 
 @pytest.mark.asyncio
 async def test_executor_consumer_execution_request(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """execution_request → runs executor → enqueues execution_status."""
     executor = MockExecutorAgent()
     consumer = ExecutorConsumer(store, router, executor)
 
     msg = QueueMessage(
-        message_kind="execution_request", sender="planner",
+        message_kind="execution_request",
+        sender="planner",
         payload={"work_item_id": "wi-1", "task_description": "do something"},
     )
     await router.route(msg)
@@ -590,14 +609,16 @@ async def test_executor_consumer_execution_request(
 
 @pytest.mark.asyncio
 async def test_executor_consumer_execution_request_failure(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """execution_request that fails → execution_status with status='failed'."""
     executor = MockExecutorAgent(fail=True)
     consumer = ExecutorConsumer(store, router, executor)
 
     msg = QueueMessage(
-        message_kind="execution_request", sender="planner",
+        message_kind="execution_request",
+        sender="planner",
         payload={"work_item_id": "wi-1", "task_description": "fail"},
     )
     await router.route(msg)
@@ -611,14 +632,16 @@ async def test_executor_consumer_execution_request_failure(
 
 @pytest.mark.asyncio
 async def test_executor_consumer_research_request(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """research_request → runs executor in research mode → enqueues research_result."""
     executor = MockExecutorAgent()
     consumer = ExecutorConsumer(store, router, executor)
 
     msg = QueueMessage(
-        message_kind="research_request", sender="planner",
+        message_kind="research_request",
+        sender="planner",
         payload={"query": "what is X?", "original_request": "plan Y"},
     )
     await router.route(msg)
@@ -634,7 +657,8 @@ async def test_executor_consumer_research_request(
 
 @pytest.mark.asyncio
 async def test_executor_consumer_execution_request_with_work_item_payload(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """execution_request with work_item payload runs WorkItemExecutor.execute."""
     executor = MockExecutorAgent()
@@ -670,7 +694,8 @@ async def test_executor_consumer_execution_request_with_work_item_payload(
 
 @pytest.mark.asyncio
 async def test_executor_consumer_invalid_work_item_nacks_then_dead_letters(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """Invalid work_item payload is retried, then dead-lettered at max attempts."""
     executor = MockExecutorAgent()
@@ -724,7 +749,8 @@ async def test_executor_consumer_invalid_work_item_nacks_then_dead_letters(
 
 @pytest.mark.asyncio
 async def test_consult_planner_receives_guidance(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """consult → enqueues to planner → receives guidance → returns it."""
     manager = ConsultPlannerManager(store, router)
@@ -743,7 +769,10 @@ async def test_consult_planner_receives_guidance(
 
     task = asyncio.create_task(_provide_guidance())
     result = await manager.consult(
-        "wi-1", "approach A failed", trace_id, timeout_s=5.0,
+        "wi-1",
+        "approach A failed",
+        trace_id,
+        timeout_s=5.0,
     )
     await task
 
@@ -752,13 +781,17 @@ async def test_consult_planner_receives_guidance(
 
 @pytest.mark.asyncio
 async def test_consult_planner_timeout(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """consult timeout → returns None."""
     manager = ConsultPlannerManager(store, router)
 
     result = await manager.consult(
-        "wi-1", "stuck", "trace-timeout", timeout_s=0.5,
+        "wi-1",
+        "stuck",
+        "trace-timeout",
+        timeout_s=0.5,
     )
     assert result is None
 
@@ -768,13 +801,15 @@ async def test_consult_planner_timeout(
 
 @pytest.mark.asyncio
 async def test_replan_enqueues_request(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """trigger_replan → enqueues replan_request to planner_queue."""
     manager = ReplanManager(router)
 
     ok = await manager.trigger_replan(
-        "wi-1", "refactor auth",
+        "wi-1",
+        "refactor auth",
         [{"error": "test failed"}],
         "trace-replan-1",
         current_depth=0,
@@ -789,13 +824,15 @@ async def test_replan_enqueues_request(
 
 @pytest.mark.asyncio
 async def test_replan_max_depth_exceeded(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """trigger_replan at max depth → returns False (escalate to user)."""
     manager = ReplanManager(router)
 
     ok = await manager.trigger_replan(
-        "wi-1", "refactor auth",
+        "wi-1",
+        "refactor auth",
         [{"error": "still failing"}],
         "trace-replan-2",
         current_depth=MAX_REPLAN_DEPTH,
@@ -843,7 +880,8 @@ def test_route_to_surface_unknown_defaults() -> None:
 
 @pytest.mark.asyncio
 async def test_orchestrator_start_stop(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """Orchestrator starts and stops cleanly."""
     consumer = EchoConsumer(store, router, "proxy_queue")
@@ -860,17 +898,22 @@ async def test_orchestrator_start_stop(
 
 @pytest.mark.asyncio
 async def test_orchestrator_processes_messages(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """Orchestrator's consumer actually processes messages."""
     proxy = MockProxyAgent(route="direct")
     consumer = ProxyConsumer(store, router, proxy)
     orchestrator = QueueOrchestrator(
-        store, router, [consumer], poll_interval_s=0.05,
+        store,
+        router,
+        [consumer],
+        poll_interval_s=0.05,
     )
 
     msg = QueueMessage(
-        message_kind="user_message", sender="user",
+        message_kind="user_message",
+        sender="user",
         payload={"text": "hello"},
     )
     await router.route(msg)
@@ -892,7 +935,8 @@ async def test_orchestrator_processes_messages(
 
 @pytest.mark.asyncio
 async def test_full_flow_user_to_executor_to_status(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """Full flow: user_message → proxy → planner → executor → execution_status → proxy.
 
@@ -908,7 +952,8 @@ async def test_full_flow_user_to_executor_to_status(
 
     # Step 1: User sends message.
     msg = QueueMessage(
-        message_kind="user_message", sender="user",
+        message_kind="user_message",
+        sender="user",
         trace_id="trace-full-flow",
         payload={"text": "refactor auth module"},
     )
@@ -931,7 +976,8 @@ async def test_full_flow_user_to_executor_to_status(
 
     # Step 4: Simulate approval → enqueue execution_request.
     exec_msg = QueueMessage(
-        message_kind="execution_request", sender="runtime",
+        message_kind="execution_request",
+        sender="runtime",
         trace_id="trace-full-flow",
         payload={"work_item_id": "wi-1", "task_description": "do the refactor"},
     )
@@ -954,14 +1000,16 @@ async def test_full_flow_user_to_executor_to_status(
 
 @pytest.mark.asyncio
 async def test_idempotency_skip_already_processed(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """If a message was already processed (crash recovery), it's acked without reprocessing."""
     proxy = MockProxyAgent()
     consumer = ProxyConsumer(store, router, proxy)
 
     msg = QueueMessage(
-        message_kind="user_message", sender="user",
+        message_kind="user_message",
+        sender="user",
         payload={"text": "hi"},
     )
     await router.route(msg)
@@ -982,14 +1030,16 @@ async def test_idempotency_skip_already_processed(
 
 @pytest.mark.asyncio
 async def test_trace_id_propagation(
-    store: DurableQueueStore, router: QueueRouter,
+    store: DurableQueueStore,
+    router: QueueRouter,
 ) -> None:
     """trace_id propagates from user_message through proxy to plan_request."""
     proxy = MockProxyAgent(route="planner")
     consumer = ProxyConsumer(store, router, proxy)
 
     msg = QueueMessage(
-        message_kind="user_message", sender="user",
+        message_kind="user_message",
+        sender="user",
         trace_id="trace-propagation-test",
         payload={"text": "complex task"},
     )

@@ -100,10 +100,12 @@ class TestSkillResolver:
         assert result[0].name == "parent-skill"
 
     def test_resolve_no_inherit_when_skills_declared(self) -> None:
-        loader = FakeLoader({
-            "own-skill": _make_skill("own-skill"),
-            "parent-skill": _make_skill("parent-skill"),
-        })
+        loader = FakeLoader(
+            {
+                "own-skill": _make_skill("own-skill"),
+                "parent-skill": _make_skill("parent-skill"),
+            }
+        )
         parent_resolver = lambda wi: ["parent-skill"]  # noqa: E731
         resolver = SkillResolver(loader=loader, parent_resolver=parent_resolver)
         wi = _make_work_item(skills=["own-skill"])
@@ -168,7 +170,9 @@ class TestFilteredToolset:
 
 class TestApprovalRequiredToolset:
     def test_blocks_approval_required_tools(self) -> None:
-        base = FunctionToolset([_make_tool("safe"), _make_tool("dangerous", requires_approval=True)])
+        base = FunctionToolset(
+            [_make_tool("safe"), _make_tool("dangerous", requires_approval=True)]
+        )
         wrapped = ApprovalRequiredToolset(inner=base)
 
         result = wrapped.call("dangerous", {})
@@ -176,14 +180,18 @@ class TestApprovalRequiredToolset:
         assert "requires approval" in result.error
 
     def test_passes_through_safe_tools(self) -> None:
-        base = FunctionToolset([_make_tool("safe"), _make_tool("dangerous", requires_approval=True)])
+        base = FunctionToolset(
+            [_make_tool("safe"), _make_tool("dangerous", requires_approval=True)]
+        )
         wrapped = ApprovalRequiredToolset(inner=base)
 
         result = wrapped.call("safe", {})
         assert result.status == "ok"
 
     def test_lists_all_tools(self) -> None:
-        base = FunctionToolset([_make_tool("safe"), _make_tool("dangerous", requires_approval=True)])
+        base = FunctionToolset(
+            [_make_tool("safe"), _make_tool("dangerous", requires_approval=True)]
+        )
         wrapped = ApprovalRequiredToolset(inner=base)
 
         names = [t.name for t in wrapped.list_tools()]

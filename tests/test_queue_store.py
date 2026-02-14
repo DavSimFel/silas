@@ -179,9 +179,7 @@ class TestIdempotency:
 class TestStartupRecovery:
     """requeue_expired clears stale leases from a previous crash."""
 
-    async def test_requeue_expired_clears_stale_leases(
-        self, store: DurableQueueStore
-    ) -> None:
+    async def test_requeue_expired_clears_stale_leases(self, store: DurableQueueStore) -> None:
         msg = _make_msg()
         await store.enqueue(msg)
 
@@ -228,9 +226,7 @@ class TestRouting:
 class TestConcurrentLease:
     """Two leases on the same queue return different messages."""
 
-    async def test_two_leases_get_different_messages(
-        self, store: DurableQueueStore
-    ) -> None:
+    async def test_two_leases_get_different_messages(self, store: DurableQueueStore) -> None:
         msg1 = _make_msg()
         msg2 = _make_msg()
         await store.enqueue(msg1)
@@ -292,7 +288,9 @@ class TestLeaseFiltered:
         await store.enqueue(msg)
 
         leased = await store.lease_filtered(
-            "proxy_queue", filter_trace_id="trace-abc", filter_message_kind="agent_response",
+            "proxy_queue",
+            filter_trace_id="trace-abc",
+            filter_message_kind="agent_response",
         )
         assert leased is not None
         assert leased.trace_id == "trace-abc"
@@ -310,7 +308,9 @@ class TestLeaseFiltered:
 
         # No match for trace-mine — should return None without leasing anything
         result = await store.lease_filtered(
-            "proxy_queue", filter_trace_id="trace-mine", filter_message_kind="agent_response",
+            "proxy_queue",
+            filter_trace_id="trace-mine",
+            filter_message_kind="agent_response",
         )
         assert result is None
 
@@ -329,7 +329,9 @@ class TestLeaseFiltered:
         await store.enqueue(msg)
 
         result = await store.lease_filtered(
-            "proxy_queue", filter_trace_id="trace-abc", filter_message_kind="agent_response",
+            "proxy_queue",
+            filter_trace_id="trace-abc",
+            filter_message_kind="agent_response",
         )
         assert result is None
 
@@ -337,16 +339,22 @@ class TestLeaseFiltered:
         """Two concurrent collect_response calls with different trace_ids each
         get only their own message, without touching the other's."""
         for tid in ("trace-1", "trace-2"):
-            await store.enqueue(QueueMessage(
-                queue_name="proxy_queue",
-                message_kind="agent_response",
-                sender="proxy",
-                trace_id=tid,
-            ))
+            await store.enqueue(
+                QueueMessage(
+                    queue_name="proxy_queue",
+                    message_kind="agent_response",
+                    sender="proxy",
+                    trace_id=tid,
+                )
+            )
 
         r1, r2 = await asyncio.gather(
-            store.lease_filtered("proxy_queue", filter_trace_id="trace-1", filter_message_kind="agent_response"),
-            store.lease_filtered("proxy_queue", filter_trace_id="trace-2", filter_message_kind="agent_response"),
+            store.lease_filtered(
+                "proxy_queue", filter_trace_id="trace-1", filter_message_kind="agent_response"
+            ),
+            store.lease_filtered(
+                "proxy_queue", filter_trace_id="trace-2", filter_message_kind="agent_response"
+            ),
         )
         assert r1 is not None
         assert r1.trace_id == "trace-1"

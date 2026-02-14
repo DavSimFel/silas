@@ -107,7 +107,9 @@ class SilasAccessController:
         self._downgrade_if_expired(state)
         return state.level_name
 
-    def get_allowed_tools(self, connection_id: str, *, taint: TaintLevel | None = None) -> list[str]:
+    def get_allowed_tools(
+        self, connection_id: str, *, taint: TaintLevel | None = None
+    ) -> list[str]:
         level = self.get_access_level(connection_id, taint=taint)
         return list(self._access_levels[level].tools)
 
@@ -189,7 +191,9 @@ class SilasAccessController:
             if level_name == "owner":
                 continue
             requirements = self._access_levels[level_name].requires
-            if set(requirements).issubset(verified_gates) and self._rank(level_name) >= self._rank(highest):
+            if set(requirements).issubset(verified_gates) and self._rank(level_name) >= self._rank(
+                highest
+            ):
                 highest = level_name
         return highest
 
@@ -212,8 +216,7 @@ class SilasAccessController:
         access_levels: Mapping[str, AccessLevel] | None,
     ) -> dict[str, AccessLevel]:
         merged = {
-            level_name: level.model_copy(deep=True)
-            for level_name, level in _DEFAULT_LEVELS.items()
+            level_name: level.model_copy(deep=True) for level_name, level in _DEFAULT_LEVELS.items()
         }
         if access_levels is None:
             return merged

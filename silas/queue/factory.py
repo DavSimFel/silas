@@ -77,7 +77,9 @@ async def create_queue_system(
     )
     planner_consumer = PlannerConsumer(store, router, planner_agent)
     executor_consumer = ExecutorConsumer(
-        store, router, executor_agent,
+        store,
+        router,
+        executor_agent,
         consult_manager=consult_manager,
         replan_manager=replan_manager,
     )

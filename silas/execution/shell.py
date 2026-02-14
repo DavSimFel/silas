@@ -40,7 +40,9 @@ class ShellExecutor:
                 if outcome.timed_out:
                     error = f"command timed out after {envelope.timeout_seconds}s"
                 else:
-                    error = outcome.stderr.strip() or f"command exited with status {outcome.exit_code}"
+                    error = (
+                        outcome.stderr.strip() or f"command exited with status {outcome.exit_code}"
+                    )
 
             return ExecutionResult(
                 execution_id=envelope.execution_id,

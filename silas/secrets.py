@@ -211,7 +211,10 @@ class PassphraseBackend:
 
         salt = self._load_or_create_salt()
         dk = _hashlib.pbkdf2_hmac(
-            "sha256", passphrase.encode(), salt, self._ITERATIONS,
+            "sha256",
+            passphrase.encode(),
+            salt,
+            self._ITERATIONS,
         )
         return urlsafe_b64encode(dk)
 

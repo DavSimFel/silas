@@ -26,6 +26,7 @@ class SandboxExecResult:
     timed_out: bool
     duration_seconds: float
 
+
 logger = logging.getLogger(__name__)
 
 _MINIMAL_PATH = "/usr/local/bin:/usr/bin:/bin"
@@ -34,7 +35,9 @@ _MINIMAL_PATH = "/usr/local/bin:/usr/bin:/bin"
 class SubprocessSandboxManager:
     """Subprocess-based sandbox backend with per-run isolated working directories."""
 
-    def __init__(self, base_dir: str | Path | None = None, preserve_sandboxes: bool = False) -> None:
+    def __init__(
+        self, base_dir: str | Path | None = None, preserve_sandboxes: bool = False
+    ) -> None:
         self._base_dir = Path(base_dir).resolve() if base_dir is not None else None
         self._preserve_sandboxes = preserve_sandboxes
         self._sandboxes: dict[str, Sandbox] = {}
@@ -200,8 +203,7 @@ class SubprocessSandboxManager:
         if probe.returncode != 0:
             detail = probe.stderr.strip() or probe.stdout.strip() or f"exit code {probe.returncode}"
             raise RuntimeError(
-                "network isolation unavailable: cannot create network namespace "
-                f"({detail})",
+                f"network isolation unavailable: cannot create network namespace ({detail})",
             )
 
         self._network_isolation_checked = True

@@ -72,9 +72,7 @@ class QueueOrchestrator:
             )
             self._tasks.append(task)
 
-        logger.info(
-            "QueueOrchestrator started %d consumers", len(self._consumers)
-        )
+        logger.info("QueueOrchestrator started %d consumers", len(self._consumers))
 
     async def stop(self) -> None:
         """Graceful shutdown: stop polling and wait for in-flight messages.
@@ -92,14 +90,17 @@ class QueueOrchestrator:
         if self._tasks:
             results = await asyncio.gather(*self._tasks, return_exceptions=True)
             for result in results:
-                if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+                if isinstance(result, BaseException) and not isinstance(
+                    result, asyncio.CancelledError
+                ):
                     logger.error("Consumer task failed during shutdown: %s", result)
 
         self._tasks.clear()
         logger.info("QueueOrchestrator stopped")
 
     async def _run_consumer(
-        self, consumer: BaseConsumer,
+        self,
+        consumer: BaseConsumer,
     ) -> None:
         """Poll loop with exponential backoff when queue is empty.
 

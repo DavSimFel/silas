@@ -68,7 +68,11 @@ class PredicateChecker:
             return self._result(gate.name, "block", f"invalid logic operator: {raw_logic!r}")
 
         raw_children = node.get("predicates")
-        if not isinstance(raw_children, Sequence) or isinstance(raw_children, str) or not raw_children:
+        if (
+            not isinstance(raw_children, Sequence)
+            or isinstance(raw_children, str)
+            or not raw_children
+        ):
             return self._result(gate.name, "block", "invalid predicates list")
 
         child_results: list[GateResult] = []
@@ -79,13 +83,7 @@ class PredicateChecker:
 
         action = self._merge_actions(logic, child_results)
         reasons = "; ".join(result.reason for result in child_results)
-        flags = sorted(
-            {
-                flag
-                for result in child_results
-                for flag in result.flags
-            }
-        )
+        flags = sorted({flag for result in child_results for flag in result.flags})
         value = next((result.value for result in child_results if result.value is not None), None)
         return GateResult(
             gate_name=gate.name,
@@ -160,7 +158,9 @@ class PredicateChecker:
                 value=value,
             )
 
-        return self._result(gate.name, "block", f"value {value} did not match any allowed range", value=value)
+        return self._result(
+            gate.name, "block", f"value {value} did not match any allowed range", value=value
+        )
 
     def _evaluate_string_match(self, gate: Gate, context: Mapping[str, object]) -> GateResult:
         value = self._as_text(self._extract_value(gate, context, gate.config))
@@ -204,8 +204,12 @@ class PredicateChecker:
 
         value = self._as_text(self._extract_value(gate, context, config))
         if compiled.search(value):
-            return self._result(gate.name, "continue", f"value matched regex {pattern!r}", value=value)
-        return self._result(gate.name, "block", f"value did not match regex {pattern!r}", value=value)
+            return self._result(
+                gate.name, "continue", f"value matched regex {pattern!r}", value=value
+            )
+        return self._result(
+            gate.name, "block", f"value did not match regex {pattern!r}", value=value
+        )
 
     def _evaluate_length(
         self,

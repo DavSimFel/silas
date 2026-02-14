@@ -152,7 +152,11 @@ async def test_llm_checker_handles_structured_fallback_in_quality_lane() -> None
 @pytest.mark.asyncio
 async def test_llm_checker_circuit_breaker_opens_and_short_circuits_quality() -> None:
     agent = _FakeStructuredAgent(
-        [RuntimeError("first failure"), RuntimeError("second failure"), {"score": 0.9, "flags": [], "reason": "ok"}]
+        [
+            RuntimeError("first failure"),
+            RuntimeError("second failure"),
+            {"score": 0.9, "flags": [], "reason": "ok"},
+        ]
     )
     checker = LLMChecker(agent, failure_threshold=2, cooldown_seconds=60)
     gate = _llm_gate()
@@ -186,7 +190,9 @@ async def test_llm_checker_circuit_breaker_blocks_promoted_policy() -> None:
 
 @pytest.mark.asyncio
 async def test_llm_checker_circuit_breaker_recovers_after_cooldown() -> None:
-    agent = _FakeStructuredAgent([RuntimeError("failure"), {"score": 0.77, "flags": [], "reason": "ok"}])
+    agent = _FakeStructuredAgent(
+        [RuntimeError("failure"), {"score": 0.77, "flags": [], "reason": "ok"}]
+    )
     checker = LLMChecker(agent, failure_threshold=1, cooldown_seconds=0.02)
     gate = _llm_gate()
 

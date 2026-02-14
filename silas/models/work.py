@@ -141,7 +141,11 @@ class WorkItem(BaseModel):
     def _validate_agent_lane(self) -> WorkItem:
         if self.type in {WorkItemType.task, WorkItemType.project} and self.agent != "ephemeral":
             raise ValueError("task and project work items must use agent='ephemeral'")
-        if self.type == WorkItemType.goal and self.schedule == "always_on" and self.agent == "ephemeral":
+        if (
+            self.type == WorkItemType.goal
+            and self.schedule == "always_on"
+            and self.agent == "ephemeral"
+        ):
             self.agent = "stream"
         return self
 

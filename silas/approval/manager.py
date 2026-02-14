@@ -49,9 +49,7 @@ class LiveApprovalManager:
 
     def get_fatigue_analysis(self, *, window_minutes: int = 30) -> FatigueAnalysis:
         """Snapshot of current fatigue state for the approval queue."""
-        return self._fatigue.analyze_fatigue(
-            self._decision_log, window_minutes=window_minutes
-        )
+        return self._fatigue.analyze_fatigue(self._decision_log, window_minutes=window_minutes)
 
     def request_approval(self, work_item: WorkItem, scope: ApprovalScope) -> ApprovalToken:
         if work_item.spawned_by is not None:
@@ -126,7 +124,9 @@ class LiveApprovalManager:
         return token
 
     def check_standing_approval(
-        self, work_item: WorkItem, goal_manager: object,
+        self,
+        work_item: WorkItem,
+        goal_manager: object,
     ) -> ApprovalToken | None:
         """Resolve a standing token for goal-spawned work when still active."""
         goal_id = work_item.spawned_by
@@ -226,9 +226,7 @@ class LiveApprovalManager:
     def _prune_expired(self) -> None:
         now = datetime.now(UTC)
         expired = [
-            token_id
-            for token_id, item in self._pending.items()
-            if item.token.expires_at <= now
+            token_id for token_id, item in self._pending.items() if item.token.expires_at <= now
         ]
         for token_id in expired:
             self._pending.pop(token_id, None)

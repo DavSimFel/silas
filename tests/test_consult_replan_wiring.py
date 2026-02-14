@@ -52,9 +52,12 @@ class MockExecutorAgent:
         self.call_count += 1
         self.last_prompt = prompt
         if self.call_count <= self._fail_count:
-            return _ExecResult(output=_ExecOutput(
-                summary="failed", last_error=f"attempt {self.call_count} failed",
-            ))
+            return _ExecResult(
+                output=_ExecOutput(
+                    summary="failed",
+                    last_error=f"attempt {self.call_count} failed",
+                )
+            )
         return _ExecResult(output=_ExecOutput(summary="Execution completed."))
 
 
@@ -68,9 +71,12 @@ class AlwaysFailExecutor:
     async def run(self, prompt: str, deps: object | None = None) -> _ExecResult:
         self.call_count += 1
         self.last_prompt = prompt
-        return _ExecResult(output=_ExecOutput(
-            summary="failed", last_error="persistent failure",
-        ))
+        return _ExecResult(
+            output=_ExecOutput(
+                summary="failed",
+                last_error="persistent failure",
+            )
+        )
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────
@@ -140,7 +146,9 @@ class TestRetryConsultFlow:
         executor = MockExecutorAgent(fail_count=1)
 
         consumer = ExecutorConsumer(
-            store, router, executor,
+            store,
+            router,
+            executor,
             consult_manager=consult_manager,
             replan_manager=replan_manager,
         )
@@ -185,7 +193,9 @@ class TestConsultTimeoutTriggersReplan:
         consult = ConsultPlannerManager(store, QueueRouter(store))
 
         consumer = ExecutorConsumer(
-            store, router, executor,
+            store,
+            router,
+            executor,
             consult_manager=consult,
             replan_manager=replan_manager,
         )
@@ -203,7 +213,10 @@ class TestConsultTimeoutTriggersReplan:
             timeout_s: float = 90.0,
         ) -> str | None:
             return await original_consult(
-                work_item_id, failure_context, trace_id, timeout_s=0.1,
+                work_item_id,
+                failure_context,
+                trace_id,
+                timeout_s=0.1,
             )
 
         consult.consult = fast_timeout_consult  # type: ignore[assignment]
@@ -242,7 +255,9 @@ class TestMaxReplanDepthEscalation:
         consult = ConsultPlannerManager(store, QueueRouter(store))
 
         consumer = ExecutorConsumer(
-            store, router, executor,
+            store,
+            router,
+            executor,
             consult_manager=consult,
             replan_manager=replan_manager,
         )
@@ -287,7 +302,9 @@ class TestBudgetAttribution:
         consult = ConsultPlannerManager(store, router)
 
         consumer = ExecutorConsumer(
-            store, router, executor,
+            store,
+            router,
+            executor,
             consult_manager=consult,
         )
 
@@ -362,7 +379,9 @@ class TestGuidedRetryAlsoFails:
         executor = AlwaysFailExecutor()
 
         consumer = ExecutorConsumer(
-            store, router, executor,
+            store,
+            router,
+            executor,
             consult_manager=consult_manager,
             replan_manager=replan_manager,
         )
@@ -413,10 +432,7 @@ class TestFactoryWiresConsultReplanIntoExecutorConsumer:
         )
 
         # Find the ExecutorConsumer in the orchestrator's consumers.
-        executor_consumers = [
-            c for c in orchestrator._consumers
-            if isinstance(c, ExecutorConsumer)
-        ]
+        executor_consumers = [c for c in orchestrator._consumers if isinstance(c, ExecutorConsumer)]
         assert len(executor_consumers) == 1
         ec = executor_consumers[0]
 

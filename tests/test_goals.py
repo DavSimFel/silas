@@ -112,7 +112,9 @@ class InMemoryMemoryStoreForConsolidator:
 
     async def list_recent(self, limit: int) -> list[MemoryItem]:
         values = list(self.items.values())
-        values.sort(key=lambda item: (item.updated_at, item.created_at, item.memory_id), reverse=True)
+        values.sort(
+            key=lambda item: (item.updated_at, item.created_at, item.memory_id), reverse=True
+        )
         return values[:limit]
 
     async def update(self, memory_id: str, **kwargs: object) -> None:
@@ -378,7 +380,9 @@ class TestMemoryConsolidator:
         assert store.items["m-stale"].reingestion_tier == ReingestionTier.dormant
 
     def test_promote_frequent_memory(self) -> None:
-        frequent = self._memory("m-frequent", content="freq", access_count=11, last_accessed=_utc_now())
+        frequent = self._memory(
+            "m-frequent", content="freq", access_count=11, last_accessed=_utc_now()
+        )
         store = InMemoryMemoryStoreForConsolidator([frequent])
         consolidator = SilasMemoryConsolidator(store)
 
@@ -389,7 +393,9 @@ class TestMemoryConsolidator:
 
     @pytest.mark.asyncio
     async def test_run_once_wraps_legacy_consolidate_behavior(self) -> None:
-        frequent = self._memory("m-run-once", content="freq", access_count=11, last_accessed=_utc_now())
+        frequent = self._memory(
+            "m-run-once", content="freq", access_count=11, last_accessed=_utc_now()
+        )
         store = InMemoryMemoryStoreForConsolidator([frequent])
         consolidator = SilasMemoryConsolidator(store)
 

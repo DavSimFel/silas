@@ -103,17 +103,27 @@ async def test_exec_isolates_working_dirs_between_sandboxes(tmp_path: Path) -> N
     first = await manager.create(config)
     second = await manager.create(config)
     try:
-        create_file = "from pathlib import Path; Path('only_here.txt').write_text('ok', encoding='utf-8')"
+        create_file = (
+            "from pathlib import Path; Path('only_here.txt').write_text('ok', encoding='utf-8')"
+        )
         await manager.exec(first.sandbox_id, [sys.executable, "-c", create_file], timeout_seconds=5)
 
         first_check = await manager.exec(
             first.sandbox_id,
-            [sys.executable, "-c", "from pathlib import Path; print(Path('only_here.txt').exists())"],
+            [
+                sys.executable,
+                "-c",
+                "from pathlib import Path; print(Path('only_here.txt').exists())",
+            ],
             timeout_seconds=5,
         )
         second_check = await manager.exec(
             second.sandbox_id,
-            [sys.executable, "-c", "from pathlib import Path; print(Path('only_here.txt').exists())"],
+            [
+                sys.executable,
+                "-c",
+                "from pathlib import Path; print(Path('only_here.txt').exists())",
+            ],
             timeout_seconds=5,
         )
 
@@ -196,7 +206,9 @@ async def test_exec_rejects_shell_dash_c(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_exec_does_not_inherit_host_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_exec_does_not_inherit_host_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("SILAS_APPROVAL_KEY", "super-secret")
     manager = SubprocessSandboxManager(base_dir=tmp_path)
     sandbox = await manager.create(SandboxConfig(work_dir=str(tmp_path / "work")))

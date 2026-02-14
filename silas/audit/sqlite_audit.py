@@ -21,15 +21,19 @@ class SQLiteAuditLog:
 
         async with aiosqlite.connect(self.db_path) as db:
             # Get previous entry hash
-            cursor = await db.execute(
-                "SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1"
-            )
+            cursor = await db.execute("SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1")
             row = await cursor.fetchone()
             prev_hash = row[0] if row else "genesis"
 
             # Compute this entry's hash
             canonical = json.dumps(
-                {"entry_id": entry_id, "event": event, "data": data_json, "timestamp": now, "prev_hash": prev_hash},
+                {
+                    "entry_id": entry_id,
+                    "event": event,
+                    "data": data_json,
+                    "timestamp": now,
+                    "prev_hash": prev_hash,
+                },
                 sort_keys=True,
                 separators=(",", ":"),
             )

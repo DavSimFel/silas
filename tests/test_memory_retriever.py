@@ -174,7 +174,9 @@ async def test_retrieve_semantic_uses_raw_lane_when_available() -> None:
 
 
 async def test_retrieve_semantic_falls_back_to_keyword_when_raw_is_empty() -> None:
-    store = RecordingMemoryStore(raw_results=[], keyword_results=[_item("k2", "keyword fallback memory")])
+    store = RecordingMemoryStore(
+        raw_results=[], keyword_results=[_item("k2", "keyword fallback memory")]
+    )
     retriever = SilasMemoryRetriever(store=store)
     query = MemoryQuery(strategy=MemoryQueryStrategy.semantic, query="fallback", max_results=3)
 

@@ -23,6 +23,9 @@ jobs:
       - name: Ruff
         run: uv run ruff check .
 
+      - name: Format check
+        run: uv run ruff format --check .
+
       - name: Pyright
         continue-on-error: true  # Informational until errors are triaged
         run: uv run pyright
@@ -51,6 +54,7 @@ jobs:
           # async fixture leaks are excluded from CI. They pass locally
           # with root/namespace access. See GitHub issue backlog.
           uv run pytest --splits 3 --group ${{ matrix.shard }} --timeout=10 -q \
+            --cov=silas --cov-fail-under=50 \
             --ignore=tests/test_scheduler.py \
             --ignore=tests/test_execution_layer.py \
             --ignore=tests/test_e2e_execution.py \

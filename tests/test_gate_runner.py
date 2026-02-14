@@ -236,7 +236,9 @@ def test_access_level_expiry_downgrades_automatically() -> None:
             requires=["gate_auth"],
             expires_after=1,
         ),
-        "trusted": AccessLevel(description="Trusted", tools=["read", "search", "write"], requires=[]),
+        "trusted": AccessLevel(
+            description="Trusted", tools=["read", "search", "write"], requires=[]
+        ),
         "owner": AccessLevel(description="Owner", tools=["*"]),
     }
     controller = SilasAccessController(owner_id="owner", access_levels=levels)

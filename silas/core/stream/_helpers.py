@@ -60,8 +60,7 @@ class HelpersMixin:
     def _known_scopes(self) -> list[str]:
         scopes = {self._turn_context().scope_id}
         scopes.update(
-            processor.turn_context.scope_id
-            for processor in self._turn_processors.values()
+            processor.turn_context.scope_id for processor in self._turn_processors.values()
         )
 
         context_manager = self._get_context_manager()
@@ -69,7 +68,8 @@ class HelpersMixin:
             by_scope = getattr(context_manager, "by_scope", None)
             if isinstance(by_scope, dict):
                 scopes.update(
-                    scope_id for scope_id in by_scope
+                    scope_id
+                    for scope_id in by_scope
                     if isinstance(scope_id, str) and scope_id.strip()
                 )
 
@@ -79,7 +79,8 @@ class HelpersMixin:
                 raw = getattr(chronicle_store, attr_name, None)
                 if isinstance(raw, (dict, list, tuple, set)):
                     scopes.update(
-                        scope_id for scope_id in raw
+                        scope_id
+                        for scope_id in raw
                         if isinstance(scope_id, str) and scope_id.strip()
                     )
 
@@ -172,7 +173,9 @@ class HelpersMixin:
     def _constitution_content(self) -> str:
         raw_constitution = self._config_value("personality", "constitution")
         if isinstance(raw_constitution, list):
-            lines = [f"- {line}" for line in raw_constitution if isinstance(line, str) and line.strip()]
+            lines = [
+                f"- {line}" for line in raw_constitution if isinstance(line, str) and line.strip()
+            ]
             if lines:
                 return "Constitution:\n" + "\n".join(lines)
         return (
@@ -243,7 +246,9 @@ class HelpersMixin:
         parts = schedule.split()
         return len(parts) == 5
 
-    def _prepend_high_confidence_suggestions(self, response_text: str, suggestions: list[SuggestionProposal]) -> str:
+    def _prepend_high_confidence_suggestions(
+        self, response_text: str, suggestions: list[SuggestionProposal]
+    ) -> str:
         if not suggestions:
             return response_text
         preface = "\n".join(f"Suggestion: {suggestion.text}" for suggestion in suggestions)

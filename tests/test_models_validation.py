@@ -132,16 +132,14 @@ class TestAgentResponse:
     def test_exactly_three_queries_allowed(self) -> None:
         """Boundary: 3 queries should be accepted (max is 3)."""
         queries = [
-            MemoryQuery(strategy=MemoryQueryStrategy.keyword, query=f"q{i}")
-            for i in range(3)
+            MemoryQuery(strategy=MemoryQueryStrategy.keyword, query=f"q{i}") for i in range(3)
         ]
         resp = AgentResponse(message="ok", memory_queries=queries)
         assert len(resp.memory_queries) == 3
 
     def test_four_queries_rejected(self) -> None:
         queries = [
-            MemoryQuery(strategy=MemoryQueryStrategy.keyword, query=f"q{i}")
-            for i in range(4)
+            MemoryQuery(strategy=MemoryQueryStrategy.keyword, query=f"q{i}") for i in range(4)
         ]
         with pytest.raises(ValidationError, match="3"):
             AgentResponse(message="ok", memory_queries=queries)
@@ -302,7 +300,9 @@ class TestTokenBudget:
             TokenBudget(skill_metadata_budget_pct=0.15)
 
     def test_default_profile_must_exist_in_profiles(self) -> None:
-        profile = ContextProfile(name="coding", chronicle_pct=0.2, memory_pct=0.2, workspace_pct=0.2)
+        profile = ContextProfile(
+            name="coding", chronicle_pct=0.2, memory_pct=0.2, workspace_pct=0.2
+        )
         with pytest.raises(ValidationError, match="default_profile"):
             TokenBudget(
                 profiles={"coding": profile},
@@ -348,7 +348,13 @@ class TestContextItem:
 class TestBudgetUsed:
     def test_exceeds_at_exact_limit(self) -> None:
         """Spec: >= semantics — reaching exact limit counts as exhausted."""
-        budget = Budget(max_tokens=100, max_cost_usd=1.0, max_wall_time_seconds=60, max_attempts=3, max_planner_calls=2)
+        budget = Budget(
+            max_tokens=100,
+            max_cost_usd=1.0,
+            max_wall_time_seconds=60,
+            max_attempts=3,
+            max_planner_calls=2,
+        )
         used = BudgetUsed(tokens=100)
         assert used.exceeds(budget) is True
 
@@ -379,8 +385,22 @@ class TestBudgetUsed:
 
     def test_merge_aggregates_all_fields(self) -> None:
         """Spec: merge MUST aggregate ALL fields including attempts and executor_runs."""
-        parent = BudgetUsed(tokens=100, cost_usd=0.5, wall_time_seconds=10.0, attempts=1, planner_calls=1, executor_runs=1)
-        child = BudgetUsed(tokens=200, cost_usd=1.0, wall_time_seconds=20.0, attempts=2, planner_calls=1, executor_runs=3)
+        parent = BudgetUsed(
+            tokens=100,
+            cost_usd=0.5,
+            wall_time_seconds=10.0,
+            attempts=1,
+            planner_calls=1,
+            executor_runs=1,
+        )
+        child = BudgetUsed(
+            tokens=200,
+            cost_usd=1.0,
+            wall_time_seconds=20.0,
+            attempts=2,
+            planner_calls=1,
+            executor_runs=3,
+        )
         result = parent.merge(child)
         assert result is parent  # mutates in place
         assert result.tokens == 300

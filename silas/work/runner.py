@@ -79,7 +79,9 @@ class WorkItemRunner:
             if result.status == WorkItemStatus.done:
                 logger.info(
                     "Work item %s completed on attempt %d/%d",
-                    work_item.id, attempt, max_attempts,
+                    work_item.id,
+                    attempt,
+                    max_attempts,
                 )
                 return result
 
@@ -94,7 +96,10 @@ class WorkItemRunner:
             delay = self._backoff_delay(attempt)
             logger.info(
                 "Work item %s failed on attempt %d/%d, retrying in %.1fs: %s",
-                work_item.id, attempt, max_attempts, delay,
+                work_item.id,
+                attempt,
+                max_attempts,
+                delay,
                 result.last_error or result.summary,
             )
             await asyncio.sleep(delay)
@@ -129,7 +134,9 @@ class WorkItemRunner:
         return min(delay, self._backoff_max)
 
     async def _handle_failure(
-        self, work_item: WorkItem, result: WorkItemResult,
+        self,
+        work_item: WorkItem,
+        result: WorkItemResult,
     ) -> WorkItemResult:
         """Handle final failure based on on_failure policy."""
         on_failure = work_item.on_failure
@@ -151,13 +158,17 @@ class WorkItemRunner:
             escalation = work_item.escalation.get("default")
             if escalation is not None and self._on_escalate is not None:
                 logger.warning(
-                    "Escalating work item %s: %s", work_item.id, escalation.action,
+                    "Escalating work item %s: %s",
+                    work_item.id,
+                    escalation.action,
                 )
                 try:
                     await self._on_escalate(work_item, escalation)
                 except (ValueError, RuntimeError, OSError) as exc:
                     logger.warning(
-                        "Escalation failed for work item %s: %s", work_item.id, exc,
+                        "Escalation failed for work item %s: %s",
+                        work_item.id,
+                        exc,
                     )
             return result.model_copy(
                 update={"summary": f"Escalated: {failure_context}"},

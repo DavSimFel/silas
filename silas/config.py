@@ -47,7 +47,11 @@ class ModelsConfig(BaseModel):
             return
 
         # Detect provider from any model string
-        providers = {m.split(":")[0] for m in [self.proxy, self.planner, self.executor, self.scorer] if ":" in m}
+        providers = {
+            m.split(":")[0]
+            for m in [self.proxy, self.planner, self.executor, self.scorer]
+            if ":" in m
+        }
         env_map = {
             "openrouter": "OPENROUTER_API_KEY",
             "openai": "OPENAI_API_KEY",

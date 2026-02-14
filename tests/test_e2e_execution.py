@@ -196,7 +196,7 @@ class TestVerificationRunnerIntegration:
         checks = [
             VerificationCheck(
                 name="python-calc",
-                run="python3 -c \"print(2 + 2)\"",
+                run='python3 -c "print(2 + 2)"',
                 expect=Expectation(equals="4"),
             ),
         ]
@@ -221,7 +221,7 @@ class TestVerificationRunnerIntegration:
             ),
             VerificationCheck(
                 name="pass-2",
-                run="python3 -c \"print(42)\"",
+                run='python3 -c "print(42)"',
                 expect=Expectation(equals="42"),
             ),
         ]

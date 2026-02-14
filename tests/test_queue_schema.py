@@ -188,13 +188,19 @@ class TestStoreMigration:
         async with aiosqlite.connect(store.db_path) as db:
             cursor = await db.execute("PRAGMA table_info(queue_messages)")
             cols = {row[1] for row in await cursor.fetchall()}
-        for col in ("scope_id", "taint", "task_id", "parent_task_id",
-                     "work_item_id", "approval_token", "tool_allowlist", "urgency"):
+        for col in (
+            "scope_id",
+            "taint",
+            "task_id",
+            "parent_task_id",
+            "work_item_id",
+            "approval_token",
+            "tool_allowlist",
+            "urgency",
+        ):
             assert col in cols, f"Missing column: {col}"
 
-    async def test_enqueue_lease_roundtrip_with_new_fields(
-        self, store: DurableQueueStore
-    ) -> None:
+    async def test_enqueue_lease_roundtrip_with_new_fields(self, store: DurableQueueStore) -> None:
         """Typed fields survive enqueue → lease cycle through SQLite."""
         msg = QueueMessage(
             message_kind="execution_request",
@@ -275,9 +281,17 @@ class TestStoreMigration:
                    (id, queue_name, message_kind, sender, trace_id, payload,
                     created_at, attempt_count, max_attempts)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                ("old-msg", "proxy_queue", "user_message", "user", "tr-1",
-                 json.dumps({"text": "legacy"}),
-                 "2025-01-01T00:00:00.000000+00:00", 0, 5),
+                (
+                    "old-msg",
+                    "proxy_queue",
+                    "user_message",
+                    "user",
+                    "tr-1",
+                    json.dumps({"text": "legacy"}),
+                    "2025-01-01T00:00:00.000000+00:00",
+                    0,
+                    5,
+                ),
             )
             await db.commit()
 
@@ -302,9 +316,7 @@ class TestStoreMigration:
         assert leased.tool_allowlist == []
         assert leased.urgency == "informational"
 
-    async def test_dead_letter_preserves_new_fields(
-        self, store: DurableQueueStore
-    ) -> None:
+    async def test_dead_letter_preserves_new_fields(self, store: DurableQueueStore) -> None:
         """scope_id and taint are carried into dead_letters table."""
         msg = QueueMessage(
             message_kind="user_message",

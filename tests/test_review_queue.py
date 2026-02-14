@@ -17,6 +17,7 @@ from silas.models.approval import ApprovalScope, ApprovalToken
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_request(
     scope: ApprovalScope = ApprovalScope.full_plan,
     *,
@@ -35,6 +36,7 @@ def _make_request(
 # ---------------------------------------------------------------------------
 # Enqueue + poll ordering
 # ---------------------------------------------------------------------------
+
 
 class TestEnqueueAndPoll:
     def test_enqueue_returns_pending_review(self) -> None:
@@ -82,6 +84,7 @@ class TestEnqueueAndPoll:
 # Resolve
 # ---------------------------------------------------------------------------
 
+
 class TestResolve:
     def test_approve_returns_token(self) -> None:
         q = ReviewQueue()
@@ -124,6 +127,7 @@ class TestResolve:
 # Batch resolve
 # ---------------------------------------------------------------------------
 
+
 class TestBatchResolve:
     def test_mixed_decisions(self) -> None:
         q = ReviewQueue()
@@ -131,11 +135,13 @@ class TestBatchResolve:
         r2 = q.enqueue(_make_request(request_id="b"))
         r3 = q.enqueue(_make_request(request_id="c"))
 
-        results = q.resolve_batch([
-            (r1.review_id, ReviewDecision.APPROVE),
-            (r2.review_id, ReviewDecision.DENY),
-            (r3.review_id, ReviewDecision.DEFER),
-        ])
+        results = q.resolve_batch(
+            [
+                (r1.review_id, ReviewDecision.APPROVE),
+                (r2.review_id, ReviewDecision.DENY),
+                (r3.review_id, ReviewDecision.DEFER),
+            ]
+        )
 
         assert isinstance(results[0], ApprovalToken)
         assert results[1] is None
@@ -147,6 +153,7 @@ class TestBatchResolve:
 # ---------------------------------------------------------------------------
 # Expiry
 # ---------------------------------------------------------------------------
+
 
 class TestExpireStale:
     def test_expire_removes_old_entries(self) -> None:
@@ -171,6 +178,7 @@ class TestExpireStale:
 # ---------------------------------------------------------------------------
 # Integration: LiveApprovalManager enqueues into review queue
 # ---------------------------------------------------------------------------
+
 
 class TestManagerIntegration:
     def test_request_approval_enqueues(self) -> None:

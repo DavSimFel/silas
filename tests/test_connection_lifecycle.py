@@ -161,7 +161,8 @@ class TestCredentialRefresh:
 
     @pytest.mark.asyncio
     async def test_refresh_credentials_returns_false_without_refresh_token(
-        self, manager: LiveConnectionManager,
+        self,
+        manager: LiveConnectionManager,
     ) -> None:
         handle = manager.register_connection(
             ConnectionConfig(name="no-rt", auth_strategy=AuthStrategy.oauth2)

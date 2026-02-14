@@ -127,7 +127,9 @@ class ContextScorer:
         current_taint: TaintLevel,
     ) -> float:
         w = self.weights
-        total_weight = w.recency + w.zone_priority + w.taint_match + w.keyword_overlap + w.reference_count
+        total_weight = (
+            w.recency + w.zone_priority + w.taint_match + w.keyword_overlap + w.reference_count
+        )
         if total_weight == 0.0:
             return 0.0
 

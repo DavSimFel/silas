@@ -137,7 +137,9 @@ class SilasGoalManager:
         key = (approval.goal_id, approval.policy_hash)
         ids = self._approval_ids_by_goal_and_policy.get(key)
         if ids is not None:
-            self._approval_ids_by_goal_and_policy[key] = [item for item in ids if item != approval_id]
+            self._approval_ids_by_goal_and_policy[key] = [
+                item for item in ids if item != approval_id
+            ]
             if not self._approval_ids_by_goal_and_policy[key]:
                 self._approval_ids_by_goal_and_policy.pop(key, None)
         return True
@@ -302,7 +304,9 @@ class SilasGoalManager:
             )
             return None
         if not isinstance(token, ApprovalToken):
-            logger.warning("Standing approval issuer returned non-token payload for goal %s", goal_id)
+            logger.warning(
+                "Standing approval issuer returned non-token payload for goal %s", goal_id
+            )
             return None
         return token
 

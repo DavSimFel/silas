@@ -126,7 +126,11 @@ async def test_send_permission_escalation() -> None:
     ch = WebChannel(host="127.0.0.1", port=0, config_path="/tmp/test.yaml")
     _simulate_card_response(ch, {"approved": True, "selected_value": "granted"})
     result = await ch.send_permission_escalation(
-        "owner", "outlook", ["read"], ["read", "write"], "need write access",
+        "owner",
+        "outlook",
+        ["read"],
+        ["read", "write"],
+        "need write access",
     )
     assert isinstance(result, DecisionResult)
     assert result.approved is True
@@ -165,11 +169,13 @@ async def test_card_response_via_handle_client_payload() -> None:
     future: asyncio.Future = asyncio.get_event_loop().create_future()
     ch._pending_card_responses["test-card-id"] = future
 
-    payload = json.dumps({
-        "type": "card_response",
-        "card_id": "test-card-id",
-        "verdict": "approved",
-    })
+    payload = json.dumps(
+        {
+            "type": "card_response",
+            "card_id": "test-card-id",
+            "verdict": "approved",
+        }
+    )
     await ch._handle_client_payload(payload, session_id="main")
 
     assert future.done()

@@ -418,7 +418,9 @@ class TestConnectionManager:
             auth_payload={"status": "error"},
         )
 
-        fake_process = _FakeProcess(stdout_lines=[json.dumps({"success": True, "message": "Recovered"})])
+        fake_process = _FakeProcess(
+            stdout_lines=[json.dumps({"success": True, "message": "Recovered"})]
+        )
 
         async def _fake_create_subprocess_exec(*args, **kwargs):
             del args, kwargs

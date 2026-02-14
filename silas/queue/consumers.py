@@ -120,12 +120,11 @@ class BaseConsumer:
 
         # Dead-letter check: if we've exhausted attempts, don't try again.
         if msg.attempt_count >= self._max_attempts:
-            await self._store.dead_letter(
-                msg.id, f"max_attempts_exceeded ({self._max_attempts})"
-            )
+            await self._store.dead_letter(msg.id, f"max_attempts_exceeded ({self._max_attempts})")
             logger.warning(
                 "Dead-lettered message %s after %d attempts",
-                msg.id, msg.attempt_count,
+                msg.id,
+                msg.attempt_count,
             )
             return True
 
@@ -141,7 +140,9 @@ class BaseConsumer:
             return True
 
         except Exception:
-            logger.exception("Consumer %s failed processing message %s", self._consumer_name, msg.id)
+            logger.exception(
+                "Consumer %s failed processing message %s", self._consumer_name, msg.id
+            )
             await self._store.nack(msg.id)
             return True
         finally:
@@ -246,8 +247,12 @@ class ProxyConsumer(BaseConsumer):
         """Run proxy agent on user message. Route to planner if needed."""
         typed_payload = msg.typed_payload()
         user_payload = typed_payload if isinstance(typed_payload, UserMessagePayload) else None
-        user_text = user_payload.text if user_payload is not None else str(msg.payload.get("text", ""))
-        metadata = user_payload.metadata if user_payload is not None else msg.payload.get("metadata")
+        user_text = (
+            user_payload.text if user_payload is not None else str(msg.payload.get("text", ""))
+        )
+        metadata = (
+            user_payload.metadata if user_payload is not None else msg.payload.get("metadata")
+        )
         rendered_context = ""
         personality_directives = ""
         if isinstance(metadata, dict):
@@ -296,8 +301,7 @@ class ProxyConsumer(BaseConsumer):
         raw_queries = getattr(agent_response, "memory_queries", None)
         if isinstance(raw_queries, list):
             memory_queries = [
-                query.model_dump(mode="json")
-                if hasattr(query, "model_dump") else query
+                query.model_dump(mode="json") if hasattr(query, "model_dump") else query
                 for query in raw_queries
             ]
 
@@ -305,9 +309,7 @@ class ProxyConsumer(BaseConsumer):
         raw_ops = getattr(agent_response, "memory_ops", None)
         if isinstance(raw_ops, list):
             memory_ops = [
-                op.model_dump(mode="json")
-                if hasattr(op, "model_dump") else op
-                for op in raw_ops
+                op.model_dump(mode="json") if hasattr(op, "model_dump") else op for op in raw_ops
             ]
         return QueueMessage(
             message_kind="agent_response",
@@ -350,7 +352,8 @@ class ProxyConsumer(BaseConsumer):
         status_payload = typed_payload if isinstance(typed_payload, StatusPayload) else None
         status_str = (
             status_payload.status.value
-            if status_payload is not None else str(msg.payload.get("status", ""))
+            if status_payload is not None
+            else str(msg.payload.get("status", ""))
         )
         surfaces = route_to_surface(status_str)
 
@@ -483,7 +486,8 @@ class PlannerConsumer(BaseConsumer):
         plan_payload = typed_payload if isinstance(typed_payload, PlanRequestPayload) else None
         user_request = (
             plan_payload.user_request
-            if plan_payload is not None else str(msg.payload.get("user_request", ""))
+            if plan_payload is not None
+            else str(msg.payload.get("user_request", ""))
         )
         result = await self._run_agent_with_allowlist(
             self._planner,
@@ -550,9 +554,7 @@ class PlannerConsumer(BaseConsumer):
                         "query": query,
                         "return_format": return_format,
                         "max_tokens": max_tokens,
-                        "original_request": str(
-                            origin_msg.payload.get("user_request", "")
-                        ),
+                        "original_request": str(origin_msg.payload.get("user_request", "")),
                         "research_mode": True,
                         "metadata": metadata_dict,
                     },
@@ -660,9 +662,7 @@ class PlannerConsumer(BaseConsumer):
         output = getattr(result, "output", None)
 
         plan_action = getattr(output, "plan_action", None) if output else None
-        plan_markdown = (
-            getattr(plan_action, "plan_markdown", "") or "" if plan_action else ""
-        )
+        plan_markdown = getattr(plan_action, "plan_markdown", "") or "" if plan_action else ""
         message_text = getattr(output, "message", "") or "" if output else ""
 
         metadata = msg.payload.get("metadata")
@@ -786,13 +786,10 @@ class ExecutorConsumer(BaseConsumer):
         )
         # Why prefer first-class field: work_item_id on the envelope is the
         # spec-mandated location (§2.1). Fall back to payload for backward compat.
-        work_item_id = (
-            msg.work_item_id
-            or (
-                execution_payload.work_item_id
-                if execution_payload is not None
-                else str(msg.payload.get("work_item_id", ""))
-            )
+        work_item_id = msg.work_item_id or (
+            execution_payload.work_item_id
+            if execution_payload is not None
+            else str(msg.payload.get("work_item_id", ""))
         )
         on_stuck = str(msg.payload.get("on_stuck", "consult_planner"))
         original_goal = str(msg.payload.get("original_goal", prompt))
@@ -805,7 +802,9 @@ class ExecutorConsumer(BaseConsumer):
         )
         output = getattr(result, "output", None)
 
-        summary = getattr(output, "summary", "Execution completed.") if output else "Execution completed."
+        summary = (
+            getattr(output, "summary", "Execution completed.") if output else "Execution completed."
+        )
         last_error = getattr(output, "last_error", None) if output else None
         status = "failed" if last_error else "done"
 
@@ -836,12 +835,16 @@ class ExecutorConsumer(BaseConsumer):
                 retry_error = getattr(retry_output, "last_error", None) if retry_output else None
                 retry_summary = (
                     getattr(retry_output, "summary", "Execution completed.")
-                    if retry_output else "Execution completed."
+                    if retry_output
+                    else "Execution completed."
                 )
 
                 if not retry_error:
                     return self._build_status_msg(
-                        msg.trace_id, work_item_id, "done", retry_summary,
+                        msg.trace_id,
+                        work_item_id,
+                        "done",
+                        retry_summary,
                     )
                 # Guided retry also failed — update context for replan.
                 last_error = retry_error
@@ -851,7 +854,10 @@ class ExecutorConsumer(BaseConsumer):
             if self._replan is not None:
                 failure_history: list[dict[str, object]] = [
                     {"phase": "execution", "error": str(last_error)},
-                    {"phase": "consult", "result": "timeout" if guidance is None else "guidance_failed"},
+                    {
+                        "phase": "consult",
+                        "result": "timeout" if guidance is None else "guidance_failed",
+                    },
                 ]
                 replan_enqueued = await self._replan.trigger_replan(
                     work_item_id=work_item_id,
@@ -865,13 +871,17 @@ class ExecutorConsumer(BaseConsumer):
                     # Replan was sent to planner — report stuck (not failed)
                     # so the orchestrator knows recovery is in progress.
                     return self._build_status_msg(
-                        msg.trace_id, work_item_id, "stuck",
+                        msg.trace_id,
+                        work_item_id,
+                        "stuck",
                         f"Replan triggered (depth {replan_depth + 1}): {last_error}",
                     )
 
                 # max_replan_depth exceeded → escalate to user.
                 return self._build_status_msg(
-                    msg.trace_id, work_item_id, "failed",
+                    msg.trace_id,
+                    work_item_id,
+                    "failed",
                     f"All recovery exhausted (replan depth {replan_depth}). "
                     f"Escalating to user. Last error: {last_error}",
                     escalated=True,
@@ -879,7 +889,11 @@ class ExecutorConsumer(BaseConsumer):
 
         # No cascade available or on_stuck doesn't request it.
         return self._build_status_msg(
-            msg.trace_id, work_item_id, "failed", summary, last_error=last_error,
+            msg.trace_id,
+            work_item_id,
+            "failed",
+            summary,
+            last_error=last_error,
         )
 
     def _deserialize_work_item(self, msg: QueueMessage) -> WorkItem | None:

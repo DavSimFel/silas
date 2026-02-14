@@ -118,10 +118,12 @@ def test_expectation_not_empty_false_is_treated_as_unset() -> None:
 
 @pytest.mark.asyncio
 async def test_run_structured_agent_retries_once_after_validation_error() -> None:
-    agent = _FlakyStructuredAgent([
-        _validation_error(),
-        _RunResult({"status": "ok"}),
-    ])
+    agent = _FlakyStructuredAgent(
+        [
+            _validation_error(),
+            _RunResult({"status": "ok"}),
+        ]
+    )
 
     result = await run_structured_agent(agent, "route this request", call_name="planner")
 

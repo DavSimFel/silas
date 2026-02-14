@@ -50,7 +50,9 @@ class PythonExecutor:
                 if outcome.timed_out:
                     error = f"python script timed out after {envelope.timeout_seconds}s"
                 else:
-                    error = outcome.stderr.strip() or f"script exited with status {outcome.exit_code}"
+                    error = (
+                        outcome.stderr.strip() or f"script exited with status {outcome.exit_code}"
+                    )
 
             return ExecutionResult(
                 execution_id=envelope.execution_id,
@@ -96,7 +98,9 @@ class PythonExecutor:
             raise ValueError("script_path must not contain '..'")
 
         base = Path(work_dir).resolve()
-        resolved = (base / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
+        resolved = (
+            (base / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
+        )
         if not self._is_relative_to(resolved, base):
             raise ValueError("script_path must remain inside sandbox work_dir")
         if not resolved.exists():

@@ -21,7 +21,9 @@ class WorkExecutorProtocol(Protocol):
 
 
 StandingApprovalResolver = Callable[[WorkItem], ApprovalToken | None]
-ManualApprovalRequester = Callable[[WorkItem], Awaitable[tuple[ApprovalDecision | None, ApprovalToken | None]]]
+ManualApprovalRequester = Callable[
+    [WorkItem], Awaitable[tuple[ApprovalDecision | None, ApprovalToken | None]]
+]
 
 
 async def execute_plan_actions(
@@ -37,7 +39,9 @@ async def execute_plan_actions(
     """
     try:
         work_items = plan_actions_to_work_items(
-            plan_actions, turn_number=turn_number, continuation_of=continuation_of,
+            plan_actions,
+            turn_number=turn_number,
+            continuation_of=continuation_of,
         )
         ordered = order_work_items(work_items)
     except ValueError as exc:
@@ -89,11 +93,7 @@ async def resolve_work_item_approval(
         return work_item
 
     decision, manual_token = await manual_approval_requester(work_item)
-    if (
-        decision is None
-        or decision.verdict != ApprovalVerdict.approved
-        or manual_token is None
-    ):
+    if decision is None or decision.verdict != ApprovalVerdict.approved or manual_token is None:
         return None
 
     return work_item.model_copy(
@@ -115,7 +115,10 @@ def plan_actions_to_work_items(
     work_items: list[WorkItem] = []
     for index, action in enumerate(plan_actions):
         work_item = plan_action_to_work_item(
-            action, parser=parser, index=index, turn_number=turn_number,
+            action,
+            parser=parser,
+            index=index,
+            turn_number=turn_number,
         )
         if continuation_of and work_item.follow_up_of is None:
             update_data: dict[str, object] = {"follow_up_of": continuation_of}
@@ -180,8 +183,7 @@ def order_work_items(work_items: list[WorkItem]) -> list[WorkItem]:
         by_id[item.id] = item
 
     prerequisites: dict[str, set[str]] = {
-        item.id: {dep_id for dep_id in item.depends_on if dep_id in by_id}
-        for item in work_items
+        item.id: {dep_id for dep_id in item.depends_on if dep_id in by_id} for item in work_items
     }
     dependents: dict[str, set[str]] = {item_id: set() for item_id in by_id}
     for item_id, deps in prerequisites.items():
@@ -196,7 +198,11 @@ def order_work_items(work_items: list[WorkItem]) -> list[WorkItem]:
         ordered_ids.append(current)
         for dependent in sorted(dependents[current]):
             prerequisites[dependent].discard(current)
-            if not prerequisites[dependent] and dependent not in ordered_ids and dependent not in ready:
+            if (
+                not prerequisites[dependent]
+                and dependent not in ordered_ids
+                and dependent not in ready
+            ):
                 ready.append(dependent)
         ready.sort()
 
@@ -212,18 +218,12 @@ def extract_skill_name(action: dict[str, object]) -> str | None:
     tool_call = action.get("tool_call")
     if isinstance(tool_call, dict):
         nested_candidate = (
-            tool_call.get("tool_name")
-            or tool_call.get("tool")
-            or tool_call.get("name")
+            tool_call.get("tool_name") or tool_call.get("tool") or tool_call.get("name")
         )
         if isinstance(nested_candidate, str) and nested_candidate.strip():
             return nested_candidate
 
-    candidate = (
-        action.get("skill_name")
-        or action.get("skill")
-        or action.get("tool")
-    )
+    candidate = action.get("skill_name") or action.get("skill") or action.get("tool")
     if isinstance(candidate, str) and candidate.strip():
         return candidate
     return None

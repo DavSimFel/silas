@@ -57,9 +57,17 @@ class MarkdownPlanParser(PlanParser):
     ) -> None:
         # Pass-through scalar fields that need no transformation
         scalar_fields = (
-            "parent", "spawned_by", "follow_up_of", "domain",
-            "agent", "needs_approval", "schedule", "on_stuck",
-            "on_failure", "failure_context", "executor_type",
+            "parent",
+            "spawned_by",
+            "follow_up_of",
+            "domain",
+            "agent",
+            "needs_approval",
+            "schedule",
+            "on_stuck",
+            "on_failure",
+            "failure_context",
+            "executor_type",
         )
         for field in scalar_fields:
             value = front_matter.get(field)
@@ -127,7 +135,11 @@ class MarkdownPlanParser(PlanParser):
             raise ValueError("markdown must start with YAML front matter delimited by '---'")
 
         closing_index = next(
-            (index for index, line in enumerate(lines[1:], start=1) if line.strip() == _FRONT_MATTER_DELIMITER),
+            (
+                index
+                for index, line in enumerate(lines[1:], start=1)
+                if line.strip() == _FRONT_MATTER_DELIMITER
+            ),
             None,
         )
         if closing_index is None:
@@ -144,7 +156,9 @@ class MarkdownPlanParser(PlanParser):
             return WorkItemType(str(raw_type))
         except ValueError as exc:
             valid_types = ", ".join(item.value for item in WorkItemType)
-            raise ValueError(f"invalid work item type '{raw_type}'. Expected one of: {valid_types}") from exc
+            raise ValueError(
+                f"invalid work item type '{raw_type}'. Expected one of: {valid_types}"
+            ) from exc
 
     def _parse_string_list(self, field_name: str, value: object) -> list[str]:
         if not isinstance(value, list):

@@ -57,17 +57,28 @@ class TaintTracker:
 
     # Tools with known taint ceilings.  Anything not listed defaults to owner
     # (i.e. internal tools don't escalate taint on their own).
-    EXTERNAL_TOOLS: ClassVar[frozenset[str]] = frozenset({
-        "web_search", "web_fetch", "web_browse",
-        "http_request", "api_call",
-        "email_send", "email_read",
-    })
+    EXTERNAL_TOOLS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "web_search",
+            "web_fetch",
+            "web_browse",
+            "http_request",
+            "api_call",
+            "email_send",
+            "email_read",
+        }
+    )
 
-    AUTH_TOOLS: ClassVar[frozenset[str]] = frozenset({
-        "calendar_read", "calendar_write",
-        "sharepoint_read", "sharepoint_write",
-        "notion_read", "notion_write",
-    })
+    AUTH_TOOLS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "calendar_read",
+            "calendar_write",
+            "sharepoint_read",
+            "sharepoint_write",
+            "notion_read",
+            "notion_write",
+        }
+    )
 
     def on_tool_input(self, taint: TaintLevel) -> None:
         """Record the taint of data flowing *into* the current execution.
