@@ -40,7 +40,7 @@ from silas.core.turn_context import TurnContext
 from silas.core.verification_runner import SilasVerificationRunner
 from silas.execution.sandbox import SubprocessSandboxManager
 from silas.gates import SilasGateRunner
-from silas.manual_harness import run_manual_harness
+from silas.manual_harness import print_scenarios, run_manual_harness
 from silas.memory.sqlite_store import SQLiteMemoryStore
 from silas.models.approval import ApprovalToken
 from silas.models.connections import Connection, HealthCheckResult, SetupStep, SetupStepResponse
@@ -830,9 +830,18 @@ def start_command(config_path: str) -> None:
     default=Path("reports/manual-harness"),
     show_default=True,
 )
-def manual_harness_command(profile: str, base_url: str, output_dir: Path) -> None:
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Print all scenarios without prompting.",
+)
+def manual_harness_command(profile: str, base_url: str, output_dir: Path, dry_run: bool) -> None:
     """Run the interactive manual acceptance harness and save reports."""
     normalized_profile = profile.lower()
+    if dry_run:
+        print_scenarios(normalized_profile)
+        return
     run_manual_harness(
         profile=normalized_profile,
         base_url=base_url,
