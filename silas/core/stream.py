@@ -1096,6 +1096,8 @@ class Stream:
                     processed_message_text, turn_id, turn_number,
                     scope_id, cm, tc, connection_id, message,
                     taint_tracker=taint_tracker,
+                    high_confidence_suggestions=high_confidence_suggestions,
+                    session_id=session_id,
                 )
 
             if tc.proxy is None:
@@ -1337,11 +1339,16 @@ class Stream:
         connection_id: str,
         message: ChannelMessage,
         taint_tracker: object | None = None,
+        high_confidence_suggestions: list[SuggestionProposal] | None = None,
+        session_id: str = "",
     ) -> str:
         """Dispatch a turn through the queue bridge instead of direct agent calls.
 
         Why a separate method: keeps _process_turn_with_active_context under
         C901 complexity limit while isolating the queue integration path.
+
+        Post-processing steps 8-15 are shared with the direct path to close
+        spec §5.1 compliance gaps (see GAP_ANALYSIS_QUEUE_PATH.md).
         """
         assert self.queue_bridge is not None  # caller guarantees this
         await self.queue_bridge.dispatch_turn(
@@ -1356,6 +1363,41 @@ class Stream:
         if not queue_text:
             queue_text = "Processing your request through the queue system."
 
+        # Step 13 (partial) — prepend high-confidence suggestions
+        if high_confidence_suggestions:
+            queue_text = self._prepend_high_confidence_suggestions(
+                queue_text, high_confidence_suggestions,
+            )
+
+        # Resolve accumulated taint from tracker instead of hardcoding owner
+        # (fixes GAP-10: taint propagation must use the tracker).
+        accumulated_taint = TaintLevel.owner
+        if taint_tracker is not None and hasattr(taint_tracker, "get_current_taint"):
+            accumulated_taint = taint_tracker.get_current_taint()
+
+        # Step 8 — output gates (security boundary)
+        blocked_gate_names: list[str] = []
+        queue_text, blocked_gate_names = await self._evaluate_output_gates(
+            queue_text, accumulated_taint, message.sender_id, turn_number,
+        )
+
+        # Step 9 — memory queries (gracefully skips when no AgentResponse)
+        # TODO: queue bridge should return structured AgentResponse so memory
+        # queries/ops from the agent are not lost.
+        agent_response = None
+        if queue_response is not None:
+            agent_response = queue_response.payload.get("agent_response")
+        await self._process_memory_queries(
+            agent_response, accumulated_taint, session_id, scope_id,
+            cm, turn_number,
+        )
+
+        # Step 10 — gated memory operations
+        await self._process_memory_ops(
+            agent_response, accumulated_taint, session_id, turn_number,
+        )
+
+        # Step 11 — chronicle append (response)
         response_item = ContextItem(
             ctx_id=f"chronicle:{turn_number}:resp:{uuid.uuid4().hex}",
             zone=ContextZone.chronicle,
@@ -1364,7 +1406,7 @@ class Stream:
             created_at=datetime.now(UTC),
             turn_number=turn_number,
             source="agent:queue_bridge",
-            taint=TaintLevel.owner,
+            taint=accumulated_taint,
             kind="message",
         )
         if cm is not None:
@@ -1372,7 +1414,29 @@ class Stream:
         if tc.chronicle_store is not None:
             await tc.chronicle_store.append(scope_id, response_item)
 
+        # Step 11.5 — ingest agent output as raw memory for future recall
+        await self._ingest_raw_memory(
+            queue_text, accumulated_taint, session_id, turn_number,
+        )
+
+        # Step 12 — plan/approval flow
+        # TODO: detect plan_actions in queue response payload and route them
+        # through _handle_planner_route / _ensure_plan_action_approvals.
+        # Currently the queue path relies on PlannerConsumer for plan routing,
+        # but the approval flow is absent (GAP-7).
+
         await self.channel.send(connection_id, queue_text, reply_to=message.reply_to)
+
+        # Step 14 — access state (noop in phase1a, same as direct path)
+        await self._audit("phase1a_noop", step=14, note="access state updates skipped")
+
+        # Step 15 — autonomy telemetry
+        await self._record_autonomy_outcome(
+            turn_number=turn_number,
+            route="queue_bridge",
+            blocked=bool(blocked_gate_names),
+        )
+
         await self._audit("turn_processed", turn_number=turn_number, route="queue_bridge")
         return queue_text
 
