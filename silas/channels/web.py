@@ -104,6 +104,15 @@ class WebChannel(ChannelAdapterCore):
                 },
             )
 
+        @self.app.get("/metrics")
+        async def metrics() -> Response:
+            from silas.core.metrics import metrics_generate_latest
+
+            return Response(
+                content=metrics_generate_latest(),
+                media_type="text/plain; version=0.0.4; charset=utf-8",
+            )
+
         self._setup_push_routes()
         self._setup_secret_routes()
         self._setup_onboarding_routes()
