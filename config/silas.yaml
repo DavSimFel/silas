@@ -53,3 +53,11 @@ silas:
       host: 127.0.0.1
       port: 8420
       auth_token: null
+  observability:
+    loki_url: "http://127.0.0.1:3100"
+    metrics_enabled: true
+    env: dev
+  telemetry:
+    enabled: true
+    endpoint: "localhost:4317"
+    env: dev
