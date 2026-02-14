@@ -54,7 +54,7 @@ jobs:
           # async fixture leaks are excluded from CI. They pass locally
           # with root/namespace access. See GitHub issue backlog.
           uv run pytest --splits 3 --group ${{ matrix.shard }} --timeout=10 -q \
-            --cov=silas --cov-fail-under=50 \
+            --cov=silas --cov-fail-under=50 --cov-config=pyproject.toml \
             --ignore=tests/test_scheduler.py \
             --ignore=tests/test_execution_layer.py \
             --ignore=tests/test_e2e_execution.py \
