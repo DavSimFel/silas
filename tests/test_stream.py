@@ -6,6 +6,7 @@ memory retrieval, context profile setting, and edge cases.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -13,6 +14,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from silas.approval import LiveApprovalManager
 from silas.core.stream import Stream
+from silas.core.turn_context import TurnContext
 from silas.models.agents import AgentResponse, InteractionMode, InteractionRegister, RouteDecision
 from silas.models.approval import ApprovalScope, ApprovalToken, ApprovalVerdict
 from silas.models.context import ContextZone
@@ -36,6 +38,7 @@ from tests.fakes import (
     InMemoryMemoryStore,
     InMemoryWorkItemStore,
     RunResult,
+    TestModel,
     sample_memory_item,
 )
 
@@ -285,6 +288,16 @@ class _StreamAllowAllApprovalVerifier:
     async def check(self, token: ApprovalToken, work_item) -> tuple[bool, str]:
         del token, work_item
         return True, "ok"
+
+
+class _QueuePersonalityEngine:
+    async def detect_context(self, message, route_hint=None) -> str:
+        del message, route_hint
+        return "default"
+
+    async def render_directives(self, scope_id: str, context_key: str) -> str:
+        del scope_id, context_key
+        return "Queue personality directives."
 
 
 class ApprovalDecisionChannel(InMemoryChannel):
@@ -979,6 +992,8 @@ class _StubQueueBridge:
     def __init__(self, response_text: str = "queue response") -> None:
         self._response_text = response_text
         self.dispatched: list[str] = []
+        self.dispatch_kwargs: list[dict[str, object]] = []
+        self.collect_timeouts: list[float] = []
         self._orchestrator = _StubOrchestrator()
 
     @property
@@ -986,9 +1001,13 @@ class _StubQueueBridge:
         return self._orchestrator
 
     async def dispatch_turn(self, user_message: str, trace_id: str, **kwargs) -> None:
+        del trace_id
         self.dispatched.append(user_message)
+        self.dispatch_kwargs.append(kwargs)
 
     async def collect_response(self, trace_id: str, timeout_s: float = 30.0):
+        del trace_id
+        self.collect_timeouts.append(timeout_s)
         from types import SimpleNamespace
         return SimpleNamespace(payload={"text": self._response_text})
 
@@ -996,17 +1015,12 @@ class _StubQueueBridge:
 @pytest.mark.asyncio
 async def test_process_turn_via_queue_accepts_taint_tracker_kwarg():
     """Regression: _process_turn_via_queue must accept taint_tracker keyword."""
-    from silas.core.stream import Stream
-    from silas.core.turn_context import TurnContext
-
-    from tests.fakes import TestModel as _TestModel
-
     bridge = _StubQueueBridge("ok from queue")
     stream = Stream(
         channel=InMemoryChannel(),
         turn_context=TurnContext(
             scope_id="owner",
-            proxy=_TestModel(),
+            proxy=TestModel(),
         ),
         owner_id="owner",
         default_context_profile="conversation",
@@ -1025,3 +1039,67 @@ async def test_process_turn_via_queue_accepts_taint_tracker_kwarg():
 
     assert bridge.dispatched == ["hello via queue"]
     assert "ok from queue" in result
+
+
+@pytest.mark.asyncio
+async def test_process_turn_via_queue_dispatches_personality_metadata() -> None:
+    """Queue dispatch carries personality directives metadata for proxy prompting."""
+    bridge = _StubQueueBridge("ok from queue")
+    stream = Stream(
+        channel=InMemoryChannel(),
+        turn_context=TurnContext(
+            scope_id="owner",
+            proxy=TestModel(),
+            personality_engine=_QueuePersonalityEngine(),
+        ),
+        owner_id="owner",
+        default_context_profile="conversation",
+        queue_bridge=bridge,
+    )
+
+    await stream._process_turn(
+        ChannelMessage(
+            channel="web",
+            sender_id="owner",
+            text="queue with personality",
+            timestamp=datetime.now(UTC),
+            is_authenticated=True,
+        ),
+    )
+
+    assert len(bridge.dispatch_kwargs) == 1
+    metadata = bridge.dispatch_kwargs[0].get("metadata")
+    assert isinstance(metadata, dict)
+    assert metadata["personality_directives"] == "Queue personality directives."
+    assert isinstance(metadata["rendered_context_json"], str)
+    rendered_context_data = json.loads(metadata["rendered_context_json"])
+    assert rendered_context_data["rendered_context"] == ""
+
+
+@pytest.mark.asyncio
+async def test_process_turn_via_queue_uses_configured_queue_timeout() -> None:
+    """Queue response timeout comes from settings.queue_timeout_s."""
+    bridge = _StubQueueBridge("ok from queue")
+    stream = Stream(
+        channel=InMemoryChannel(),
+        turn_context=TurnContext(
+            scope_id="owner",
+            proxy=TestModel(),
+            config=SimpleNamespace(queue_timeout_s=7.5),
+        ),
+        owner_id="owner",
+        default_context_profile="conversation",
+        queue_bridge=bridge,
+    )
+
+    await stream._process_turn(
+        ChannelMessage(
+            channel="web",
+            sender_id="owner",
+            text="timeout config",
+            timestamp=datetime.now(UTC),
+            is_authenticated=True,
+        ),
+    )
+
+    assert bridge.collect_timeouts == [7.5]

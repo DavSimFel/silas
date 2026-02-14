@@ -1098,8 +1098,6 @@ class Stream:
                     taint_tracker=taint_tracker,
                     high_confidence_suggestions=high_confidence_suggestions,
                     session_id=session_id,
-                    proxy_toolset=proxy_toolset,
-                    planner_toolset=planner_toolset,
                 )
 
             if tc.proxy is None:
@@ -1343,8 +1341,6 @@ class Stream:
         taint_tracker: object | None = None,
         high_confidence_suggestions: list[SuggestionProposal] | None = None,
         session_id: str = "",
-        proxy_toolset: ApprovalRequiredToolset | None = None,
-        planner_toolset: ApprovalRequiredToolset | None = None,
     ) -> str:
         """Dispatch a turn through the queue bridge instead of direct agent calls.
 
@@ -1355,22 +1351,23 @@ class Stream:
         spec §5.1 compliance gaps (see GAP_ANALYSIS_QUEUE_PATH.md).
         """
         assert self.queue_bridge is not None  # caller guarantees this
-        proxy_allowlist = self._tool_names(proxy_toolset)
-        planner_allowlist = self._tool_names(planner_toolset)
-        executor_allowlist = self._available_skill_names()
+        personality_directives = await self._queue_personality_directives(
+            scope_id=scope_id,
+            message=message,
+        )
+        rendered_context = ""
+        if cm is not None:
+            rendered_context = cm.render(scope_id, turn_number)
         await self.queue_bridge.dispatch_turn(
             user_message=message_text,
             trace_id=turn_id,
             metadata={
-                "rendered_context": cm.render(scope_id, turn_number) if cm is not None else "",
-                "proxy_tool_allowlist": proxy_allowlist,
-                "planner_tool_allowlist": planner_allowlist,
-                "executor_tool_allowlist": executor_allowlist,
+                "personality_directives": personality_directives,
+                "rendered_context_json": json.dumps({"rendered_context": rendered_context}),
             },
-            tool_allowlist=proxy_allowlist,
         )
         queue_response = await self.queue_bridge.collect_response(
-            trace_id=turn_id, timeout_s=30.0,
+            trace_id=turn_id, timeout_s=self._queue_timeout_seconds(),
         )
         queue_text = ""
         if queue_response is not None:
@@ -2326,6 +2323,28 @@ class Stream:
         personality_engine = self._turn_context().personality_engine
         if personality_engine is None:
             self._pending_persona_scopes.discard(scope_id)
+
+    async def _queue_personality_directives(
+        self,
+        *,
+        scope_id: str,
+        message: ChannelMessage,
+    ) -> str:
+        """Render personality directives for queue-dispatched proxy prompts."""
+        personality_engine = self._turn_context().personality_engine
+        if personality_engine is None:
+            return ""
+
+        try:
+            context_key = await personality_engine.detect_context(message)
+            return await personality_engine.render_directives(scope_id, context_key)
+        except (RuntimeError, ValueError, OSError) as exc:
+            await self._audit(
+                "queue_personality_directives_failed",
+                scope_id=scope_id,
+                error=str(exc),
+            )
+            return ""
             await self._audit("stream_startup_dependency_missing", dependency="personality_engine")
             return
 
@@ -2382,6 +2401,12 @@ class Stream:
         if not isinstance(value, int) or value < 1:
             return 50
         return value
+
+    def _queue_timeout_seconds(self) -> float:
+        value = self._config_value("queue_timeout_s", default=120.0)
+        if isinstance(value, (int, float)) and value > 0:
+            return float(value)
+        return 120.0
 
     def _observation_mask_after_turns(self) -> int:
         value = self._config_value("context", "observation_mask_after_turns", default=5)

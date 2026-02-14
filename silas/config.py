@@ -154,6 +154,7 @@ class SilasSettings(BaseSettings):
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     output_gates: list[Gate] = Field(default_factory=list)
+    queue_timeout_s: float = 120.0
 
     model_config = SettingsConfigDict(
         env_prefix="SILAS_",

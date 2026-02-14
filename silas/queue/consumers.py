@@ -13,7 +13,10 @@ Subclasses only implement _process() to define agent-specific dispatch logic.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+from contextlib import suppress
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -27,7 +30,13 @@ from silas.queue.research import ResearchStateMachine
 from silas.queue.router import QueueRouter
 from silas.queue.status_router import route_to_surface
 from silas.queue.store import DurableQueueStore
-from silas.queue.types import QueueMessage
+from silas.queue.types import (
+    ExecutionRequestPayload,
+    PlanRequestPayload,
+    QueueMessage,
+    StatusPayload,
+    UserMessagePayload,
+)
 from silas.tools.backends import build_research_console_toolset
 from silas.tools.filtered import FilteredToolset
 from silas.work.executor import work_item_from_execution_payload
@@ -120,6 +129,7 @@ class BaseConsumer:
             )
             return True
 
+        heartbeat_task = asyncio.create_task(self._heartbeat_lease(msg.id))
         try:
             response = await self._process(msg)
             await self._store.mark_processed(self._consumer_name, msg.id)
@@ -134,6 +144,16 @@ class BaseConsumer:
             logger.exception("Consumer %s failed processing message %s", self._consumer_name, msg.id)
             await self._store.nack(msg.id)
             return True
+        finally:
+            heartbeat_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat_task
+
+    async def _heartbeat_lease(self, message_id: str) -> None:
+        """Periodically extend the active lease while message processing runs."""
+        while True:
+            await asyncio.sleep(20)
+            await self._store.heartbeat(message_id)
 
     async def _process(self, msg: QueueMessage) -> QueueMessage | None:
         """Subclasses implement this. Returns a response message to route, or None."""
@@ -224,14 +244,20 @@ class ProxyConsumer(BaseConsumer):
 
     async def _handle_user_message(self, msg: QueueMessage) -> QueueMessage | None:
         """Run proxy agent on user message. Route to planner if needed."""
-        user_text = str(msg.payload.get("text", ""))
-        metadata = msg.payload.get("metadata")
+        typed_payload = msg.typed_payload()
+        user_payload = typed_payload if isinstance(typed_payload, UserMessagePayload) else None
+        user_text = user_payload.text if user_payload is not None else str(msg.payload.get("text", ""))
+        metadata = user_payload.metadata if user_payload is not None else msg.payload.get("metadata")
         rendered_context = ""
+        personality_directives = ""
         if isinstance(metadata, dict):
-            rendered_context = str(metadata.get("rendered_context", ""))
+            rendered_context = self._deserialize_rendered_context(metadata)
+            personality_directives = str(metadata.get("personality_directives", ""))
 
         # Include chronicle context so the proxy has conversation history.
         prompt = f"{rendered_context}\n\nUser: {user_text}" if rendered_context else user_text
+        if personality_directives:
+            prompt = f"{personality_directives}\n\n{prompt}"
         result = await self._run_agent_with_allowlist(
             self._proxy,
             prompt,
@@ -261,18 +287,58 @@ class ProxyConsumer(BaseConsumer):
             )
 
         # Direct response: send agent_response back so collect_response picks it up.
-        response_text = getattr(output, "response", None)
-        if response_text is None:
+        agent_response = getattr(output, "response", None)
+        response_text = getattr(agent_response, "message", "")
+        if not response_text:
             response_text = getattr(output, "message", "")
-        if hasattr(response_text, "message"):
-            response_text = response_text.message
+
+        memory_queries: list[object] = []
+        raw_queries = getattr(agent_response, "memory_queries", None)
+        if isinstance(raw_queries, list):
+            memory_queries = [
+                query.model_dump(mode="json")
+                if hasattr(query, "model_dump") else query
+                for query in raw_queries
+            ]
+
+        memory_ops: list[object] = []
+        raw_ops = getattr(agent_response, "memory_ops", None)
+        if isinstance(raw_ops, list):
+            memory_ops = [
+                op.model_dump(mode="json")
+                if hasattr(op, "model_dump") else op
+                for op in raw_ops
+            ]
         return QueueMessage(
             message_kind="agent_response",
             sender="proxy",
             trace_id=msg.trace_id,
-            payload={"text": str(response_text or "")},
+            payload={
+                "text": str(response_text or ""),
+                "agent_response": (
+                    agent_response.model_dump(mode="json")
+                    if hasattr(agent_response, "model_dump")
+                    else None
+                ),
+                "memory_queries": memory_queries,
+                "memory_ops": memory_ops,
+            },
             tool_allowlist=msg.tool_allowlist,
         )
+
+    @staticmethod
+    def _deserialize_rendered_context(metadata: dict[str, object]) -> str:
+        """Extract rendered context from JSON metadata, falling back to legacy text."""
+        serialized = metadata.get("rendered_context_json")
+        if isinstance(serialized, str) and serialized.strip():
+            try:
+                parsed = json.loads(serialized)
+            except json.JSONDecodeError:
+                return ""
+            if isinstance(parsed, dict):
+                raw = parsed.get("rendered_context", "")
+                return str(raw)
+        return str(metadata.get("rendered_context", ""))
 
     def _handle_execution_status(self, msg: QueueMessage) -> QueueMessage | None:
         """Route execution status to appropriate UI surfaces.
@@ -280,7 +346,12 @@ class ProxyConsumer(BaseConsumer):
         Why no async: status routing is a pure data transform with no I/O.
         The actual UI notification happens downstream.
         """
-        status_str = str(msg.payload.get("status", ""))
+        typed_payload = msg.typed_payload()
+        status_payload = typed_payload if isinstance(typed_payload, StatusPayload) else None
+        status_str = (
+            status_payload.status.value
+            if status_payload is not None else str(msg.payload.get("status", ""))
+        )
         surfaces = route_to_surface(status_str)
 
         # Attach surface routing info to the payload so downstream consumers
@@ -349,7 +420,6 @@ class ProxyConsumer(BaseConsumer):
 
         verdict = getattr(decision, "verdict", None)
         return verdict == ApprovalVerdict.approved
-        return None
 
     async def _handle_generic(self, msg: QueueMessage) -> QueueMessage | None:
         """Run proxy on informational messages (agent_response, system_event, etc.)."""
@@ -409,7 +479,12 @@ class PlannerConsumer(BaseConsumer):
         plan_result yet — that comes when research completes.
         """
         self._research.reset()
-        user_request = str(msg.payload.get("user_request", ""))
+        typed_payload = msg.typed_payload()
+        plan_payload = typed_payload if isinstance(typed_payload, PlanRequestPayload) else None
+        user_request = (
+            plan_payload.user_request
+            if plan_payload is not None else str(msg.payload.get("user_request", ""))
+        )
         result = await self._run_agent_with_allowlist(
             self._planner,
             user_request,
@@ -700,10 +775,25 @@ class ExecutorConsumer(BaseConsumer):
                 result = await self._work_executor.execute(work_item)
                 return self._status_from_work_result(msg, work_item.id, result)
 
-        prompt = str(msg.payload.get("task_description", msg.payload.get("body", "")))
+        typed_payload = msg.typed_payload()
+        execution_payload = (
+            typed_payload if isinstance(typed_payload, ExecutionRequestPayload) else None
+        )
+        prompt = (
+            execution_payload.task_description or execution_payload.body
+            if execution_payload is not None
+            else str(msg.payload.get("task_description", msg.payload.get("body", "")))
+        )
         # Why prefer first-class field: work_item_id on the envelope is the
         # spec-mandated location (§2.1). Fall back to payload for backward compat.
-        work_item_id = msg.work_item_id or str(msg.payload.get("work_item_id", ""))
+        work_item_id = (
+            msg.work_item_id
+            or (
+                execution_payload.work_item_id
+                if execution_payload is not None
+                else str(msg.payload.get("work_item_id", ""))
+            )
+        )
         on_stuck = str(msg.payload.get("on_stuck", "consult_planner"))
         original_goal = str(msg.payload.get("original_goal", prompt))
         replan_depth = int(msg.payload.get("replan_depth", 0))
