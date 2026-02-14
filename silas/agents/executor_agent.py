@@ -102,6 +102,7 @@ class ExecutorAgent:
                     agent=self.agent,
                     prompt=prompt,
                     call_name="executor",
+                    model_name=self.model,
                 )
                 output = self._coerce_output(raw)
                 return self._materialize_tool_calls(output)

@@ -35,6 +35,7 @@ from silas.core.context_manager import LiveContextManager
 from silas.core.logging import setup_logging
 from silas.core.plan_parser import MarkdownPlanParser
 from silas.core.stream import Stream
+from silas.core.telemetry import init_tracing, shutdown_tracing
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
 from silas.core.verification_runner import SilasVerificationRunner
@@ -807,6 +808,12 @@ def start_command(config_path: str) -> None:
     if obs.loki_url:
         setup_logging(loki_url=obs.loki_url, loki_env=obs.env)
 
+    init_tracing(
+        service_name="silas",
+        env=obs.env,
+        endpoint="localhost:4317" if obs.metrics_enabled else None,
+    )
+
     passphrase = _resolve_signing_passphrase()
 
     try:
@@ -815,6 +822,8 @@ def start_command(config_path: str) -> None:
         raise click.ClickException(str(exc)) from exc
     except KeyboardInterrupt:
         click.echo("Shutting down.")
+    finally:
+        shutdown_tracing()
 
 
 @cli.command("manual-harness")

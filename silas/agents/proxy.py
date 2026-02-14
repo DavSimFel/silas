@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING
 
 from pydantic_ai import Agent
 
+from silas.core.metrics import LLM_CALLS_TOTAL, LLM_TOKENS_TOTAL
+from silas.core.telemetry import get_tracer
 from silas.models.agents import AgentResponse, InteractionMode, InteractionRegister, RouteDecision
 
 if TYPE_CHECKING:
@@ -26,6 +28,7 @@ if TYPE_CHECKING:
     from silas.tools.toolsets import AgentToolBundle
 
 logger = logging.getLogger(__name__)
+_TRACER = get_tracer("silas.agents")
 
 DEFAULT_PROXY_SYSTEM_PROMPT = """You are the Silas Proxy agent.
 
@@ -110,10 +113,21 @@ class ProxyAgent:
         # Try LLM path first
         if self.agent is not None and self._llm_available:
             try:
-                if self._use_tools and deps is not None:
-                    result = await self.agent.run(prompt, deps=deps)
-                else:
-                    result = await self.agent.run(prompt)
+                with _TRACER.start_as_current_span("agent.proxy"):
+                    LLM_CALLS_TOTAL.labels(model=self.model).inc()
+                    if self._use_tools and deps is not None:
+                        result = await self.agent.run(prompt, deps=deps)
+                    else:
+                        result = await self.agent.run(prompt)
+                    usage = result.usage()
+                    if usage.request_tokens is not None:
+                        LLM_TOKENS_TOTAL.labels(model=self.model, direction="input").inc(
+                            usage.request_tokens
+                        )
+                    if usage.response_tokens is not None:
+                        LLM_TOKENS_TOTAL.labels(model=self.model, direction="output").inc(
+                            usage.response_tokens
+                        )
                 return ProxyRunResult(output=result.output)
             except (ConnectionError, TimeoutError, ValueError, RuntimeError):
                 logger.warning(

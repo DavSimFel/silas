@@ -115,6 +115,7 @@ class PlannerAgent:
                     prompt=prompt,
                     call_name="planner",
                     default_context_profile=self.default_context_profile,
+                    model_name=self.model,
                 )
                 return self._coerce_response(raw, user_request)
             except (ConnectionError, TimeoutError, ValueError, RuntimeError):
