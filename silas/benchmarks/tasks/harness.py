@@ -54,9 +54,7 @@ def configure(base_url: str = _BASE_URL, auth_token: str | None = None) -> None:
 def core_01_bootstrap_health() -> Task:
     """core-01: Bootstrap and web health."""
     return Task(
-        dataset=MemoryDataset(
-            samples=[Sample(input="health check", target="ok")]
-        ),
+        dataset=MemoryDataset(samples=[Sample(input="health check", target="ok")]),
         solver=silas_health_check(base_url=_base_url()),
         scorer=health_check_scorer(),
         metadata={"scenario_id": "core-01-bootstrap-health", "tier": "core"},
@@ -67,9 +65,7 @@ def core_01_bootstrap_health() -> Task:
 def core_02_websocket_auth_reject() -> Task:
     """core-02a: WebSocket auth — reject without token."""
     return Task(
-        dataset=MemoryDataset(
-            samples=[Sample(input="connect without_token", target="rejected")]
-        ),
+        dataset=MemoryDataset(samples=[Sample(input="connect without_token", target="rejected")]),
         solver=silas_ws_auth_check(base_url=_base_url(), auth_token=None),
         scorer=ws_auth_scorer(),
         metadata={"scenario_id": "core-02-websocket-auth-reject", "tier": "core"},
@@ -80,9 +76,7 @@ def core_02_websocket_auth_reject() -> Task:
 def core_02_websocket_auth_accept() -> Task:
     """core-02b: WebSocket auth — accept with valid token."""
     return Task(
-        dataset=MemoryDataset(
-            samples=[Sample(input="connect with_token", target="connected")]
-        ),
+        dataset=MemoryDataset(samples=[Sample(input="connect with_token", target="connected")]),
         solver=silas_ws_auth_check(base_url=_base_url(), auth_token=_auth_token()),
         scorer=ws_auth_scorer(),
         metadata={"scenario_id": "core-02-websocket-auth-accept", "tier": "core"},
@@ -93,9 +87,7 @@ def core_02_websocket_auth_accept() -> Task:
 def core_03_direct_turn() -> Task:
     """core-03: Direct turn and chronicle update."""
     return Task(
-        dataset=MemoryDataset(
-            samples=[Sample(input="What can you do?", target="response")]
-        ),
+        dataset=MemoryDataset(samples=[Sample(input="What can you do?", target="response")]),
         solver=silas_message(base_url=_base_url(), auth_token=_auth_token()),
         scorer=response_received_scorer(),
         metadata={"scenario_id": "core-03-direct-turn-roundtrip", "tier": "core"},

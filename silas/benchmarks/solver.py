@@ -155,13 +155,9 @@ def silas_ws_auth_check(
         user_msg = state.messages[-1].text if state.messages else ""
 
         if "without_token" in user_msg or "no_token" in user_msg:
-            result = await _ws_roundtrip(
-                base_url, "", auth_token=None, expect_rejection=True
-            )
+            result = await _ws_roundtrip(base_url, "", auth_token=None, expect_rejection=True)
         else:
-            result = await _ws_roundtrip(
-                base_url, user_msg, auth_token=auth_token
-            )
+            result = await _ws_roundtrip(base_url, user_msg, auth_token=auth_token)
 
         state.output = state.output.model_copy(
             update={"completion": json.dumps(result)},
