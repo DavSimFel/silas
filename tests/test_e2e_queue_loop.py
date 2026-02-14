@@ -81,7 +81,9 @@ class DirectProxyAgent:
             payload={"text": f"Direct answer to: {prompt}"},
         )
         await self._router.route(response)
-        return _MockResult(output=_MockOutput(route="direct"))
+        return _MockResult(
+            output=_MockOutput(route="direct", message=f"Direct answer to: {prompt}"),
+        )
 
     def set_trace_id(self, trace_id: str) -> None:
         """Inject the trace_id so the mock can tag its response correctly."""
