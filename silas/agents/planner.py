@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from pydantic_ai import Agent
 
 from silas.agents.structured import run_structured_agent
+from silas.core.plan_parser import MarkdownPlanParser
 from silas.models.agents import AgentResponse, InteractionMode, PlanAction, PlanActionType
 
 if TYPE_CHECKING:
@@ -155,7 +156,14 @@ class PlannerAgent:
             and plan_action.plan_markdown
             and plan_action.plan_markdown.strip()
         ):
-            return response
+            # Validate that the markdown is actually parseable before passing
+            # it downstream — otherwise the queue consumer silently drops it.
+            try:
+                MarkdownPlanParser().parse(plan_action.plan_markdown)
+            except ValueError:
+                logger.warning("LLM plan_markdown failed validation; using fallback")
+            else:
+                return response
 
         fallback_markdown = self._fallback_markdown(user_request)
         patched_action = PlanAction(

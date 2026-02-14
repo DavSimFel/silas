@@ -17,10 +17,34 @@ from silas.protocols.work import PlanParser
 
 _FRONT_MATTER_DELIMITER = "---"
 _REQUIRED_FIELDS = ("id", "type", "title")
+_CODE_FENCE_LANGUAGES = ("markdown", "md", "yaml", "")
+
+
+def _strip_code_fences(text: str) -> str:
+    """Remove wrapping code fences that LLMs commonly add around markdown.
+
+    Handles patterns like ```markdown\\n...\\n``` and ```\\n...\\n```.
+    Only strips a single outermost fence pair.
+    """
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return text
+
+    lines = stripped.splitlines()
+    first_line_body = lines[0][3:].strip().lower()
+    if first_line_body not in _CODE_FENCE_LANGUAGES:
+        return text
+
+    # Find closing fence
+    if len(lines) >= 2 and lines[-1].strip() == "```":
+        return "\n".join(lines[1:-1])
+
+    return text
 
 
 class MarkdownPlanParser(PlanParser):
     def parse(self, markdown: str) -> WorkItem:
+        markdown = _strip_code_fences(markdown)
         front_matter_text, body = self._split_front_matter(markdown)
         try:
             front_matter = yaml.safe_load(front_matter_text) or {}
