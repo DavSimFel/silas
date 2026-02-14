@@ -1,358 +1,226 @@
-# Queue & Work Orchestration Spec
+# Queue / Work Orchestration Specification
 
-> Subsystem reference for `silas/queue/` and `silas/work/`.
-> Covers architecture, message contracts, consumer lifecycle, durability, error recovery, and security.
+> Silas subsystem reference — covers `silas/queue/*` and `silas/work/*`.
 
 ---
 
 ## 1. Architecture Overview
 
-The queue subsystem replaces direct agent invocations with a durable, message-driven bus. Three agent consumers (proxy, planner, executor) communicate exclusively through typed `QueueMessage` envelopes persisted in SQLite.
-
-### Component Map
+The queue/work subsystem replaces direct agent invocations with an asynchronous, message-driven bus. It sits between the **Stream** turn pipeline (user-facing) and the three core agents (proxy, planner, executor).
 
 ```
-┌─────────┐    dispatch_turn()    ┌─────────────┐
-│  Stream  │─────────────────────▶│ QueueBridge  │
-└─────────┘    collect_response() └──────┬───────┘
-                                         │
-                              ┌──────────▼──────────┐
-                              │    QueueRouter       │
-                              │  (ROUTE_TABLE lookup)│
-                              └──────────┬───────────┘
-                                         │ enqueue()
-                              ┌──────────▼──────────┐
-                              │  DurableQueueStore   │
-                              │  (SQLite + leases)   │
-                              └──────────┬───────────┘
-                                         │ lease()
-                    ┌────────────────────┼────────────────────┐
-                    │                    │                     │
-             ┌──────▼──────┐   ┌────────▼────────┐  ┌────────▼────────┐
-             │ProxyConsumer │   │PlannerConsumer   │  │ExecutorConsumer  │
-             │ proxy_queue  │   │ planner_queue    │  │ executor_queue   │
-             └──────────────┘   └─────────────────┘  └──────────────────┘
+┌──────────┐         ┌─────────────┐
+│  Stream  │────────▶│ QueueBridge │
+└──────────┘         └──────┬──────┘
+                            │ dispatch_turn / dispatch_goal
+                            ▼
+                     ┌─────────────┐
+                     │ QueueRouter │  ← static ROUTE_TABLE
+                     └──────┬──────┘
+          ┌─────────────────┼─────────────────┐
+          ▼                 ▼                  ▼
+   ┌─────────────┐  ┌──────────────┐  ┌──────────────┐
+   │ proxy_queue  │  │planner_queue │  │executor_queue│
+   │  (Proxy      │  │  (Planner    │  │  (Executor   │
+   │   Consumer)  │  │   Consumer)  │  │   Consumer)  │
+   └─────────────┘  └──────────────┘  └──────────────┘
+          │                 │                  │
+          └─────────────────┼──────────────────┘
+                            ▼
+                   ┌─────────────────┐
+                   │DurableQueueStore│  (SQLite, FIFO, lease-based)
+                   └─────────────────┘
 ```
 
-**Orchestrator** (`QueueOrchestrator`) runs all consumers as concurrent asyncio tasks with exponential backoff (0.1 s base, 5 s cap). **Factory** (`create_queue_system`) wires store → router → consumers → orchestrator → bridge in one call.
+**Key components:**
 
-### Data Flow — User Turn (Queue Path)
+| Component | Module | Role |
+|-----------|--------|------|
+| `DurableQueueStore` | `queue/store.py` | SQLite-backed persistence with lease semantics |
+| `QueueRouter` | `queue/router.py` | Maps `message_kind` → destination queue |
+| `QueueOrchestrator` | `queue/orchestrator.py` | Runs consumers as concurrent async tasks with backoff |
+| `QueueBridge` | `queue/bridge.py` | Integration seam between Stream and the queue bus |
+| `ProxyConsumer` | `queue/consumers.py` | Handles user messages, plan results, status events |
+| `PlannerConsumer` | `queue/consumers.py` | Creates plans, manages research flow |
+| `ExecutorConsumer` | `queue/consumers.py` | Executes tasks with self-healing cascade |
+| `LiveWorkItemExecutor` | `work/executor.py` | Full work-item execution with gates, verification, budgets |
+| `LiveExecutorPool` | `work/pool.py` | Concurrency-capped parallel dispatch with conflict detection |
+| `WorkItemRunner` | `work/runner.py` | Retry loop with exponential backoff and escalation policies |
+| `BatchExecutor` | `work/batch.py` | Gate-checked batch operations on work-item stores |
 
-1. `Stream` calls `QueueBridge.dispatch_turn(text, trace_id, metadata)`.
-2. Bridge builds a `user_message` `QueueMessage` and routes it to `proxy_queue`.
-3. `ProxyConsumer` leases the message, runs the proxy agent.
-   - If route = `"planner"` → produces `plan_request` → routed to `planner_queue`.
-   - If route = `"direct"` → produces `agent_response` → stays in `proxy_queue`.
-4. `PlannerConsumer` leases `plan_request`, runs planner agent.
-   - May dispatch `research_request` messages to `executor_queue` (via `ResearchStateMachine`).
-   - Produces `plan_result` → routed to `proxy_queue`.
-5. `ProxyConsumer` receives `plan_result`, parses plan, requests approval via channel.
-   - On approval → produces `execution_request` → routed to `executor_queue`.
-6. `ExecutorConsumer` leases `execution_request`, runs executor (with self-healing cascade).
-   - Produces `execution_status` → routed to `proxy_queue`.
-7. `QueueBridge.collect_response(trace_id)` polls `proxy_queue` for `agent_response` matching `trace_id`.
-
-### Autonomous Goals (Scheduler Path)
-
-`QueueBridge.dispatch_goal(goal_id, description, trace_id)` enqueues a `plan_request` with `sender="runtime"` and `autonomous=True` directly to `planner_queue`, bypassing proxy.
+**Factory:** `queue/factory.py` → `create_queue_system()` wires all components in correct dependency order and returns `(QueueOrchestrator, QueueBridge)`.
 
 ---
 
-## 2. Queue Message Types & Lifecycle
+## 2. Message Types
 
-### 2.1 Envelope: `QueueMessage`
+All messages use the `QueueMessage` envelope (`queue/types.py`), a Pydantic model with:
 
-Every message shares a canonical Pydantic envelope:
+- `id` (UUID4, auto-generated)
+- `queue_name` (set by router)
+- `message_kind` (see table below)
+- `sender` ∈ `{user, proxy, planner, executor, runtime}`
+- `trace_id` (propagated unchanged across all hops)
+- `payload` (dict, extensible; typed payloads available via `typed_payload()`)
+- Lease fields: `lease_id`, `lease_expires_at`, `attempt_count`
+- First-class fields (§2.1): `scope_id`, `taint`, `task_id`, `parent_task_id`, `work_item_id`, `approval_token`, `tool_allowlist`, `urgency`
 
-| Field | Type | Purpose |
-|-------|------|---------|
-| `id` | `str` (UUID4) | Unique, auto-generated idempotency key |
-| `queue_name` | `str` | Set by router before enqueue |
-| `message_kind` | `MessageKind` | Discriminator for routing and payload parsing |
-| `sender` | `Sender` | `"user" \| "proxy" \| "planner" \| "executor" \| "runtime"` |
-| `trace_id` | `str` (UUID4) | Propagated unchanged across all hops for distributed tracing |
-| `payload` | `dict[str, object]` | Extensible body; typed access via `typed_payload()` |
-| `created_at` | `datetime` | UTC timestamp, ISO 8601 in SQLite |
-| `lease_id` / `lease_expires_at` | `str? / datetime?` | Set by store during lease operations |
-| `attempt_count` | `int` | Incremented on nack |
-| `scope_id` | `str?` | Executor scope (worktree isolation) |
-| `taint` | `TaintLevel?` | Security taint from inbound source |
-| `task_id` / `parent_task_id` | `str?` | Cross-message linking for plan→execute→status chain |
-| `work_item_id` | `str?` | Reference to work item being executed |
-| `approval_token` | `str?` | Consumed by approval engine at execution entry |
-| `tool_allowlist` | `list[str]` | Per-hop tool exposure contract |
-| `urgency` | `Urgency` | `"background" \| "informational" \| "needs_attention"` |
+### Message Kinds and Routing
 
-### 2.2 Message Kinds
+| `message_kind` | Destination Queue | Typed Payload | Description |
+|-----------------|-------------------|---------------|-------------|
+| `user_message` | `proxy_queue` | `UserMessagePayload` | Inbound user turn |
+| `agent_response` | `proxy_queue` | `AgentResponsePayload` | Proxy response for `collect_response` |
+| `plan_request` | `planner_queue` | `PlanRequestPayload` | Request to create/revise a plan |
+| `plan_result` | `proxy_queue` | — | Planner's completed plan (markdown) |
+| `execution_request` | `executor_queue` | `ExecutionRequestPayload` | Task to execute |
+| `execution_status` | `proxy_queue` | `StatusPayload` | Status update (done/failed/stuck/blocked) |
+| `research_request` | `executor_queue` | — | Read-only research micro-task |
+| `research_result` | `planner_queue` | — | Research findings returned to planner |
+| `planner_guidance` | `runtime_queue` | — | Consult-planner response |
+| `replan_request` | `planner_queue` | — | Request alternative strategy after failure |
+| `approval_request` | `proxy_queue` | — | Plan approval request for user |
+| `approval_result` | `runtime_queue` | — | Approval decision |
+| `system_event` | `proxy_queue` | — | Informational runtime events |
 
-| Kind | Route → Queue | Sender → Receiver | Typed Payload |
-|------|--------------|-------------------|---------------|
-| `user_message` | `proxy_queue` | user → proxy | `UserMessagePayload` |
-| `plan_request` | `planner_queue` | proxy/runtime → planner | `PlanRequestPayload` |
-| `plan_result` | `proxy_queue` | planner → proxy | *(raw dict)* |
-| `execution_request` | `executor_queue` | proxy → executor | `ExecutionRequestPayload` |
-| `execution_status` | `proxy_queue` | executor → proxy | `StatusPayload` |
-| `research_request` | `executor_queue` | planner → executor | *(raw dict)* |
-| `research_result` | `planner_queue` | executor → planner | *(raw dict)* |
-| `planner_guidance` | `runtime_queue` | planner → runtime | *(raw dict)* |
-| `replan_request` | `planner_queue` | runtime → planner | *(raw dict)* |
-| `approval_request` | `proxy_queue` | runtime → proxy | *(raw dict)* |
-| `approval_result` | `runtime_queue` | proxy → runtime | *(raw dict)* |
-| `agent_response` | `proxy_queue` | proxy → bridge | `AgentResponsePayload` |
-| `system_event` | `proxy_queue` | runtime → proxy | *(raw dict)* |
+### Error and Status Payloads
 
-### 2.3 Message Lifecycle
-
-```
-enqueue → [available] → lease → [leased] → process
-                                    │
-                          ┌─────────┼─────────┐
-                          ▼         ▼         ▼
-                        ack       nack    dead_letter
-                      (delete)  (release   (move to
-                                +incr      dead_letters
-                                attempt)    table)
-```
-
-- **Lease duration**: 60 s default. Extended via heartbeat every 20 s during processing.
-- **Max attempts**: 5 (configurable per consumer). Exceeded → dead-letter.
-- **Idempotency**: `processed_messages` table tracks `(consumer, message_id)` pairs. Consumers check `has_processed()` before executing side effects.
+- **`ErrorPayload`**: `error_code` ∈ `{tool_failure, budget_exceeded, gate_blocked, approval_denied, verification_failed, timeout}`, plus `message`, `origin_agent`, `retryable`, optional `detail`.
+- **`StatusPayload`**: `status` ∈ `{running, done, failed, stuck, blocked, verification_failed}`, `work_item_id`, `attempt`, optional `detail`.
+- **`ResearchConstraints`**: `return_format`, `max_tokens`, `tools_allowed` (clamped to research allowlist).
 
 ---
 
-## 3. Consumer Responsibilities
-
-All consumers extend `BaseConsumer`, which provides:
-- `poll_once()` — lease one message, dispatch to `_process()`, ack/nack.
-- Heartbeat task — background coroutine extending lease every 20 s.
-- Idempotency check via `has_processed()` / `mark_processed()`.
-- Dead-letter on `attempt_count >= max_attempts`.
-- Tool allowlist enforcement via `FilteredToolset` wrapping.
+## 3. Consumer Roles
 
 ### 3.1 ProxyConsumer (`proxy_queue`)
 
-**Handles**: `user_message`, `plan_result`, `execution_status`, `agent_response`, `approval_request`, `system_event`.
+Entry point for user interaction. Handles:
 
-| Input Kind | Behavior |
-|------------|----------|
-| `user_message` | Runs proxy agent. If output route = `"planner"` → emits `plan_request`. If `"direct"` → emits `agent_response` (with memory ops). |
-| `plan_result` | Parses plan markdown via `MarkdownPlanParser`, requests approval via channel, emits `execution_request` on approval. |
-| `execution_status` | Routes to UI surfaces via `route_to_surface()`. Terminal — no outbound message. |
-| `agent_response` | Terminal. Consumed by `QueueBridge.collect_response()`. |
-| Other | Runs proxy agent for informational display. |
+| Incoming kind | Behavior |
+|---------------|----------|
+| `user_message` | Runs proxy agent → if `route=planner`, emits `plan_request`; otherwise emits `agent_response` |
+| `plan_result` | Parses plan markdown → requests user approval → if approved, emits `execution_request` |
+| `execution_status` | Routes to UI surfaces via `status_router` (stream, activity) |
+| `agent_response` | Terminal — consumed by `QueueBridge.collect_response` |
+| `approval_request`, `system_event` | Informational pass-through to proxy agent |
 
 ### 3.2 PlannerConsumer (`planner_queue`)
 
-**Handles**: `plan_request`, `research_result`, `replan_request`.
+Creates and revises execution plans. Handles:
 
-| Input Kind | Behavior |
-|------------|----------|
-| `plan_request` | Resets `ResearchStateMachine`, runs planner. If planner requests research → dispatches `research_request` messages, returns `None` (deferred). Otherwise emits `plan_result`. |
-| `research_result` | Feeds into `ResearchStateMachine`. When all results collected (or timed out) → re-runs planner with research context → emits `plan_result`. |
-| `replan_request` | Runs planner with failure history context, explicitly requesting alternative strategy. Emits `plan_result` with `is_replan=True`. |
-
-#### Research State Machine (§4.8)
-
-Manages multi-step research during planning with strict controls:
-
-- **States**: `planning` → `awaiting_research` → `ready_to_finalize` (or `expired`).
-- **Caps**: max 3 in-flight, max 5 rounds total, 120 s per-request timeout.
-- **Dedup**: SHA-256 hash of `(query, return_format, max_tokens)`.
-- **Partial finalization**: if some requests timeout, planner proceeds with available results.
+| Incoming kind | Behavior |
+|---------------|----------|
+| `plan_request` | Runs planner → if research needed, dispatches `research_request` messages; otherwise emits `plan_result` |
+| `research_result` | Feeds result into `ResearchStateMachine`; when all results collected (or timed out), re-runs planner with research context → emits `plan_result` |
+| `replan_request` | Runs planner with failure history → emits `plan_result` with `is_replan=True` |
 
 ### 3.3 ExecutorConsumer (`executor_queue`)
 
-**Handles**: `execution_request`, `research_request`.
+Executes tasks with the self-healing cascade. Handles:
 
-| Input Kind | Behavior |
-|------------|----------|
-| `execution_request` | If `WorkItemExecutor` is wired and payload contains serialized `WorkItem` → delegates to `LiveWorkItemExecutor`. Otherwise runs executor agent directly with self-healing cascade. Emits `execution_status`. |
-| `research_request` | Runs executor in read-only mode (`RESEARCH MODE` prefix) with `RESEARCH_TOOL_ALLOWLIST`. Emits `research_result`. |
+| Incoming kind | Behavior |
+|---------------|----------|
+| `execution_request` | Runs executor → on failure, triggers consult→retry→replan→escalate cascade → emits `execution_status` |
+| `research_request` | Runs executor in read-only research mode → emits `research_result` |
 
-#### Self-Healing Cascade (Principle #8)
+### Base Consumer Lifecycle (`BaseConsumer`)
 
-When execution fails (`on_stuck = "consult_planner"`):
-
-1. **Consult planner** — `ConsultPlannerManager` enqueues guidance request to `planner_queue`, polls `runtime_queue` for response (90 s timeout).
-2. **Guided retry** — re-run executor with planner guidance appended to prompt.
-3. **Replan** — if guided retry fails, `ReplanManager` enqueues `replan_request` (max depth = 2).
-4. **Escalate** — if replan depth exceeded, report `execution_status` with `escalated=True`.
+All consumers share: `lease → idempotency check → dead-letter check → process → mark_processed → ack`. On failure: `nack` (returns message to queue). Lease heartbeats extend active leases every 20s during long processing.
 
 ---
 
-## 4. Queue Bridge Interface
+## 4. Bridge Interface
 
-`QueueBridge` is the integration seam between Stream (procedural) and queue (message-driven) execution.
+`QueueBridge` (`queue/bridge.py`) is the integration seam for Stream:
 
-### `dispatch_turn(user_message, trace_id, metadata, *, scope_id, taint, tool_allowlist)`
+| Method | Purpose |
+|--------|---------|
+| `dispatch_turn(user_message, trace_id, metadata, *, scope_id, taint, tool_allowlist)` | Enqueues `user_message` to `proxy_queue` |
+| `dispatch_goal(goal_id, goal_description, trace_id)` | Enqueues autonomous `plan_request` directly to `planner_queue` (bypasses proxy) |
+| `collect_response(trace_id, timeout_s=30.0)` | Polls `proxy_queue` for matching `agent_response` using `lease_filtered` |
 
-Builds a `user_message` QueueMessage and routes to `proxy_queue`. Stream calls this instead of `proxy.run()`.
+**Design rationale:** Bridge avoids modifying Stream's ~800-line orchestration. Stream calls bridge methods instead of direct agent invocations, enabling incremental migration to queue-based dispatch.
 
-### `dispatch_goal(goal_id, goal_description, trace_id)`
-
-Enqueues `plan_request` with `autonomous=True` directly to `planner_queue`. Used by the scheduler for standing-approved goals.
-
-### `collect_response(trace_id, timeout_s=30.0) → QueueMessage | None`
-
-Polls `proxy_queue` using `lease_filtered(trace_id, "agent_response")` at 100 ms intervals. Returns the matching `agent_response` or `None` on timeout. Uses filtered lease to avoid O(n) scanning and message reordering.
+**Polling:** `collect_response` polls at 100ms intervals using `lease_filtered` (filters by `trace_id` + `message_kind`), avoiding the O(n) lease-then-nack pattern.
 
 ---
 
 ## 5. Durable Store
 
-### 5.1 SQLite Schema
+`DurableQueueStore` (`queue/store.py`) — SQLite-backed via `aiosqlite`.
 
-**`queue_messages`** — active messages (deleted on ack):
+### Tables
 
-```sql
-id TEXT PRIMARY KEY,
-queue_name TEXT NOT NULL,
-message_kind TEXT NOT NULL,
-sender TEXT NOT NULL,
-trace_id TEXT NOT NULL,
-payload TEXT NOT NULL DEFAULT '{}',    -- JSON
-created_at TEXT NOT NULL,               -- ISO 8601
-lease_id TEXT,
-lease_expires_at TEXT,
-attempt_count INTEGER NOT NULL DEFAULT 0,
-max_attempts INTEGER NOT NULL DEFAULT 5,
-scope_id TEXT, taint TEXT, task_id TEXT, parent_task_id TEXT,
-work_item_id TEXT, approval_token TEXT,
-tool_allowlist TEXT NOT NULL DEFAULT '[]',  -- JSON array
-urgency TEXT NOT NULL DEFAULT 'informational'
+| Table | Purpose |
+|-------|---------|
+| `queue_messages` | Active messages (FIFO per queue, indexed on `queue_name + lease state + created_at`) |
+| `dead_letters` | Permanently failed messages (kept for debugging) |
+| `processed_messages` | Idempotency ledger (`consumer × message_id`, unique constraint) |
+
+### Operations
+
+| Operation | Semantics |
+|-----------|-----------|
+| `enqueue(msg)` | INSERT with pre-set `queue_name` |
+| `lease(queue_name, lease_duration_s=60)` | Atomic UPDATE+RETURNING on oldest available message (no lease or expired lease) |
+| `lease_filtered(queue_name, trace_id, message_kind, ...)` | Filtered lease for specific response polling |
+| `ack(message_id)` | DELETE from `queue_messages` |
+| `nack(message_id)` | Clear lease, increment `attempt_count` |
+| `dead_letter(message_id, reason)` | Move to `dead_letters`, delete from `queue_messages` |
+| `heartbeat(message_id, extend_s=60)` | Extend `lease_expires_at` |
+| `has_processed(consumer, message_id)` | Idempotency check |
+| `mark_processed(consumer, message_id)` | Record processing (INSERT OR IGNORE) |
+| `requeue_expired()` | Startup crash recovery — clear all expired leases |
+| `pending_count(queue_name)` | Monitoring — count unleased messages |
+
+### Schema Migration
+
+`_migrate_add_columns()` uses `PRAGMA table_info` introspection to add new columns (`scope_id`, `taint`, `task_id`, `parent_task_id`, `work_item_id`, `approval_token`, `tool_allowlist`, `urgency`) without data loss.
+
+---
+
+## 6. Error Handling
+
+### 6.1 Consumer-Level
+
+- **Max attempts:** 5 (default). After exhaustion → `dead_letter` with reason `max_attempts_exceeded`.
+- **Idempotency:** `has_processed` / `mark_processed` ensures exactly-once processing per consumer. Crash between `mark_processed` and `ack` is safe — re-leased message is detected as already processed.
+- **Lease heartbeat:** Background task extends lease every 20s to prevent timeout during long agent runs.
+
+### 6.2 Self-Healing Cascade (Principle #8)
+
+When execution fails, the `ExecutorConsumer` escalates through:
+
+```
+execute ──fail──▶ consult_planner ──guidance──▶ guided_retry ──fail──▶ replan (depth ≤ 2) ──fail──▶ escalate_to_user
+                       │                                                    │
+                       └──timeout──▶ replan ─────────────────────────────────┘
 ```
 
-**Indexes**: `(queue_name, lease_id, lease_expires_at, created_at)` for lease queries; `(scope_id)` for scope filtering.
+1. **Consult planner** (`ConsultPlannerManager`): Sends `plan_request` with `consult=True` to planner, polls `runtime_queue` for `planner_guidance` response (90s timeout, 0.5s poll interval).
+2. **Guided retry:** Re-runs executor with planner guidance appended to prompt.
+3. **Replan** (`ReplanManager`): Sends `replan_request` with full failure history. Max depth = 2 (3 total attempts: original + 2 replans).
+4. **Escalate:** Returns `execution_status` with `escalated=True` and status `failed`.
 
-**`dead_letters`** — preserved indefinitely for debugging. Same schema + `dead_letter_reason`, `dead_lettered_at`.
+Budget attribution: executor tokens charge to work-item budget; consult/replan tokens charge to plan budget (routed through `planner_queue`).
 
-**`processed_messages`** — idempotency tracking: `PRIMARY KEY (consumer, message_id)`.
+### 6.3 Work-Item Level (`LiveWorkItemExecutor`)
 
-### 5.2 Lease/Heartbeat Model
+- **Retry loop:** Up to `budget.max_attempts` with budget tracking (`BudgetUsed`).
+- **Gate checks:** `on_tool_call` and `after_step` gates evaluated before/after each attempt.
+- **Verification:** External `VerificationRunner` validates results post-execution.
+- **Budget enforcement:** `used.exceeds(budget)` checked before each attempt.
+- **Stuck recovery:** Mirrors the queue cascade — consult → guided retry → replan → escalate.
 
-- **Lease**: atomic `UPDATE ... RETURNING` with subquery selecting oldest unleased (or expired-lease) message. Lease ID = UUID4, default duration 60 s.
-- **Heartbeat**: extends `lease_expires_at` by 60 s. Consumers send every 20 s during processing.
-- **Nack**: clears lease, increments `attempt_count`. Message returns to queue.
-- **Crash recovery**: `requeue_expired()` on startup clears all expired leases.
+### 6.4 WorkItemRunner
 
-### 5.3 Filtered Lease
+- Exponential backoff: `base × 2^(attempt-1)`, capped at 30s.
+- `on_failure` policies: `report` (no retry), `retry` (up to max), `escalate` (1 retry then escalate), `pause` (stop, mark stuck).
 
-`lease_filtered(queue_name, filter_trace_id, filter_message_kind)` — atomic lease restricted to messages matching specific trace and kind. Used by `collect_response()` to avoid scanning unrelated messages.
+### 6.5 Status Routing
 
----
-
-## 6. Error Handling & Retry Strategy
-
-### 6.1 Queue-Level Retries
-
-| Mechanism | Trigger | Behavior |
-|-----------|---------|----------|
-| **Nack + re-lease** | Consumer `_process()` raises exception | `attempt_count` incremented, message released for retry |
-| **Dead-letter** | `attempt_count >= max_attempts` (default 5) | Moved to `dead_letters` table, logged as warning |
-| **Lease expiry** | Consumer crashes mid-processing | Lease expires → message available for re-lease |
-
-### 6.2 Work-Level Retries (LiveWorkItemExecutor)
-
-| Phase | Budget Guard | Behavior |
-|-------|-------------|----------|
-| **Execution attempts** | `budget.max_attempts` | Retry loop with error context appended to next attempt |
-| **Consult planner** | `budget.max_planner_calls` | Suspend, ask planner for guidance, guided retry |
-| **Replan** | `MAX_REPLAN_DEPTH = 2` | New plan from planner (up to 2 replans = 3 total strategies) |
-| **Escalate** | All above exhausted | Report to user with `escalated=True` |
-
-### 6.3 WorkItemRunner Retry Policy
-
-Configured via `work_item.on_failure`:
-
-| Policy | Behavior |
-|--------|----------|
-| `"retry"` | Retry up to `max_attempts` with exponential backoff (1 s base, 30 s cap) |
-| `"report"` | No retry, report failure immediately |
-| `"escalate"` | One retry, then trigger escalation callback |
-| `"pause"` | No retry, mark as `stuck` for human intervention |
-
-### 6.4 Typed Errors
-
-`ErrorPayload` carries structured error info: `error_code` (one of `tool_failure`, `budget_exceeded`, `gate_blocked`, `approval_denied`, `verification_failed`, `timeout`), `retryable` flag, `origin_agent`, and optional `detail`.
-
----
-
-## 7. Security Model
-
-### 7.1 Tool Allowlists
-
-Every `QueueMessage` carries a `tool_allowlist: list[str]` field. When non-empty, `BaseConsumer._run_agent_with_allowlist()` wraps the agent's toolset in a `FilteredToolset` that only exposes listed tools. Allowlists are propagated per-hop:
-
-- `metadata.planner_tool_allowlist` → `PlannerConsumer`
-- `metadata.executor_tool_allowlist` → `ExecutorConsumer`
-- `metadata.proxy_tool_allowlist` → back to `ProxyConsumer`
-
-Research mode uses a hardcoded `RESEARCH_TOOL_ALLOWLIST` (`web_search`, `read_file`, `memory_search`).
-
-### 7.2 Gate Enforcement
-
-`LiveWorkItemExecutor` checks gates at two points:
-
-1. **`on_tool_call`** — before each execution attempt. If gate blocks → `WorkItemStatus.blocked`.
-2. **`after_step`** — after each failed attempt. If gate blocks → `WorkItemStatus.blocked`.
-
-Gates are defined per work item (`work_item.gates: list[Gate]`). Gate results: `continue`, `require_approval`, or block.
-
-### 7.3 Approval Verification
-
-Before any execution, `LiveWorkItemExecutor` calls `ApprovalVerifier.check(token, work_item)`. Missing or invalid token → `blocked` status. Approval is also checked for plan results before dispatching `execution_request` (via channel approval flow).
-
-### 7.4 Taint Propagation
-
-`QueueMessage.taint: TaintLevel` propagates from the inbound message source through all downstream messages. Stored in SQLite for audit. Used by consumers to adjust trust level of agent operations.
-
----
-
-## 8. Work Execution Subsystem
-
-### 8.1 LiveWorkItemExecutor
-
-Full work-item execution pipeline:
-
-1. **Resolve dependencies** — topological sort of `depends_on` + `tasks` references.
-2. **Build waves** — group independent items for parallel dispatch.
-3. **Per-item execution**: approval check → gate check → execute (skill/shell/python) → verification → gate after-step.
-4. **Budget tracking**: `BudgetUsed` aggregates tokens, attempts, wall time, planner calls, executor runs.
-
-Executor types: `skill` (via `SkillExecutor`), `shell` (via `ShellExecutor` + sandbox), `python` (via `PythonExecutor` + sandbox).
-
-### 8.2 LiveExecutorPool (§7.1)
-
-Concurrency-capped async pool for parallel work-item dispatch:
-
-- **Per-scope semaphore**: default 8 concurrent per scope.
-- **Global semaphore**: default 16 concurrent total.
-- **Conflict detection** (§7.2): items with overlapping `input_artifacts_from` paths are serialized.
-- **Priority ordering**: `approved_execution` (0) > `research` (1) > `status` (2).
-
-### 8.3 BatchExecutor
-
-Executes approved batch action proposals against work item stores with optional gate checks. Filters items by `BatchActionDecision` verdict (`approve` / `decline` / `edit_selection`).
-
----
-
-## 9. Integration with Stream
-
-The queue path and direct path coexist:
-
-| Aspect | Direct Path | Queue Path |
-|--------|-------------|------------|
-| Entry point | `proxy.run()` / `executor.execute()` | `QueueBridge.dispatch_turn()` |
-| Durability | In-memory only | SQLite-persisted, crash-recoverable |
-| Agent communication | Direct function calls | Typed messages via queue |
-| Error recovery | Caller handles | Automatic cascade (retry → consult → replan → escalate) |
-| Concurrency | Sequential | Parallel via `LiveExecutorPool` + wave scheduling |
-
-Stream decides which path based on configuration (`queue_execution` flag). The bridge encapsulates all queue interaction, keeping Stream's ~800-line orchestration untouched.
-
-### Status Routing to UI
-
-`route_to_surface(status)` maps execution statuses to UI surfaces:
+`status_router.py` maps execution statuses to UI surfaces:
 
 | Status | Surfaces |
 |--------|----------|
@@ -361,11 +229,89 @@ Stream decides which path based on configuration (`queue_execution` flag). The b
 
 ---
 
-## 10. Queue Names Reference
+## 7. Research Flow (§4.8)
 
-| Queue | Consumers | Message Kinds Received |
-|-------|-----------|----------------------|
-| `proxy_queue` | `ProxyConsumer`, `QueueBridge.collect_response` | `user_message`, `plan_result`, `execution_status`, `approval_request`, `agent_response`, `system_event` |
-| `planner_queue` | `PlannerConsumer` | `plan_request`, `research_result`, `replan_request` |
-| `executor_queue` | `ExecutorConsumer` | `execution_request`, `research_request` |
-| `runtime_queue` | `ConsultPlannerManager` (polling) | `planner_guidance`, `approval_result` |
+`ResearchStateMachine` (`queue/research.py`) manages planner-initiated research:
+
+### States
+
+`planning` → `awaiting_research` → `ready_to_finalize` (or `expired`)
+
+### Controls
+
+| Control | Limit |
+|---------|-------|
+| Max in-flight | 3 concurrent requests |
+| Max rounds | 5 total dispatches per planning session |
+| Per-request timeout | 120s |
+| Deduplication | SHA-256 hash of `query\|return_format\|max_tokens` |
+| Message-ID dedup | Prevents replay of duplicate `research_result` messages |
+
+### Flow
+
+1. Planner runs → outputs research requests → `PlannerConsumer` dispatches `research_request` messages via SM.
+2. `ExecutorConsumer` runs in read-only research mode → emits `research_result`.
+3. `PlannerConsumer` feeds results into SM → when all collected (or timed out), re-runs planner with research context → emits final `plan_result`.
+4. Partial results: if some requests time out, planner finalizes with available data (flagged `partial_research=True`).
+
+---
+
+## 8. Parallel Execution (§7)
+
+`LiveExecutorPool` (`work/pool.py`) provides:
+
+- **Per-scope semaphore:** Default 8 concurrent per scope.
+- **Global semaphore:** Default 16 concurrent across all scopes.
+- **Conflict detection (§7.2):** Items with overlapping `input_artifacts_from` paths are serialized; non-conflicting items dispatch in parallel.
+- **Wave scheduling:** `LiveWorkItemExecutor._build_waves()` groups topologically-sorted work items into parallel waves based on dependency resolution.
+- **Priority ordering:** `approved_execution` (0) > `research` (1) > `status` (2).
+- **Cancellation:** `pool.cancel(task_id)` sends `CancelledError` to running task.
+
+---
+
+## 9. Security Model
+
+### 9.1 Taint Propagation
+
+`TaintLevel` (from `silas.models.messages`) is a first-class field on `QueueMessage`. Taint is set at message creation (from inbound source) and propagated through the bus. Consumers can inspect taint to enforce security policies.
+
+### 9.2 Tool Allowlists
+
+Per-hop tool exposure via `tool_allowlist` on `QueueMessage`:
+
+- **Proxy → Planner:** `planner_tool_allowlist` from metadata.
+- **Planner → Executor:** `executor_tool_allowlist` from metadata.
+- **Research mode:** Clamped to `RESEARCH_TOOL_ALLOWLIST` (`web_search`, `read_file`, `memory_search`).
+- Enforcement: `BaseConsumer._run_agent_with_allowlist()` wraps the agent's toolset in a `FilteredToolset`.
+
+### 9.3 Approval Gates
+
+- Plans require user approval before becoming `execution_request` messages (`ProxyConsumer._request_plan_approval`).
+- Work items require valid `approval_token` checked by `ApprovalVerifier` before execution.
+- Gate framework: `on_tool_call` and `after_step` triggers evaluated by configurable `GateRunner`.
+
+### 9.4 Scope Isolation
+
+`scope_id` on `QueueMessage` isolates worktrees/artifacts per connection. The executor pool tracks per-scope concurrency independently.
+
+### 9.5 Autonomous Goal Constraints
+
+Goals dispatched via `QueueBridge.dispatch_goal()` are marked `autonomous=True` in the payload. The planner/executor chain can apply stricter policies for autonomous execution (no user in the loop for approval beyond standing approval).
+
+---
+
+## 10. Orchestrator Lifecycle
+
+`QueueOrchestrator` manages coordinated startup/shutdown:
+
+- **`start()`**: Creates one `asyncio.Task` per consumer. Idempotent.
+- **`stop()`**: Sets `running=False`, awaits all tasks. Exceptions logged, not propagated.
+- **Poll loop:** Per-consumer exponential backoff (0.1s base, 2× multiplier, 5s cap). Resets to base on message found.
+
+**Startup sequence** (via `create_queue_system`):
+1. Initialize SQLite store (create tables, migrate schema).
+2. `requeue_expired()` — recover messages from crashed consumers.
+3. Wire router, consult manager, replan manager.
+4. Create consumers (proxy, planner, executor).
+5. Create orchestrator and bridge.
+6. Caller invokes `orchestrator.start()`.
