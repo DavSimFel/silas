@@ -38,3 +38,4 @@ data/
 .signing-passphrase
 .web-auth-token
 config/silas-staging.yaml
+docs/SANDBOX_ANALYSIS.md
