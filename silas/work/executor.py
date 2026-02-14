@@ -19,6 +19,7 @@ from silas.models.execution import (
     SandboxConfig,
     VerificationReport,
 )
+from silas.models.gates import Gate, GateResult, GateTrigger
 from silas.models.work import (
     BudgetUsed,
     WorkItem,
@@ -75,6 +76,7 @@ class LiveWorkItemExecutor:
         executor_registry: Mapping[WorkItemExecutorType, EphemeralExecutor] | None = None,
         approval_verifier: ApprovalVerifier | None = None,
         verification_runner: VerificationRunner | None = None,
+        gate_runner: object | None = None,
         audit: AuditLog | None = None,
         consult_manager: ConsultPlannerManager | None = None,
         replan_manager: ReplanManager | None = None,
@@ -85,6 +87,7 @@ class LiveWorkItemExecutor:
         self._work_item_store = work_item_store
         self._approval_verifier = approval_verifier
         self._verification_runner = verification_runner
+        self._gate_runner = gate_runner
         self._audit = audit
         self._consult_manager = consult_manager
         self._replan_manager = replan_manager
@@ -244,7 +247,6 @@ class LiveWorkItemExecutor:
         work_item = item.model_copy(deep=True)
         used = work_item.budget_used.model_copy(deep=True)
         max_attempts = max(1, work_item.budget.max_attempts)
-        last_error: str | None = None
 
         approved, approval_reason = await self._check_execution_approval(work_item)
         if not approved:
@@ -259,51 +261,13 @@ class LiveWorkItemExecutor:
         if uses_skill_executor:
             self._skill_executor.set_work_item(work_item)
         try:
-            for _ in range(max_attempts):
-                if used.exceeds(work_item.budget):
-                    last_error = "budget exhausted before attempt"
-                    break
-
-                work_item.attempts += 1
-                used.attempts += 1
-                used.executor_runs += 1
-
-                work_item.status = WorkItemStatus.running
-                work_item.budget_used = used.model_copy(deep=True)
-                await self._persist(work_item)
-
-                attempt_body = self._build_attempt_body(work_item, previous_error=last_error)
-                attempt_ok, attempt_error = await self._execute_attempt(work_item, used, attempt_body)
-                if not attempt_ok:
-                    last_error = attempt_error or "execution attempt failed"
-
-                work_item.budget_used = used.model_copy(deep=True)
-                if attempt_ok:
-                    verification_ok, verification_results, verification_error = (
-                        await self._run_external_verification(work_item)
-                    )
-                    work_item.verification_results = [
-                        dict(result) for result in verification_results
-                    ]
-                    if not verification_ok:
-                        last_error = verification_error or "verification failed"
-                        if used.exceeds(work_item.budget):
-                            break
-                        continue
-
-                    work_item.status = WorkItemStatus.done
-                    await self._persist(work_item)
-                    return WorkItemResult(
-                        work_item_id=work_item.id,
-                        status=WorkItemStatus.done,
-                        summary=f"Work item {work_item.id} completed.",
-                        verification_results=work_item.verification_results,
-                        budget_used=used.model_copy(deep=True),
-                    )
-
-                if used.exceeds(work_item.budget):
-                    last_error = last_error or "budget exhausted"
-                    break
+            completion_result, last_error = await self._run_execution_attempts(
+                work_item=work_item,
+                used=used,
+                max_attempts=max_attempts,
+            )
+            if completion_result is not None:
+                return completion_result
 
             stuck_result = await self._attempt_stuck_recovery(work_item, used, last_error)
             if stuck_result is not None:
@@ -323,6 +287,132 @@ class LiveWorkItemExecutor:
         finally:
             if uses_skill_executor:
                 self._skill_executor.set_work_item(None)
+
+    async def _run_execution_attempts(
+        self,
+        *,
+        work_item: WorkItem,
+        used: BudgetUsed,
+        max_attempts: int,
+    ) -> tuple[WorkItemResult | None, str | None]:
+        last_error: str | None = None
+        for _ in range(max_attempts):
+            if used.exceeds(work_item.budget):
+                return None, "budget exhausted before attempt"
+
+            work_item.attempts += 1
+            used.attempts += 1
+            used.executor_runs += 1
+
+            work_item.status = WorkItemStatus.running
+            work_item.budget_used = used.model_copy(deep=True)
+            await self._persist(work_item)
+
+            attempt_body = self._build_attempt_body(work_item, previous_error=last_error)
+            gate_result = await self._maybe_block_tool_call(work_item, used, attempt_body)
+            if gate_result is not None:
+                return gate_result, last_error
+
+            attempt_ok, attempt_error = await self._execute_attempt(work_item, used, attempt_body)
+            if not attempt_ok:
+                last_error = attempt_error or "execution attempt failed"
+
+            work_item.budget_used = used.model_copy(deep=True)
+            if attempt_ok:
+                success_result, verification_error = await self._finalize_successful_attempt(
+                    work_item,
+                    used,
+                )
+                if success_result is not None:
+                    return success_result, last_error
+                last_error = verification_error or "verification failed"
+                if used.exceeds(work_item.budget):
+                    return None, last_error
+                continue
+
+            if used.exceeds(work_item.budget):
+                return None, last_error or "budget exhausted"
+
+            post_step_result = await self._maybe_block_after_step(work_item, used, last_error)
+            if post_step_result is not None:
+                return post_step_result, last_error
+
+        return None, last_error
+
+    async def _maybe_block_tool_call(
+        self,
+        work_item: WorkItem,
+        used: BudgetUsed,
+        attempt_body: str,
+    ) -> WorkItemResult | None:
+        gate_passed, gate_error = await self._check_tool_call_gates(
+            work_item=work_item,
+            attempt_body=attempt_body,
+        )
+        if gate_passed:
+            return None
+
+        await self._audit_event(
+            "execution_gate_blocked",
+            work_item_id=work_item.id,
+            attempt=work_item.attempts,
+            reason=gate_error,
+        )
+        return await self._mark_blocked(
+            work_item,
+            gate_error or "execution blocked by gate",
+            budget_used=used,
+        )
+
+    async def _finalize_successful_attempt(
+        self,
+        work_item: WorkItem,
+        used: BudgetUsed,
+    ) -> tuple[WorkItemResult | None, str | None]:
+        verification_ok, verification_results, verification_error = (
+            await self._run_external_verification(work_item)
+        )
+        work_item.verification_results = [dict(result) for result in verification_results]
+        if not verification_ok:
+            return None, verification_error or "verification failed"
+
+        work_item.status = WorkItemStatus.done
+        await self._persist(work_item)
+        return (
+            WorkItemResult(
+                work_item_id=work_item.id,
+                status=WorkItemStatus.done,
+                summary=f"Work item {work_item.id} completed.",
+                verification_results=work_item.verification_results,
+                budget_used=used.model_copy(deep=True),
+            ),
+            None,
+        )
+
+    async def _maybe_block_after_step(
+        self,
+        work_item: WorkItem,
+        used: BudgetUsed,
+        last_error: str | None,
+    ) -> WorkItemResult | None:
+        post_step_passed, post_step_error = await self._check_after_step_gates(
+            work_item=work_item,
+            last_error=last_error,
+        )
+        if post_step_passed:
+            return None
+
+        await self._audit_event(
+            "execution_after_step_gate_blocked",
+            work_item_id=work_item.id,
+            attempt=work_item.attempts,
+            reason=post_step_error,
+        )
+        return await self._mark_blocked(
+            work_item,
+            post_step_error or "execution blocked by after_step gate",
+            budget_used=used,
+        )
 
     async def _execute_attempt(
         self,
@@ -736,6 +826,109 @@ class LiveWorkItemExecutor:
         if not valid:
             return False, reason
         return True, "ok"
+
+    async def _check_tool_call_gates(
+        self,
+        *,
+        work_item: WorkItem,
+        attempt_body: str,
+    ) -> tuple[bool, str | None]:
+        return await self._evaluate_gate_trigger(
+            work_item=work_item,
+            trigger=GateTrigger.on_tool_call,
+            context={
+                "work_item_id": work_item.id,
+                "tool_name": work_item.executor_type.value,
+                "tool_args": {"body": attempt_body},
+                "attempt": work_item.attempts,
+            },
+        )
+
+    async def _check_after_step_gates(
+        self,
+        *,
+        work_item: WorkItem,
+        last_error: str | None,
+    ) -> tuple[bool, str | None]:
+        gate_runner = self._gate_runner
+        if gate_runner is None:
+            return True, None
+
+        gates = self._execution_gates(work_item)
+        if not gates:
+            return True, None
+
+        context = {
+            "work_item_id": work_item.id,
+            "attempt": work_item.attempts,
+            "last_error": last_error,
+        }
+        check_after_step = getattr(gate_runner, "check_after_step", None)
+        if callable(check_after_step):
+            try:
+                policy_results, _, _ = await check_after_step(
+                    gates=gates,
+                    step_index=work_item.attempts,
+                    context=context,
+                )
+            except (OSError, RuntimeError, ValueError, TypeError) as exc:
+                return False, f"gate runner after_step error: {exc}"
+            return self._gate_policy_outcome(policy_results, GateTrigger.after_step)
+
+        context["step_index"] = work_item.attempts
+        return await self._evaluate_gate_trigger(
+            work_item=work_item,
+            trigger=GateTrigger.after_step,
+            context=context,
+        )
+
+    async def _evaluate_gate_trigger(
+        self,
+        *,
+        work_item: WorkItem,
+        trigger: GateTrigger,
+        context: dict[str, object],
+    ) -> tuple[bool, str | None]:
+        gate_runner = self._gate_runner
+        if gate_runner is None:
+            return True, None
+
+        gates = self._execution_gates(work_item)
+        if not gates:
+            return True, None
+
+        check_gates = getattr(gate_runner, "check_gates", None)
+        if not callable(check_gates):
+            return False, "gate runner missing check_gates()"
+
+        try:
+            policy_results, _, _ = await check_gates(
+                gates=gates,
+                trigger=trigger,
+                context=context,
+            )
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            return False, f"gate runner error: {exc}"
+        return self._gate_policy_outcome(policy_results, trigger)
+
+    def _execution_gates(self, work_item: WorkItem) -> list[Gate]:
+        return [gate.model_copy(deep=True) for gate in work_item.gates]
+
+    def _gate_policy_outcome(
+        self,
+        policy_results: list[GateResult],
+        trigger: GateTrigger,
+    ) -> tuple[bool, str | None]:
+        for result in policy_results:
+            if result.action == "continue":
+                continue
+            if result.action == "require_approval":
+                return False, (
+                    f"gate '{result.gate_name}' requires approval on "
+                    f"{trigger.value}: {result.reason}"
+                )
+            return False, f"gate '{result.gate_name}' blocked {trigger.value}: {result.reason}"
+        return True, None
 
     async def _audit_execution_blocked(self, work_item: WorkItem, reason: str) -> None:
         if self._audit is None:

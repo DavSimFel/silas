@@ -14,8 +14,11 @@ Subclasses only implement _process() to define agent-specific dispatch logic.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from silas.core.plan_parser import MarkdownPlanParser
+from silas.models.approval import ApprovalVerdict
 from silas.models.work import WorkItem, WorkItemResult
 from silas.protocols.work import WorkItemExecutor
 from silas.queue.consult import ConsultPlannerManager
@@ -25,6 +28,8 @@ from silas.queue.router import QueueRouter
 from silas.queue.status_router import route_to_surface
 from silas.queue.store import DurableQueueStore
 from silas.queue.types import QueueMessage
+from silas.tools.backends import build_research_console_toolset
+from silas.tools.filtered import FilteredToolset
 from silas.work.executor import work_item_from_execution_payload
 
 logger = logging.getLogger(__name__)
@@ -134,6 +139,42 @@ class BaseConsumer:
         """Subclasses implement this. Returns a response message to route, or None."""
         raise NotImplementedError
 
+    @staticmethod
+    def _allowlist_from_metadata(
+        metadata: dict[str, object] | None,
+        key: str,
+    ) -> list[str]:
+        if not isinstance(metadata, dict):
+            return []
+        raw_allowlist = metadata.get(key)
+        if not isinstance(raw_allowlist, list):
+            return []
+        return [str(tool_name) for tool_name in raw_allowlist if isinstance(tool_name, str)]
+
+    async def _run_agent_with_allowlist(
+        self,
+        agent: ProxyAgentProtocol | PlannerAgentProtocol | ExecutorAgentProtocol,
+        prompt: str,
+        tool_allowlist: list[str],
+    ) -> object:
+        if not tool_allowlist:
+            return await agent.run(prompt)
+
+        original_toolset = getattr(agent, "toolset", None)
+        has_toolset_api = (
+            original_toolset is not None
+            and callable(getattr(original_toolset, "list_tools", None))
+            and callable(getattr(original_toolset, "call", None))
+        )
+        if not has_toolset_api:
+            return await agent.run(prompt)
+
+        agent.toolset = FilteredToolset(original_toolset, tool_allowlist)  # type: ignore[attr-defined]
+        try:
+            return await agent.run(prompt)
+        finally:
+            agent.toolset = original_toolset  # type: ignore[attr-defined]
+
 
 class ProxyConsumer(BaseConsumer):
     """Consumes from proxy_queue. Dispatches to ProxyAgent, routes results.
@@ -151,11 +192,16 @@ class ProxyConsumer(BaseConsumer):
         store: DurableQueueStore,
         router: QueueRouter,
         proxy_agent: ProxyAgentProtocol,
+        channel: object | None = None,
+        approval_recipient_id: str = "owner",
         *,
         max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
     ) -> None:
         super().__init__(store, router, "proxy_queue", max_attempts=max_attempts)
         self._proxy = proxy_agent
+        self._channel = channel
+        self._approval_recipient_id = approval_recipient_id
+        self._plan_parser = MarkdownPlanParser()
 
     async def _process(self, msg: QueueMessage) -> QueueMessage | None:
         """Dispatch based on message_kind and produce response messages."""
@@ -166,7 +212,7 @@ class ProxyConsumer(BaseConsumer):
         if kind == "execution_status":
             return self._handle_execution_status(msg)
         if kind == "plan_result":
-            return self._handle_plan_result(msg)
+            return await self._handle_plan_result(msg)
         if kind == "agent_response":
             # agent_response is terminal for QueueBridge.collect_response.
             # Re-processing it through the proxy creates feedback loops.
@@ -186,7 +232,11 @@ class ProxyConsumer(BaseConsumer):
 
         # Include chronicle context so the proxy has conversation history.
         prompt = f"{rendered_context}\n\nUser: {user_text}" if rendered_context else user_text
-        result = await self._proxy.run(prompt)
+        result = await self._run_agent_with_allowlist(
+            self._proxy,
+            prompt,
+            msg.tool_allowlist,
+        )
 
         # Why getattr: ProxyRunResult has .output.route, but we use a
         # protocol so we access it generically to stay decoupled.
@@ -194,11 +244,20 @@ class ProxyConsumer(BaseConsumer):
         route = getattr(output, "route", "direct")
 
         if route == "planner":
+            planner_allowlist = self._allowlist_from_metadata(
+                metadata,
+                "planner_tool_allowlist",
+            )
             return QueueMessage(
                 message_kind="plan_request",
                 sender="proxy",
                 trace_id=msg.trace_id,
-                payload={"user_request": prompt, "reason": getattr(output, "reason", "")},
+                payload={
+                    "user_request": prompt,
+                    "reason": getattr(output, "reason", ""),
+                    "metadata": metadata if isinstance(metadata, dict) else {},
+                },
+                tool_allowlist=planner_allowlist,
             )
 
         # Direct response: send agent_response back so collect_response picks it up.
@@ -212,6 +271,7 @@ class ProxyConsumer(BaseConsumer):
             sender="proxy",
             trace_id=msg.trace_id,
             payload={"text": str(response_text or "")},
+            tool_allowlist=msg.tool_allowlist,
         )
 
     def _handle_execution_status(self, msg: QueueMessage) -> QueueMessage | None:
@@ -232,18 +292,69 @@ class ProxyConsumer(BaseConsumer):
         # to another agent queue.
         return None
 
-    def _handle_plan_result(self, msg: QueueMessage) -> QueueMessage | None:
-        """Plan results are presented to the user for approval.
+    async def _handle_plan_result(self, msg: QueueMessage) -> QueueMessage | None:
+        """Parse plan result, request approval, then dispatch execution work.
 
-        The actual UI presentation is handled by the stream/channel layer.
-        We just acknowledge receipt here — no further queue routing needed.
+        Queue path approval parity: planner-produced plans must be approved
+        before they become execution_request messages.
         """
+        plan_markdown = str(msg.payload.get("plan_markdown", ""))
+        if not plan_markdown.strip():
+            return None
+
+        try:
+            work_item = self._plan_parser.parse(plan_markdown)
+        except ValueError:
+            logger.warning("Ignoring invalid planner markdown for trace_id=%s", msg.trace_id)
+            return None
+
+        approved = await self._request_plan_approval(work_item)
+        if not approved:
+            return None
+
+        metadata = msg.payload.get("metadata")
+        metadata_dict = metadata if isinstance(metadata, dict) else {}
+        executor_allowlist = self._allowlist_from_metadata(
+            metadata_dict,
+            "executor_tool_allowlist",
+        )
+        return QueueMessage(
+            message_kind="execution_request",
+            sender="proxy",
+            trace_id=msg.trace_id,
+            payload={
+                "work_item_id": work_item.id,
+                "task_description": work_item.body,
+                "title": work_item.title,
+                "metadata": metadata_dict,
+            },
+            work_item_id=work_item.id,
+            tool_allowlist=executor_allowlist,
+        )
+
+    async def _request_plan_approval(self, work_item: WorkItem) -> bool:
+        channel = self._channel
+        if channel is None:
+            return False
+
+        send_approval_request = getattr(channel, "send_approval_request", None)
+        if not callable(send_approval_request):
+            return False
+
+        try:
+            decision = await send_approval_request(self._approval_recipient_id, work_item)
+        except (OSError, RuntimeError, ValueError, TypeError):
+            logger.exception("Plan approval request failed for work_item=%s", work_item.id)
+            return False
+
+        verdict = getattr(decision, "verdict", None)
+        return verdict == ApprovalVerdict.approved
         return None
 
     async def _handle_generic(self, msg: QueueMessage) -> QueueMessage | None:
         """Run proxy on informational messages (agent_response, system_event, etc.)."""
         prompt = str(msg.payload.get("text", msg.payload.get("message", "")))
-        await self._proxy.run(prompt)
+        await self._run_agent_with_allowlist(self._proxy, prompt, msg.tool_allowlist)
         return None
 
 
@@ -299,7 +410,11 @@ class PlannerConsumer(BaseConsumer):
         """
         self._research.reset()
         user_request = str(msg.payload.get("user_request", ""))
-        result = await self._planner.run(user_request)
+        result = await self._run_agent_with_allowlist(
+            self._planner,
+            user_request,
+            msg.tool_allowlist,
+        )
         output = getattr(result, "output", None)
 
         # Check if planner's response includes research requests
@@ -337,6 +452,12 @@ class PlannerConsumer(BaseConsumer):
             return_format = str(req.get("return_format", ""))
             max_tokens = int(req.get("max_tokens", 500))
 
+            metadata = origin_msg.payload.get("metadata")
+            metadata_dict = metadata if isinstance(metadata, dict) else {}
+            executor_allowlist = self._allowlist_from_metadata(
+                metadata_dict,
+                "executor_tool_allowlist",
+            )
             accepted = self._research.request_research(
                 request_id=request_id,
                 query=query,
@@ -358,7 +479,9 @@ class PlannerConsumer(BaseConsumer):
                             origin_msg.payload.get("user_request", "")
                         ),
                         "research_mode": True,
+                        "metadata": metadata_dict,
                     },
+                    tool_allowlist=executor_allowlist,
                 )
                 await self._router.route(research_msg)
 
@@ -374,7 +497,11 @@ class PlannerConsumer(BaseConsumer):
             f"Failure history:\n{failure_history}\n\n"
             f"Generate an alternative strategy. Do NOT retry the same approach."
         )
-        result = await self._planner.run(prompt)
+        result = await self._run_agent_with_allowlist(
+            self._planner,
+            prompt,
+            msg.tool_allowlist,
+        )
         output = getattr(result, "output", None)
 
         plan_markdown = ""
@@ -395,6 +522,7 @@ class PlannerConsumer(BaseConsumer):
                 "is_replan": True,
                 "original_goal": original_goal,
             },
+            tool_allowlist=msg.tool_allowlist,
         )
 
     async def _handle_research_result(self, msg: QueueMessage) -> QueueMessage | None:
@@ -449,7 +577,11 @@ class PlannerConsumer(BaseConsumer):
             f"Produce the final plan now."
         )
 
-        result = await self._planner.run(prompt)
+        result = await self._run_agent_with_allowlist(
+            self._planner,
+            prompt,
+            msg.tool_allowlist,
+        )
         output = getattr(result, "output", None)
 
         plan_action = getattr(output, "plan_action", None) if output else None
@@ -458,6 +590,8 @@ class PlannerConsumer(BaseConsumer):
         )
         message_text = getattr(output, "message", "") or "" if output else ""
 
+        metadata = msg.payload.get("metadata")
+        metadata_dict = metadata if isinstance(metadata, dict) else {}
         return QueueMessage(
             message_kind="plan_result",
             sender="planner",
@@ -466,7 +600,9 @@ class PlannerConsumer(BaseConsumer):
                 "plan_markdown": plan_markdown,
                 "message": message_text,
                 "partial_research": is_partial,
+                "metadata": metadata_dict,
             },
+            tool_allowlist=self._allowlist_from_metadata(metadata_dict, "proxy_tool_allowlist"),
         )
 
     def _build_plan_result(
@@ -484,6 +620,8 @@ class PlannerConsumer(BaseConsumer):
                 plan_markdown = getattr(plan_action, "plan_markdown", "") or ""
             message = getattr(output, "message", "") or ""
 
+        metadata = msg.payload.get("metadata")
+        metadata_dict = metadata if isinstance(metadata, dict) else {}
         return QueueMessage(
             message_kind="plan_result",
             sender="planner",
@@ -492,7 +630,9 @@ class PlannerConsumer(BaseConsumer):
                 "plan_markdown": plan_markdown,
                 "message": message,
                 "user_request": user_request,
+                "metadata": metadata_dict,
             },
+            tool_allowlist=self._allowlist_from_metadata(metadata_dict, "proxy_tool_allowlist"),
         )
 
 
@@ -515,6 +655,7 @@ class ExecutorConsumer(BaseConsumer):
         work_executor: WorkItemExecutor | None = None,
         consult_manager: ConsultPlannerManager | None = None,
         replan_manager: ReplanManager | None = None,
+        workspace_path: Path | None = None,
         max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
     ) -> None:
         super().__init__(store, router, "executor_queue", max_attempts=max_attempts)
@@ -525,6 +666,7 @@ class ExecutorConsumer(BaseConsumer):
         # directly to execution_status with status=failed.
         self._consult = consult_manager
         self._replan = replan_manager
+        self._workspace_path = workspace_path or Path.cwd()
 
     async def _process(self, msg: QueueMessage) -> QueueMessage | None:
         """Dispatch executor messages and produce status/result responses."""
@@ -566,7 +708,11 @@ class ExecutorConsumer(BaseConsumer):
         original_goal = str(msg.payload.get("original_goal", prompt))
         replan_depth = int(msg.payload.get("replan_depth", 0))
 
-        result = await self._executor.run(prompt)
+        result = await self._run_agent_with_allowlist(
+            self._executor,
+            prompt,
+            msg.tool_allowlist,
+        )
         output = getattr(result, "output", None)
 
         summary = getattr(output, "summary", "Execution completed.") if output else "Execution completed."
@@ -591,7 +737,11 @@ class ExecutorConsumer(BaseConsumer):
                 # Guidance tokens were charged to plan budget (routed through
                 # planner_queue by ConsultPlannerManager).
                 guided_prompt = f"{prompt}\n\n## Planner Guidance\n{guidance}"
-                retry_result = await self._executor.run(guided_prompt)
+                retry_result = await self._run_agent_with_allowlist(
+                    self._executor,
+                    guided_prompt,
+                    msg.tool_allowlist,
+                )
                 retry_output = getattr(retry_result, "output", None)
                 retry_error = getattr(retry_output, "last_error", None) if retry_output else None
                 retry_summary = (
@@ -697,11 +847,17 @@ class ExecutorConsumer(BaseConsumer):
         """Run executor in research mode (read-only) and produce research_result."""
         query = str(msg.payload.get("query", msg.payload.get("research_query", "")))
         original_request = str(msg.payload.get("original_request", ""))
+        research_console_toolset = build_research_console_toolset(self._workspace_path)
+        research_allowlist = [str(tool_name) for tool_name in research_console_toolset.tools]
 
         # Why prepend "RESEARCH MODE": signals to the executor agent that
         # it should only use read-only tools, even if write tools are available.
         prompt = f"RESEARCH MODE (read-only):\n{query}"
-        result = await self._executor.run(prompt)
+        result = await self._run_agent_with_allowlist(
+            self._executor,
+            prompt,
+            research_allowlist,
+        )
         output = getattr(result, "output", None)
 
         summary = getattr(output, "summary", "") if output else ""

@@ -10,6 +10,7 @@ from silas.models.execution import (
     VerificationReport,
     VerificationResult,
 )
+from silas.models.gates import Gate, GateProvider, GateTrigger, GateType
 from silas.models.skills import SkillDefinition
 from silas.models.work import (
     Budget,
@@ -51,6 +52,7 @@ def _work_item(
     executor_type: WorkItemExecutorType = WorkItemExecutorType.skill,
     depends_on: list[str] | None = None,
     verify: list[VerificationCheck] | None = None,
+    gates: list[Gate] | None = None,
     status: WorkItemStatus = WorkItemStatus.pending,
     budget: Budget | None = None,
     include_approval: bool = True,
@@ -64,6 +66,7 @@ def _work_item(
         executor_type=executor_type,
         depends_on=depends_on or [],
         verify=verify or [],
+        gates=gates or [],
         status=status,
         budget=budget or Budget(),
     )
@@ -200,6 +203,47 @@ class _StubReplanManager:
             }
         )
         return self._enqueued
+
+
+class _StubGateRunner:
+    def __init__(self, *, block_on_tool_call: bool = False, block_after_step: int | None = None) -> None:
+        self._block_on_tool_call = block_on_tool_call
+        self._block_after_step = block_after_step
+        self.on_tool_call_checks: list[dict[str, object]] = []
+        self.after_step_checks: list[tuple[int, dict[str, object]]] = []
+
+    async def check_gates(
+        self,
+        gates: list[Gate],
+        trigger: GateTrigger,
+        context: dict[str, object],
+    ) -> tuple[list[object], list[object], dict[str, object]]:
+        del gates
+        if trigger == GateTrigger.on_tool_call:
+            self.on_tool_call_checks.append(dict(context))
+            if self._block_on_tool_call:
+                return (
+                    [type("_GateResult", (), {"action": "block", "gate_name": "tool-call", "reason": "blocked"})()],
+                    [],
+                    context,
+                )
+        return ([], [], context)
+
+    async def check_after_step(
+        self,
+        gates: list[Gate],
+        step_index: int,
+        context: dict[str, object],
+    ) -> tuple[list[object], list[object], dict[str, object]]:
+        del gates
+        self.after_step_checks.append((step_index, dict(context)))
+        if self._block_after_step is not None and step_index >= self._block_after_step:
+            return (
+                [type("_GateResult", (), {"action": "block", "gate_name": "after-step", "reason": "blocked"})()],
+                [],
+                context,
+            )
+        return ([], [], context)
 
 
 @pytest.fixture
@@ -384,6 +428,86 @@ async def test_retry_exhaustion_marks_failed(
     assert loaded is not None
     assert loaded.status == WorkItemStatus.failed
     assert loaded.attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_on_tool_call_gate_blocks_execution_before_attempt(
+    work_store: InMemoryWorkItemStore,
+    skill_registry: SkillRegistry,
+    skill_executor: SkillExecutor,
+) -> None:
+    _register_skill(skill_registry, "skill_a")
+    calls: list[str] = []
+
+    async def _skill_a(inputs: dict[str, object]) -> dict[str, object]:
+        calls.append(str(inputs["work_item_id"]))
+        return {"ok": True}
+
+    skill_executor.register_handler("skill_a", _skill_a)
+    gate_runner = _StubGateRunner(block_on_tool_call=True)
+    work_executor = LiveWorkItemExecutor(
+        skill_executor=skill_executor,
+        work_item_store=work_store,
+        approval_verifier=_StubApprovalVerifier(valid=True, reason="ok"),
+        gate_runner=gate_runner,
+    )
+    gate = Gate(
+        name="tool-call",
+        on=GateTrigger.on_tool_call,
+        provider=GateProvider.predicate,
+        type=GateType.string_match,
+        check="allow",
+    )
+    item = _work_item("task-gated-tool-call", skills=["skill_a"], gates=[gate])
+
+    result = await work_executor.execute(item)
+
+    assert result.status == WorkItemStatus.blocked
+    assert gate_runner.on_tool_call_checks
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_after_step_gate_blocks_retries_between_attempts(
+    work_store: InMemoryWorkItemStore,
+    skill_registry: SkillRegistry,
+    skill_executor: SkillExecutor,
+) -> None:
+    _register_skill(skill_registry, "always_fail")
+    calls = {"count": 0}
+
+    async def _always_fail(_inputs: dict[str, object]) -> dict[str, object]:
+        calls["count"] += 1
+        raise RuntimeError("failed")
+
+    skill_executor.register_handler("always_fail", _always_fail)
+    gate_runner = _StubGateRunner(block_after_step=1)
+    work_executor = LiveWorkItemExecutor(
+        skill_executor=skill_executor,
+        work_item_store=work_store,
+        approval_verifier=_StubApprovalVerifier(valid=True, reason="ok"),
+        gate_runner=gate_runner,
+    )
+    gate = Gate(
+        name="after-step",
+        on=GateTrigger.after_step,
+        after_step=1,
+        provider=GateProvider.predicate,
+        type=GateType.string_match,
+        check="allow",
+    )
+    item = _work_item(
+        "task-gated-after-step",
+        skills=["always_fail"],
+        budget=Budget(max_attempts=3),
+        gates=[gate],
+    )
+
+    result = await work_executor.execute(item)
+
+    assert result.status == WorkItemStatus.blocked
+    assert calls["count"] == 1
+    assert gate_runner.after_step_checks
 
 
 @pytest.mark.asyncio

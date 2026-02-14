@@ -189,7 +189,7 @@ class TestStoreMigration:
             cursor = await db.execute("PRAGMA table_info(queue_messages)")
             cols = {row[1] for row in await cursor.fetchall()}
         for col in ("scope_id", "taint", "task_id", "parent_task_id",
-                     "work_item_id", "approval_token", "urgency"):
+                     "work_item_id", "approval_token", "tool_allowlist", "urgency"):
             assert col in cols, f"Missing column: {col}"
 
     async def test_enqueue_lease_roundtrip_with_new_fields(
@@ -206,6 +206,7 @@ class TestStoreMigration:
             parent_task_id="task-0",
             work_item_id="wi-7",
             approval_token="tok-abc",
+            tool_allowlist=["read_file", "web_search"],
             urgency="needs_attention",
             payload={"task_description": "do stuff"},
         )
@@ -218,6 +219,7 @@ class TestStoreMigration:
         assert leased.parent_task_id == "task-0"
         assert leased.work_item_id == "wi-7"
         assert leased.approval_token == "tok-abc"
+        assert leased.tool_allowlist == ["read_file", "web_search"]
         assert leased.urgency == "needs_attention"
 
     async def test_migrate_existing_db_without_new_columns(self) -> None:
@@ -289,6 +291,7 @@ class TestStoreMigration:
             cols = {row[1] for row in await cursor.fetchall()}
         assert "scope_id" in cols
         assert "taint" in cols
+        assert "tool_allowlist" in cols
 
         # Verify old message can still be leased
         leased = await s.lease("proxy_queue")
@@ -296,6 +299,7 @@ class TestStoreMigration:
         assert leased.id == "old-msg"
         assert leased.scope_id is None
         assert leased.taint is None
+        assert leased.tool_allowlist == []
         assert leased.urgency == "informational"
 
     async def test_dead_letter_preserves_new_fields(
