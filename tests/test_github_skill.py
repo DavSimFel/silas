@@ -31,11 +31,11 @@ class TestRunHelper:
     def test_success(self) -> None:
         with patch("subprocess.run") as mock:
             mock.return_value = subprocess.CompletedProcess(
-                args=["echo", "hi"], returncode=0, stdout="hi\n", stderr=""
+                args=["git", "status"], returncode=0, stdout="clean\n", stderr=""
             )
-            result = _run(["echo", "hi"])
+            result = _run(["git", "status"])
         assert result["returncode"] == 0
-        assert result["stdout"] == "hi\n"
+        assert result["stdout"] == "clean\n"
 
     def test_called_process_error(self) -> None:
         with patch("subprocess.run") as mock:
@@ -47,14 +47,22 @@ class TestRunHelper:
     def test_timeout(self) -> None:
         with patch("subprocess.run") as mock:
             mock.side_effect = subprocess.TimeoutExpired("cmd", 120)
-            result = _run(["sleep", "999"])
+            result = _run(["git", "clone", "https://example.com/huge.git"])
         assert "timed out" in str(result["error"])
 
     def test_file_not_found(self) -> None:
         with patch("subprocess.run") as mock:
             mock.side_effect = FileNotFoundError()
-            result = _run(["nonexistent"])
+            result = _run(["gh", "nonexistent"])
         assert "command not found" in str(result["error"])
+
+    def test_rejects_disallowed_command(self) -> None:
+        result = _run(["curl", "https://evil.com"])
+        assert "not in allowlist" in str(result["error"])
+
+    def test_rejects_shell_metacharacters(self) -> None:
+        result = _run(["git", "log; rm -rf /"])
+        assert "shell metacharacter" in str(result["error"])
 
 
 # ---------------------------------------------------------------------------

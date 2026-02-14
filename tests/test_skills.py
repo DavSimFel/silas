@@ -86,8 +86,10 @@ async def test_skill_executor_timeout_enforced() -> None:
 
     async def _slow_handler(inputs: dict[str, object]) -> dict[str, object]:
         del inputs
-        await asyncio.sleep(1.2)
-        return {"done": True}
+        # Block indefinitely — the executor's timeout_seconds=1 will cancel us.
+        # Using an Event instead of sleep avoids wall-clock delays (#277).
+        await asyncio.Event().wait()
+        return {"done": True}  # pragma: no cover
 
     executor.register_handler("slow_skill", _slow_handler)
 
