@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from silas.agents.proxy import ProxyAgent, build_proxy_agent
+    from silas.agents.structured import run_structured_agent
+
 __all__ = ["ProxyAgent", "build_proxy_agent", "run_structured_agent"]
 
 

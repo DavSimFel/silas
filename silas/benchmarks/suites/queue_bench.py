@@ -47,7 +47,7 @@ async def bench_lease() -> None:
     for _ in range(100):
         await store.enqueue(_make_msg())
     for _ in range(100):
-        await store.lease("bench_queue", "bench_consumer")
+        await store.lease("bench_queue", 60)
 
 
 @benchmark(name="queue.enqueue_lease_ack", tags=["queue", "lifecycle"], iterations=50)
@@ -57,6 +57,6 @@ async def bench_full_lifecycle() -> None:
     for _ in range(50):
         msg = _make_msg()
         await store.enqueue(msg)
-        leased = await store.lease("bench_queue", "bench_consumer")
+        leased = await store.lease("bench_queue", 60)
         if leased:
             await store.ack(leased.id)

@@ -24,6 +24,7 @@ dependencies = [
   "pytest-asyncio>=0.24",
   "pytest-timeout>=2.3",
   "pytest-split>=0.10",
+  "pyright>=1.1.397",
   "ruff>=0.6",
   "aiosqlite>=0.22.1",
   "apscheduler>=3.11,<4",
