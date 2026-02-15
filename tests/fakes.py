@@ -136,12 +136,23 @@ class InMemoryMemoryStore:
     async def delete(self, memory_id: str) -> None:
         self.items.pop(memory_id, None)
 
-    async def search_keyword(self, query: str, limit: int) -> list[MemoryItem]:
+    async def search_keyword(
+        self, query: str, limit: int, *, session_id: str | None = None
+    ) -> list[MemoryItem]:
         lower = query.lower()
         results = [item for item in self.items.values() if lower in item.content.lower()]
+        if session_id is not None:
+            results = [
+                item
+                for item in results
+                if getattr(item, "session_id", None) is None
+                or getattr(item, "session_id", None) == session_id
+            ]
         return results[:limit]
 
-    async def search_by_type(self, memory_type: MemoryType, limit: int) -> list[MemoryItem]:
+    async def search_by_type(
+        self, memory_type: MemoryType, limit: int, *, session_id: str | None = None
+    ) -> list[MemoryItem]:
         results = [item for item in self.items.values() if item.memory_type == memory_type]
         results.sort(
             key=lambda item: (
