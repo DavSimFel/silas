@@ -40,6 +40,7 @@ class SkillDefinition(BaseModel):
     max_retries: int = 0
     timeout_seconds: int = 30
     taint_level: str | None = None
+    manifest_path: str | None = None
 
     @field_validator("taint_level")
     @classmethod
