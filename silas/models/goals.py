@@ -47,6 +47,38 @@ class GoalSchedule(BaseModel):
         return self
 
 
+class GoalSubscription(BaseModel):
+    """An event subscription attached to a goal.
+
+    When an incoming webhook event matches the criteria (source + event_type +
+    optional filter), the goal is triggered through the proxy queue.
+    """
+
+    sub_id: str
+    source: str  # e.g. "github", "stripe", "n8n"
+    event_type: str  # e.g. "push", "invoice.paid", "workflow_completed"
+    filter: dict[str, object] = Field(default_factory=dict)
+    active: bool = True
+    created_at: datetime = Field(default_factory=_utc_now)
+
+    @field_validator("created_at")
+    @classmethod
+    def _ensure_tz(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+            raise ValueError("created_at must be timezone-aware")
+        return value
+
+
+class ReportingConfig(BaseModel):
+    """Controls how and when a goal reports progress/results."""
+
+    channel: str = "owner"  # delivery target (e.g. "owner", "slack:#ops")
+    on_success: bool = True
+    on_failure: bool = True
+    on_progress: bool = False
+    summary_style: Literal["brief", "detailed"] = "brief"
+
+
 class Goal(BaseModel):
     goal_id: str
     name: str
@@ -58,6 +90,10 @@ class Goal(BaseModel):
     standing_approval: bool = False
     spawn_policy_hash: str | None = None
     verification: dict[str, object] = Field(default_factory=dict)
+    subscriptions: list[GoalSubscription] = Field(default_factory=list)
+    standing_approvals: list[str] = Field(default_factory=list)
+    reporting: ReportingConfig = Field(default_factory=ReportingConfig)
+    urgency: Literal["background", "informational", "needs_attention"] = "background"
     created_at: datetime = Field(default_factory=_utc_now)
     updated_at: datetime = Field(default_factory=_utc_now)
 
@@ -160,4 +196,11 @@ class StandingApproval(BaseModel):
         return self
 
 
-__all__ = ["Goal", "GoalRun", "GoalSchedule", "StandingApproval"]
+__all__ = [
+    "Goal",
+    "GoalRun",
+    "GoalSchedule",
+    "GoalSubscription",
+    "ReportingConfig",
+    "StandingApproval",
+]
