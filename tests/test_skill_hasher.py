@@ -9,8 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from silas.skills.hasher import SkillHasher
-from silas.skills.loader import SecurityError, SilasSkillLoader
+from silas.skills.registry import SecurityError, SilasSkillLoader, SkillHasher
 
 SKILL_MD = """\
 ---
@@ -143,7 +142,7 @@ class TestLoaderIntegrity:
         install_dir = tmp_path / "installed"
         install_dir.mkdir()
 
-        from silas.skills.installer import SkillInstaller
+        from silas.skills.registry import SkillInstaller
 
         loader = SilasSkillLoader(install_dir)
         installer = SkillInstaller(loader, install_dir)

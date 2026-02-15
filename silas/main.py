@@ -63,8 +63,7 @@ from silas.queue.router import QueueRouter
 from silas.queue.store import DurableQueueStore
 from silas.scheduler import SilasScheduler
 from silas.skills.executor import SkillExecutor, register_builtin_skills
-from silas.skills.loader import SilasSkillLoader
-from silas.skills.registry import SkillRegistry
+from silas.skills.registry import SilasSkillLoader, SkillRegistry
 from silas.tools.resolver import LiveSkillResolver
 from silas.work.executor import LiveWorkItemExecutor
 

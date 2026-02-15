@@ -5,8 +5,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from silas.skills.installer import SkillInstaller
-from silas.skills.loader import SilasSkillLoader
+from silas.skills.registry import SilasSkillLoader, SkillInstaller
 
 
 def _write_skill(

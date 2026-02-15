@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from silas.models.skills import SkillMetadata
 from silas.models.work import WorkItem
-from silas.skills.resolver import (
+from silas.skills.registry import (
     ApprovalRequiredToolset,
     FilteredToolset,
     PreparedToolset,
