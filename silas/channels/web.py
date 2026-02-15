@@ -154,11 +154,14 @@ class WebChannel(ChannelAdapterCore):
         websocket: WebSocket,
     ) -> None:
         """Track a new websocket connection in session and connection maps."""
+        from silas.core.metrics import ACTIVE_WEBSOCKETS
+
         async with self._ws_lock:
             self._websockets_by_session[session_id] = websocket
             self._active_sessions_by_connection.setdefault(connection_key, set()).add(session_id)
             if session_id == self.scope_id or self._websocket is None:
                 self._websocket = websocket
+            ACTIVE_WEBSOCKETS.inc()
 
     async def _unregister_websocket(
         self,
@@ -167,8 +170,11 @@ class WebChannel(ChannelAdapterCore):
         websocket: WebSocket,
     ) -> None:
         """Clean up websocket tracking on disconnect, promoting next available socket."""
+        from silas.core.metrics import ACTIVE_WEBSOCKETS
+
         async with self._ws_lock:
             current = self._websockets_by_session.get(session_id)
+            removed_current_socket = current is websocket
             if current is websocket:
                 self._websockets_by_session.pop(session_id, None)
 
@@ -182,6 +188,8 @@ class WebChannel(ChannelAdapterCore):
                 self._websocket = self._websockets_by_session.get(self.scope_id)
                 if self._websocket is None and self._websockets_by_session:
                     self._websocket = next(iter(self._websockets_by_session.values()))
+            if removed_current_socket:
+                ACTIVE_WEBSOCKETS.dec()
 
     def _serve_static(self, asset_path: str) -> Response:
         asset = asset_path.lstrip("/")

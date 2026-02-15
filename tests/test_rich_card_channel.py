@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any
 
 import pytest
 from silas.channels.web import WebChannel
@@ -180,3 +181,31 @@ async def test_card_response_via_handle_client_payload() -> None:
 
     assert future.done()
     assert future.result()["verdict"] == "approved"
+
+
+class _FakeWebsocketGauge:
+    def __init__(self) -> None:
+        self.inc_calls = 0
+        self.dec_calls = 0
+
+    def inc(self) -> None:
+        self.inc_calls += 1
+
+    def dec(self) -> None:
+        self.dec_calls += 1
+
+
+@pytest.mark.anyio
+async def test_register_unregister_websocket_updates_active_gauge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = WebChannel(host="127.0.0.1", port=0, config_path="/tmp/test.yaml")
+    gauge = _FakeWebsocketGauge()
+    monkeypatch.setattr("silas.core.metrics.ACTIVE_WEBSOCKETS", gauge)
+
+    ws: Any = object()
+    await ch._register_websocket("owner", "conn-1", ws)
+    await ch._unregister_websocket("owner", "conn-1", ws)
+
+    assert gauge.inc_calls == 1
+    assert gauge.dec_calls == 1

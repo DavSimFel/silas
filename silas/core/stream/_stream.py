@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 import uuid
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
@@ -526,21 +525,18 @@ class Stream(
     # ── Turn Processing ────────────────────────────────────────────────
 
     async def _process_turn(self, message: ChannelMessage, connection_id: str = "owner") -> str:
-        from silas.core.metrics import TURN_DURATION_SECONDS, TURNS_TOTAL
+        from silas.core.metrics import observe_turn_duration
 
         processor = self._get_or_create_turn_processor(connection_id)
         lock = self._connection_locks.setdefault(processor.connection_key, asyncio.Lock())
-        _turn_start = time.monotonic()
-        async with lock:
-            turn_token, session_token = self._activate_turn_processor(processor)
-            try:
-                result = await self._process_turn_with_active_context(message, connection_id)
-                return result
-            finally:
-                self._deactivate_turn_processor(turn_token, session_token)
-                elapsed = time.monotonic() - _turn_start
-                TURNS_TOTAL.labels(agent="proxy").inc()
-                TURN_DURATION_SECONDS.labels(agent="proxy").observe(elapsed)
+        with observe_turn_duration("proxy"):
+            async with lock:
+                turn_token, session_token = self._activate_turn_processor(processor)
+                try:
+                    result = await self._process_turn_with_active_context(message, connection_id)
+                    return result
+                finally:
+                    self._deactivate_turn_processor(turn_token, session_token)
 
     async def _process_turn_with_active_context(
         self,

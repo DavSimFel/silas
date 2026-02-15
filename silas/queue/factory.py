@@ -11,6 +11,7 @@ graph explicit in the parameter list.
 
 from __future__ import annotations
 
+from silas.core.metrics import QUEUE_LEASE_TIMEOUTS_TOTAL
 from silas.queue.bridge import QueueBridge
 from silas.queue.consult import ConsultPlannerManager
 from silas.queue.consumers import (
@@ -58,7 +59,9 @@ async def create_queue_system(
     # Why requeue on startup: if a previous process crashed mid-lease,
     # those messages would be stuck until lease expiry. Requeuing them
     # immediately ensures no messages are lost on restart.
-    await store.requeue_expired()
+    expired_lease_count = await store.requeue_expired()
+    if expired_lease_count > 0:
+        QUEUE_LEASE_TIMEOUTS_TOTAL.inc(expired_lease_count)
 
     router = QueueRouter(store)
 

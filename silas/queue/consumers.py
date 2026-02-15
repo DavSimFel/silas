@@ -20,6 +20,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from silas.core.metrics import QUEUE_MESSAGES_TOTAL
 from silas.core.plan_parser import MarkdownPlanParser
 from silas.core.telemetry import get_tracer
 from silas.models.approval import ApprovalVerdict
@@ -150,6 +151,10 @@ class BaseConsumer:
                 # Route the response message onward if the processor produced one.
                 if response is not None:
                     await self._router.route(response)
+                QUEUE_MESSAGES_TOTAL.labels(
+                    queue_name=self._queue_name,
+                    message_kind=msg.message_kind,
+                ).inc()
                 return True
 
         except Exception:
