@@ -86,8 +86,8 @@ class TestQuietStructure:
         assert "chat-bubble" not in html
 
     async def test_max_width_constraint(self, client: AsyncClient) -> None:
-        """Stream content constrained to 760px per spec."""
-        assert "760px" in (await client.get("/")).text
+        """Stream content constrained to 960px per spec."""
+        assert "960px" in (await client.get("/")).text
 
     async def test_onboarding_overlay_styles_present(self, client: AsyncClient) -> None:
         html = (await client.get("/")).text
