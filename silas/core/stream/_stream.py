@@ -620,7 +620,9 @@ class Stream(
             if tc.chronicle_store is not None:
                 await tc.chronicle_store.append(scope_id, chronicle_item)
 
-            await self._auto_retrieve_memories(signed.message.text, cm, signed.taint, turn_number)
+            await self._auto_retrieve_memories(
+                signed.message.text, cm, signed.taint, turn_number, session_id=session_id
+            )
             await self._ingest_raw_memory(
                 signed.message.text, signed.taint, session_id, turn_number
             )

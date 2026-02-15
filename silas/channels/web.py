@@ -535,6 +535,12 @@ class WebChannel(ChannelAdapterCore):
         async with self._ws_lock:
             if recipient_id and recipient_id in self._websockets_by_session:
                 return self._websockets_by_session[recipient_id]
+            # Only fall through to owner/default socket when the recipient IS
+            # the owner (scope_id).  For scoped sessions the response must be
+            # delivered to the exact session socket — never to an unrelated
+            # connection, which would leak data across session boundaries.
+            if recipient_id and recipient_id != self.scope_id:
+                return None
             if self.scope_id in self._websockets_by_session:
                 return self._websockets_by_session[self.scope_id]
             if self._websocket is not None:

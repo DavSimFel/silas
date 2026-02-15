@@ -75,31 +75,54 @@ class SQLiteMemoryStore:
             await db.execute("DELETE FROM memories WHERE memory_id = ?", (memory_id,))
             await db.commit()
 
-    async def search_keyword(self, query: str, limit: int) -> list[MemoryItem]:
+    async def search_keyword(
+        self, query: str, limit: int, *, session_id: str | None = None
+    ) -> list[MemoryItem]:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             # FTS5 query — escape special chars
             safe_query = query.replace('"', '""')
-            cursor = await db.execute(
-                """SELECT m.* FROM memories m
-                   JOIN memories_fts fts ON m.rowid = fts.rowid
-                   WHERE memories_fts MATCH ?
-                   LIMIT ?""",
-                (f'"{safe_query}"', limit),
-            )
+            if session_id is not None:
+                cursor = await db.execute(
+                    """SELECT m.* FROM memories m
+                       JOIN memories_fts fts ON m.rowid = fts.rowid
+                       WHERE memories_fts MATCH ?
+                       AND m.session_id = ?
+                       LIMIT ?""",
+                    (f'"{safe_query}"', session_id, limit),
+                )
+            else:
+                cursor = await db.execute(
+                    """SELECT m.* FROM memories m
+                       JOIN memories_fts fts ON m.rowid = fts.rowid
+                       WHERE memories_fts MATCH ?
+                       LIMIT ?""",
+                    (f'"{safe_query}"', limit),
+                )
             rows = await cursor.fetchall()
             return [_row_to_item(r) for r in rows]
 
-    async def search_by_type(self, memory_type: MemoryType, limit: int) -> list[MemoryItem]:
+    async def search_by_type(
+        self, memory_type: MemoryType, limit: int, *, session_id: str | None = None
+    ) -> list[MemoryItem]:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                """SELECT * FROM memories
-                   WHERE memory_type = ?
-                   ORDER BY updated_at DESC, created_at DESC, memory_id ASC
-                   LIMIT ?""",
-                (memory_type.value, limit),
-            )
+            if session_id is not None:
+                cursor = await db.execute(
+                    """SELECT * FROM memories
+                       WHERE memory_type = ? AND session_id = ?
+                       ORDER BY updated_at DESC, created_at DESC, memory_id ASC
+                       LIMIT ?""",
+                    (memory_type.value, session_id, limit),
+                )
+            else:
+                cursor = await db.execute(
+                    """SELECT * FROM memories
+                       WHERE memory_type = ?
+                       ORDER BY updated_at DESC, created_at DESC, memory_id ASC
+                       LIMIT ?""",
+                    (memory_type.value, limit),
+                )
             rows = await cursor.fetchall()
             return [_row_to_item(r) for r in rows]
 
