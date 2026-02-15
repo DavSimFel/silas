@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 from silas.models.approval import ApprovalDecision, ApprovalScope, ApprovalToken
 from silas.models.work import WorkItem
-from silas.protocols.approval import NonceStore
+from silas.persistence.nonce_store import SQLiteNonceStore as NonceStore
 
 
 class SilasApprovalVerifier:

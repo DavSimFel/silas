@@ -5,11 +5,11 @@ import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
+from silas.memory.sqlite_store import SQLiteMemoryStore as MemoryStore
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import TaintLevel
 from silas.models.skills import SkillDefinition, SkillResult
 from silas.models.work import WorkItem
-from silas.protocols.memory import MemoryStore
 from silas.skills.registry import SkillRegistry
 
 type SkillHandler = Callable[[dict[str, object]], Awaitable[dict[str, object]]]

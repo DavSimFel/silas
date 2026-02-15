@@ -15,7 +15,7 @@ from silas.models.personality import (
     PersonaState,
     VoiceConfig,
 )
-from silas.protocols.personality import PersonaStore
+from silas.persistence.persona_store import SQLitePersonaStore as PersonaStore
 
 _AXES: tuple[str, ...] = (
     "warmth",

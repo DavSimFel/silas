@@ -12,19 +12,21 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
+    from silas.channels.base import ChannelAdapterCore
+    from silas.connections.manager import SilasConnectionManager as ConnectionManager
     from silas.core.approval_flow import ApprovalFlow
     from silas.core.context_manager import LiveContextManager
+    from silas.core.plan_parser import PlanParser
     from silas.core.turn_context import TurnContext
     from silas.gates import SilasGateRunner
     from silas.models.agents import RouteDecision
     from silas.models.context import ContextItem
     from silas.models.proactivity import SuggestionProposal
     from silas.models.work import WorkItem
-    from silas.protocols.channels import ChannelAdapterCore
-    from silas.protocols.connections import ConnectionManager
-    from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
-    from silas.protocols.scheduler import TaskScheduler
-    from silas.protocols.work import PlanParser, WorkItemStore
+    from silas.persistence.work_item_store import SQLiteWorkItemStore as WorkItemStore
+    from silas.proactivity.calibrator import SimpleAutonomyCalibrator as AutonomyCalibrator
+    from silas.proactivity.suggestions import SimpleSuggestionEngine as SuggestionEngine
+    from silas.scheduler.ap_scheduler import SilasScheduler as TaskScheduler
     from silas.tools.approval_required import ApprovalRequiredToolset
 
 

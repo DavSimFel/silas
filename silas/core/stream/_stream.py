@@ -20,10 +20,13 @@ from typing import TYPE_CHECKING
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from silas.agents.structured import run_structured_agent
+from silas.channels.base import ChannelAdapterCore
+from silas.connections.manager import SilasConnectionManager as ConnectionManager
 from silas.core.approval_flow import ApprovalFlow
 from silas.core.context_manager import LiveContextManager
 from silas.core.interaction_mode import resolve_interaction_mode
 from silas.core.logging import correlation_scope
+from silas.core.plan_parser import PlanParser
 from silas.core.stream._gates import GateMixin
 from silas.core.stream._helpers import HelpersMixin
 from silas.core.stream._memory import MemoryMixin
@@ -42,12 +45,11 @@ from silas.models.context import ContextItem, ContextZone
 from silas.models.messages import ChannelMessage, TaintLevel
 from silas.models.proactivity import SuggestionProposal
 from silas.models.work import WorkItem
-from silas.protocols.approval import NonceStore
-from silas.protocols.channels import ChannelAdapterCore
-from silas.protocols.connections import ConnectionManager
-from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
-from silas.protocols.scheduler import TaskScheduler
-from silas.protocols.work import PlanParser, WorkItemStore
+from silas.persistence.nonce_store import SQLiteNonceStore as NonceStore
+from silas.persistence.work_item_store import SQLiteWorkItemStore as WorkItemStore
+from silas.proactivity.calibrator import SimpleAutonomyCalibrator as AutonomyCalibrator
+from silas.proactivity.suggestions import SimpleSuggestionEngine as SuggestionEngine
+from silas.scheduler.ap_scheduler import SilasScheduler as TaskScheduler
 from silas.security.taint import TaintTracker
 
 if TYPE_CHECKING:

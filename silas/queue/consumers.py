@@ -26,7 +26,6 @@ from silas.core.plan_parser import MarkdownPlanParser
 from silas.core.telemetry import get_tracer
 from silas.models.approval import ApprovalDecision, ApprovalScope, ApprovalToken, ApprovalVerdict
 from silas.models.work import WorkItem, WorkItemResult
-from silas.protocols.work import WorkItemExecutor
 from silas.queue.consult import ConsultPlannerManager
 from silas.queue.replan import ReplanManager
 from silas.queue.research import ResearchStateMachine
@@ -43,6 +42,7 @@ from silas.queue.types import (
 )
 from silas.tools.backends import build_research_console_toolset
 from silas.tools.filtered import FilteredToolset
+from silas.work.executor import LiveWorkItemExecutor as WorkItemExecutor
 from silas.work.executor import work_item_from_execution_payload
 
 logger = logging.getLogger(__name__)

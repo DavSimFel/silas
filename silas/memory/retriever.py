@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from silas.core.telemetry import get_tracer
+from silas.memory.sqlite_store import SQLiteMemoryStore as MemoryStore
 from silas.models.agents import MemoryQuery, MemoryQueryStrategy
 from silas.models.memory import MemoryItem
-from silas.protocols.memory import MemoryStore
 
 _TRACER = get_tracer("silas.memory")
 

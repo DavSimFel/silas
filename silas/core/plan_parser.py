@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Protocol, runtime_checkable
 
 import yaml
 
@@ -13,7 +14,13 @@ from silas.models.work import (
     WorkItem,
     WorkItemType,
 )
-from silas.protocols.work import PlanParser
+from silas.models.work import WorkItem as _WorkItem
+
+
+@runtime_checkable
+class PlanParser(Protocol):
+    def parse(self, markdown: str) -> _WorkItem: ...
+
 
 _FRONT_MATTER_DELIMITER = "---"
 _REQUIRED_FIELDS = ("id", "type", "title")

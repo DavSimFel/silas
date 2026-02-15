@@ -18,7 +18,7 @@ from silas.models.messages import TaintLevel
 if TYPE_CHECKING:
     from silas.core.context_manager import LiveContextManager
     from silas.core.stream._base import StreamBase
-    from silas.protocols.memory import MemoryStore
+    from silas.memory.sqlite_store import SQLiteMemoryStore as MemoryStore
 
 _counter = HeuristicTokenCounter()
 _MENTION_PATTERN = re.compile(r"@([A-Za-z0-9_:-]+)")

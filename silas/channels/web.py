@@ -17,11 +17,11 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, field_validator
 
+from silas.channels.base import ChannelAdapterCore
 from silas.models.approval import ApprovalDecision, ApprovalVerdict
 from silas.models.draft import DraftVerdict
 from silas.models.messages import ChannelMessage, utc_now
 from silas.models.review import BatchActionDecision, DecisionResult
-from silas.protocols.channels import ChannelAdapterCore
 
 try:  # pragma: no cover - optional dependency
     from pywebpush import WebPushException, webpush

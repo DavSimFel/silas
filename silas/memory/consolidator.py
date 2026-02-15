@@ -6,8 +6,8 @@ import inspect
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from silas.memory.sqlite_store import SQLiteMemoryStore as MemoryStore
 from silas.models.memory import MemoryItem, ReingestionTier
-from silas.protocols.memory import MemoryStore
 
 
 class SilasMemoryConsolidator:

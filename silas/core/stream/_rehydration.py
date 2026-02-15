@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from silas.core.context_manager import LiveContextManager
     from silas.core.stream._base import StreamBase
     from silas.core.turn_context import TurnContext
-    from silas.protocols.work import WorkItemStore
+    from silas.persistence.work_item_store import SQLiteWorkItemStore as WorkItemStore
 
 _counter = HeuristicTokenCounter()
 _IN_PROGRESS_STATUSES: tuple[WorkItemStatus, ...] = (

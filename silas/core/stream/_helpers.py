@@ -14,7 +14,8 @@ from silas.models.work import WorkItem
 if TYPE_CHECKING:
     from silas.core.context_manager import LiveContextManager
     from silas.core.stream._base import StreamBase
-    from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
+    from silas.proactivity.calibrator import SimpleAutonomyCalibrator as AutonomyCalibrator
+    from silas.proactivity.suggestions import SimpleSuggestionEngine as SuggestionEngine
 
 _counter = HeuristicTokenCounter()
 

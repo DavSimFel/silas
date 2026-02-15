@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 from silas.models.skills import SkillMetadata
 from silas.models.work import WorkItem
-from silas.protocols.skills import SkillLoader
+from silas.skills.registry import SilasSkillLoader as SkillLoader
 from silas.tools.approval_required import ApprovalRequiredToolset
 from silas.tools.filtered import FilteredToolset
 from silas.tools.prepared import PreparedToolset

@@ -3,21 +3,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from silas.protocols.approval import ApprovalManager
-from silas.protocols.audit import AuditLog
-from silas.protocols.chronicle import ChronicleStore
-from silas.protocols.context import ContextManager
-from silas.protocols.gates import GateRunner
-from silas.protocols.memory import MemoryStore
-from silas.protocols.personality import PersonalityEngine
-from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
-from silas.protocols.skills import SkillLoader, SkillResolver
-from silas.protocols.work import WorkItemExecutor
-
 if TYPE_CHECKING:
+    from silas.approval.manager import LiveApprovalManager as ApprovalManager
+    from silas.audit.sqlite_audit import SQLiteAuditLog as AuditLog
     from silas.core.context_manager import LiveContextManager
+    from silas.gates.runner import SilasGateRunner as GateRunner
+    from silas.memory.sqlite_store import SQLiteMemoryStore as MemoryStore
+    from silas.persistence.chronicle_store import SQLiteChronicleStore as ChronicleStore
+    from silas.personality.engine import SilasPersonalityEngine as PersonalityEngine
+    from silas.proactivity.calibrator import SimpleAutonomyCalibrator as AutonomyCalibrator
+    from silas.proactivity.suggestions import SimpleSuggestionEngine as SuggestionEngine
     from silas.skills.executor import SkillExecutor
+    from silas.skills.registry import SilasSkillLoader as SkillLoader
     from silas.skills.registry import SkillRegistry
+    from silas.tools.resolver import LiveSkillResolver as SkillResolver
+    from silas.work.executor import LiveWorkItemExecutor as WorkItemExecutor
 
 
 class StructuredAgentRunner(Protocol):
@@ -27,7 +27,7 @@ class StructuredAgentRunner(Protocol):
 @dataclass(slots=True)
 class TurnContext:
     scope_id: str = "owner"
-    context_manager: ContextManager | None = None
+    context_manager: LiveContextManager | None = None
     live_context_manager: LiveContextManager | None = None
     memory_store: MemoryStore | None = None
     chronicle_store: ChronicleStore | None = None

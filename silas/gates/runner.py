@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from silas.core.telemetry import get_tracer
 from silas.core.token_counter import HeuristicTokenCounter
@@ -19,7 +19,22 @@ from silas.models.gates import (
     GateTrigger,
 )
 from silas.models.messages import TaintLevel
-from silas.protocols.gates import GateCheckProvider, GateRunner
+
+
+class GateCheckProvider(Protocol):
+    async def check(self, gate: Gate, context: dict[str, object]) -> GateResult: ...
+
+
+class GateRunner(Protocol):
+    async def check_gates(
+        self,
+        gates: list[Gate],
+        trigger: GateTrigger,
+        context: dict[str, object],
+    ) -> tuple[list[GateResult], list[GateResult], dict[str, object]]: ...
+
+    async def check_gate(self, gate: Gate, context: dict[str, object]) -> GateResult: ...
+
 
 if TYPE_CHECKING:
     from silas.models.work import WorkItem

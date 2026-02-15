@@ -11,8 +11,8 @@ from numbers import Real
 
 from silas.models.agents import InteractionMode, InteractionRegister, RouteDecision
 from silas.models.gates import GateResult
-from silas.protocols.personality import PersonalityEngine
-from silas.protocols.proactivity import AutonomyCalibrator
+from silas.personality.engine import SilasPersonalityEngine as PersonalityEngine
+from silas.proactivity.calibrator import SimpleAutonomyCalibrator as AutonomyCalibrator
 
 _DEFAULT_HIGH_INITIATIVE_MIN = 0.70
 _DEFAULT_MODE_BY_REGISTER: dict[InteractionRegister, InteractionMode] = {

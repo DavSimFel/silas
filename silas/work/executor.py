@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
+from silas.approval.verifier import SilasApprovalVerifier as ApprovalVerifier
+from silas.audit.sqlite_audit import SQLiteAuditLog as AuditLog
 from silas.core.telemetry import get_tracer
+from silas.core.verification_runner import SilasVerificationRunner as VerificationRunner
+from silas.execution import EphemeralExecutor
 from silas.execution.python_exec import PythonExecutor
 from silas.execution.sandbox_factory import create_sandbox_manager
 from silas.execution.shell import ShellExecutor
@@ -29,10 +33,7 @@ from silas.models.work import (
     WorkItemResult,
     WorkItemStatus,
 )
-from silas.protocols.approval import ApprovalVerifier
-from silas.protocols.audit import AuditLog
-from silas.protocols.execution import EphemeralExecutor
-from silas.protocols.work import VerificationRunner, WorkItemStore
+from silas.persistence.work_item_store import SQLiteWorkItemStore as WorkItemStore
 from silas.skills.executor import SkillExecutor
 
 if TYPE_CHECKING:
