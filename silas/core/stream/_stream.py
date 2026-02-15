@@ -32,6 +32,7 @@ from silas.core.stream._planner import PlannerMixin
 from silas.core.stream._rehydration import RehydrationMixin
 from silas.core.stream._signing import SigningMixin
 from silas.core.stream._toolsets import ToolsetMixin
+from silas.core.telemetry import get_tracer
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.core.turn_context import TurnContext
 from silas.models.agents import RouteDecision
@@ -56,6 +57,7 @@ if TYPE_CHECKING:
 _counter = HeuristicTokenCounter()
 
 logger = logging.getLogger(__name__)
+_TRACER = get_tracer("silas.stream")
 
 
 @dataclass(slots=True)
@@ -528,15 +530,25 @@ class Stream(
         from silas.core.metrics import observe_turn_duration
 
         processor = self._get_or_create_turn_processor(connection_id)
-        lock = self._connection_locks.setdefault(processor.connection_key, asyncio.Lock())
-        with observe_turn_duration("proxy"):
-            async with lock:
-                turn_token, session_token = self._activate_turn_processor(processor)
-                try:
-                    result = await self._process_turn_with_active_context(message, connection_id)
-                    return result
-                finally:
-                    self._deactivate_turn_processor(turn_token, session_token)
+        with _TRACER.start_as_current_span(
+            "stream.process_turn",
+            attributes={
+                "connection_id": connection_id,
+                "connection_key": processor.connection_key,
+                "session_id": processor.session_id,
+            },
+        ):
+            lock = self._connection_locks.setdefault(processor.connection_key, asyncio.Lock())
+            with observe_turn_duration("proxy"):
+                async with lock:
+                    turn_token, session_token = self._activate_turn_processor(processor)
+                    try:
+                        result = await self._process_turn_with_active_context(
+                            message, connection_id
+                        )
+                        return result
+                    finally:
+                        self._deactivate_turn_processor(turn_token, session_token)
 
     async def _process_turn_with_active_context(
         self,
@@ -716,23 +728,32 @@ class Stream(
                 turn_number,
             )
 
-            # Step 9 — execute memory queries the agent requested
-            await self._process_memory_queries(
-                routed.response,
-                accumulated_taint,
-                session_id,
-                scope_id,
-                cm,
-                turn_number,
-            )
+            with _TRACER.start_as_current_span(
+                "stream.memory_processing",
+                attributes={
+                    "turn_id": turn_id,
+                    "turn_number": turn_number,
+                    "scope_id": scope_id,
+                    "session_id": session_id,
+                },
+            ):
+                # Step 9 — execute memory queries the agent requested
+                await self._process_memory_queries(
+                    routed.response,
+                    accumulated_taint,
+                    session_id,
+                    scope_id,
+                    cm,
+                    turn_number,
+                )
 
-            # Step 10 — execute memory write ops (gated)
-            await self._process_memory_ops(
-                routed.response,
-                accumulated_taint,
-                session_id,
-                turn_number,
-            )
+                # Step 10 — execute memory write ops (gated)
+                await self._process_memory_ops(
+                    routed.response,
+                    accumulated_taint,
+                    session_id,
+                    turn_number,
+                )
 
             response_item = ContextItem(
                 ctx_id=f"chronicle:{turn_number}:resp:{uuid.uuid4().hex}",
@@ -864,21 +885,30 @@ class Stream(
                 agent_response = AgentResponse(**raw)
             else:
                 agent_response = raw
-        await self._process_memory_queries(
-            agent_response,
-            accumulated_taint,
-            session_id,
-            scope_id,
-            cm,
-            turn_number,
-        )
+        with _TRACER.start_as_current_span(
+            "stream.memory_processing",
+            attributes={
+                "turn_id": turn_id,
+                "turn_number": turn_number,
+                "scope_id": scope_id,
+                "session_id": session_id,
+            },
+        ):
+            await self._process_memory_queries(
+                agent_response,
+                accumulated_taint,
+                session_id,
+                scope_id,
+                cm,
+                turn_number,
+            )
 
-        await self._process_memory_ops(
-            agent_response,
-            accumulated_taint,
-            session_id,
-            turn_number,
-        )
+            await self._process_memory_ops(
+                agent_response,
+                accumulated_taint,
+                session_id,
+                turn_number,
+            )
 
         response_item = ContextItem(
             ctx_id=f"chronicle:{turn_number}:resp:{uuid.uuid4().hex}",

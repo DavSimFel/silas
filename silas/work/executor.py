@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
+from silas.core.telemetry import get_tracer
 from silas.execution.python_exec import PythonExecutor
 from silas.execution.sandbox_factory import create_sandbox_manager
 from silas.execution.shell import ShellExecutor
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
 _CHARS_PER_TOKEN = 3.5
 
 logger = logging.getLogger(__name__)
+_TRACER = get_tracer("silas.execution")
 
 _EXECUTION_ACTIONS: dict[WorkItemExecutorType, str] = {
     WorkItemExecutorType.shell: "shell_exec",
@@ -267,55 +269,63 @@ class LiveWorkItemExecutor:
         plan_budget: BudgetUsed,
         plan_budget_limits: Budget,
     ) -> WorkItemResult:
-        work_item = item.model_copy(deep=True)
-        used = work_item.budget_used.model_copy(deep=True)
-        max_attempts = max(1, work_item.budget.max_attempts)
+        with _TRACER.start_as_current_span(
+            "execution.work_item",
+            attributes={
+                "scope_id": self._scope_id,
+                "work_item_id": item.id,
+                "executor_type": item.executor_type.value,
+            },
+        ):
+            work_item = item.model_copy(deep=True)
+            used = work_item.budget_used.model_copy(deep=True)
+            max_attempts = max(1, work_item.budget.max_attempts)
 
-        approved, approval_reason = await self._check_execution_approval(work_item)
-        if not approved:
-            await self._audit_execution_blocked(work_item, approval_reason)
-            return await self._mark_blocked(
-                work_item,
-                f"execution_blocked_no_approval: {approval_reason}",
-                budget_used=used,
-            )
+            approved, approval_reason = await self._check_execution_approval(work_item)
+            if not approved:
+                await self._audit_execution_blocked(work_item, approval_reason)
+                return await self._mark_blocked(
+                    work_item,
+                    f"execution_blocked_no_approval: {approval_reason}",
+                    budget_used=used,
+                )
 
-        uses_skill_executor = work_item.executor_type == WorkItemExecutorType.skill
-        if uses_skill_executor:
-            self._skill_executor.set_work_item(work_item)
-        try:
-            completion_result, last_error = await self._run_execution_attempts(
-                work_item=work_item,
-                used=used,
-                max_attempts=max_attempts,
-            )
-            if completion_result is not None:
-                return completion_result
-
-            stuck_result = await self._attempt_stuck_recovery(
-                work_item,
-                used,
-                last_error,
-                plan_budget=plan_budget,
-                plan_budget_limits=plan_budget_limits,
-            )
-            if stuck_result is not None:
-                return stuck_result
-
-            work_item.status = WorkItemStatus.failed
-            work_item.budget_used = used.model_copy(deep=True)
-            await self._persist(work_item)
-            return WorkItemResult(
-                work_item_id=work_item.id,
-                status=WorkItemStatus.failed,
-                summary=f"Work item {work_item.id} failed.",
-                last_error=last_error,
-                verification_results=work_item.verification_results,
-                budget_used=used.model_copy(deep=True),
-            )
-        finally:
+            uses_skill_executor = work_item.executor_type == WorkItemExecutorType.skill
             if uses_skill_executor:
-                self._skill_executor.set_work_item(None)
+                self._skill_executor.set_work_item(work_item)
+            try:
+                completion_result, last_error = await self._run_execution_attempts(
+                    work_item=work_item,
+                    used=used,
+                    max_attempts=max_attempts,
+                )
+                if completion_result is not None:
+                    return completion_result
+
+                stuck_result = await self._attempt_stuck_recovery(
+                    work_item,
+                    used,
+                    last_error,
+                    plan_budget=plan_budget,
+                    plan_budget_limits=plan_budget_limits,
+                )
+                if stuck_result is not None:
+                    return stuck_result
+
+                work_item.status = WorkItemStatus.failed
+                work_item.budget_used = used.model_copy(deep=True)
+                await self._persist(work_item)
+                return WorkItemResult(
+                    work_item_id=work_item.id,
+                    status=WorkItemStatus.failed,
+                    summary=f"Work item {work_item.id} failed.",
+                    last_error=last_error,
+                    verification_results=work_item.verification_results,
+                    budget_used=used.model_copy(deep=True),
+                )
+            finally:
+                if uses_skill_executor:
+                    self._skill_executor.set_work_item(None)
 
     async def _run_execution_attempts(
         self,
