@@ -238,7 +238,6 @@ Profiles allocate budget percentages across zones. The Proxy selects the profile
 | coding | 20% | 20% | 40% | Development |
 | research | 20% | 40% | 20% | Deep research |
 | support | 40% | 25% | 15% | Troubleshooting |
-| planning | 15% | 25% | 35% | Multi-step |
 
 Remaining budget (~20%) is unallocated headroom for the heuristic token counter.
 
@@ -543,7 +542,7 @@ Three core executors:
 
 Skill scripts execute via `python_exec` with paths resolved from work item's skills list.
 
-✅ Verify: `shell_exec("echo hello")` returns `"hello"` via subprocess sandbox.
+✅ Verify: `shell_exec(["echo", "hello"])` returns `"hello"` via subprocess sandbox. Working directory is isolated; no access to parent directories.
 
 ---
 
