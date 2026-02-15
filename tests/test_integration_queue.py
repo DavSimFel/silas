@@ -83,6 +83,25 @@ class MockExecutorAgent:
         return _MockResult(output=_MockOutput(summary=f"Executed: {prompt}"))
 
 
+class _FakeLeaseTimeoutMetric:
+    def __init__(self) -> None:
+        self.inc_calls: list[int] = []
+
+    def inc(self, amount: int = 1) -> None:
+        self.inc_calls.append(amount)
+
+
+class _FakeQueueStore:
+    def __init__(self, db_path: str) -> None:
+        self.db_path = db_path
+
+    async def initialize(self) -> None:
+        return None
+
+    async def requeue_expired(self) -> int:
+        return 3
+
+
 # ── Fixtures ───────────────────────────────────────────────────────────
 
 
@@ -252,6 +271,28 @@ class TestCreateQueueSystem:
         assert orchestrator.running is True
         await orchestrator.stop()
         assert orchestrator.running is False
+
+    async def test_increments_lease_timeout_metric_for_requeued_leases(
+        self,
+        tmp_db: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        metric = _FakeLeaseTimeoutMetric()
+        monkeypatch.setattr("silas.queue.factory.DurableQueueStore", _FakeQueueStore)
+        monkeypatch.setattr("silas.queue.factory.QUEUE_LEASE_TIMEOUTS_TOTAL", metric)
+
+        proxy = MockProxyAgent()
+        planner = MockPlannerAgent()
+        executor = MockExecutorAgent()
+
+        _orchestrator, _bridge = await create_queue_system(
+            db_path=tmp_db,
+            proxy_agent=proxy,
+            planner_agent=planner,
+            executor_agent=executor,
+        )
+
+        assert metric.inc_calls == [3]
 
 
 # ── Full Flow Tests ────────────────────────────────────────────────────

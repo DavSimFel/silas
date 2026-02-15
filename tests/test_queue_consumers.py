@@ -198,6 +198,24 @@ class EchoConsumer(BaseConsumer):
         return None
 
 
+class _FakeQueueMessageCounter:
+    def __init__(self) -> None:
+        self.labels_calls: list[dict[str, str]] = []
+        self.inc_count = 0
+
+    def labels(self, *, queue_name: str, message_kind: str) -> _FakeQueueMessageCounter:
+        self.labels_calls.append(
+            {
+                "queue_name": queue_name,
+                "message_kind": message_kind,
+            }
+        )
+        return self
+
+    def inc(self) -> None:
+        self.inc_count += 1
+
+
 # ── Fixtures ─────────────────────────────────────────────────────────
 
 
@@ -236,6 +254,31 @@ async def test_base_consumer_poll_once_happy_path(
 
     # Message should be acked (removed from queue).
     assert await store.pending_count("proxy_queue") == 0
+
+
+@pytest.mark.asyncio
+async def test_base_consumer_poll_once_increments_queue_messages_total(
+    store: DurableQueueStore,
+    router: QueueRouter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Successful processing increments queue_messages_total with queue and kind labels."""
+    metric = _FakeQueueMessageCounter()
+    monkeypatch.setattr("silas.queue.consumers.QUEUE_MESSAGES_TOTAL", metric)
+    consumer = EchoConsumer(store, router, "proxy_queue")
+    msg = QueueMessage(message_kind="user_message", sender="user", payload={"text": "hi"})
+    await router.route(msg)
+
+    found = await consumer.poll_once()
+
+    assert found is True
+    assert metric.labels_calls == [
+        {
+            "queue_name": "proxy_queue",
+            "message_kind": "user_message",
+        }
+    ]
+    assert metric.inc_count == 1
 
 
 @pytest.mark.asyncio
