@@ -25,7 +25,6 @@ class LiveApprovalManager:
         self,
         timeout: timedelta = timedelta(hours=1),
         ux_metrics: UXMetricsCollector | None = None,
-        goal_manager: object | None = None,
     ) -> None:
         self._timeout = timeout
         self._pending: dict[str, PendingApproval] = {}
@@ -36,16 +35,10 @@ class LiveApprovalManager:
         self._decision_log: list[DecisionRecord] = []
         # Batch review surface — polls draw from this queue.
         self._review_queue = ReviewQueue()
-        # Optional dependency used for standing approval lookups on spawned work.
-        self._goal_manager = goal_manager
 
     def get_review_queue(self) -> ReviewQueue:
         """Accessor so external consumers can poll/resolve pending reviews."""
         return self._review_queue
-
-    def bind_goal_manager(self, goal_manager: object | None) -> None:
-        """Attach goal manager dependency used for standing approval lookups."""
-        self._goal_manager = goal_manager
 
     def get_fatigue_analysis(self, *, window_minutes: int = 30) -> FatigueAnalysis:
         """Snapshot of current fatigue state for the approval queue."""
@@ -53,7 +46,7 @@ class LiveApprovalManager:
 
     def request_approval(self, work_item: WorkItem, scope: ApprovalScope) -> ApprovalToken:
         if work_item.spawned_by is not None:
-            standing_token = self.check_standing_approval(work_item, self._goal_manager)
+            standing_token = self.check_standing_approval(work_item, None)
             if standing_token is not None:
                 now = datetime.now(UTC)
                 decision = ApprovalDecision(verdict=ApprovalVerdict.approved)
@@ -126,14 +119,17 @@ class LiveApprovalManager:
     def check_standing_approval(
         self,
         work_item: WorkItem,
-        goal_manager: object,
+        approval_source: object | None,
     ) -> ApprovalToken | None:
         """Resolve a standing token for goal-spawned work when still active."""
         goal_id = work_item.spawned_by
         if goal_id is None:
             return None
 
-        get_standing = getattr(goal_manager, "get_standing_approval", None)
+        if approval_source is None:
+            return None
+
+        get_standing = getattr(approval_source, "get_standing_approval", None)
         if not callable(get_standing):
             return None
 

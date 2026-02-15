@@ -296,7 +296,7 @@ class PlannerMixin(StreamBase if TYPE_CHECKING else object):  # type: ignore[mis
         check_standing = getattr(approval_manager, "check_standing_approval", None)
         if not callable(check_standing):
             return None
-        return check_standing(work_item, self.goal_manager)
+        return check_standing(work_item, None)
 
     async def _execute_planner_skill_actions(
         self,

@@ -1,8 +1,4 @@
-"""Shared stub implementations for Phase 1a (pre-SQLite).
-
-These are used by both the runtime (main.py) and tests (fakes.py).
-They will be replaced by real implementations in Phase 1b.
-"""
+"""Shared stub implementations for tests."""
 
 from __future__ import annotations
 
