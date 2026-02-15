@@ -1,4 +1,4 @@
-"""Tests for silas.topics — Phase 1: Model, Parser, Registry, Matcher."""
+"""Tests for silas.topics — Phase 1: Model, Parser, Registry, Matcher, TopicManager."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from silas.core.topic_manager import TopicManager, TopicMatch
+from silas.models.topics import TopicFrontmatter
 from silas.topics.matcher import TriggerMatcher
 from silas.topics.model import SoftTrigger, Topic, TriggerSpec
 from silas.topics.parser import TopicParseError, parse_topic, topic_to_markdown
@@ -300,3 +302,102 @@ class TestMatcher:
 
     def test_match_soft_empty(self, matcher: TriggerMatcher) -> None:
         assert matcher.match_soft("anything", []) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# TopicFrontmatter tests
+# ---------------------------------------------------------------------------
+
+
+class TestTopicFrontmatter:
+    def test_from_topic(self) -> None:
+        topic = parse_topic(VALID_TOPIC_MD)
+        fm = TopicFrontmatter.from_topic(topic)
+        assert fm.id == topic.id
+        assert fm.name == topic.name
+        assert fm.scope == topic.scope
+        assert not hasattr(fm, "body") or "body" not in fm.model_fields
+
+
+# ---------------------------------------------------------------------------
+# TopicManager tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def topic_files_dir(tmp_path: Path) -> Path:
+    d = tmp_path / "topics"
+    d.mkdir()
+    (d / "ci.md").write_text(VALID_TOPIC_MD)
+    (d / "note.md").write_text(MINIMAL_TOPIC_MD)
+    return d
+
+
+@pytest.fixture
+def manager(topic_files_dir: Path) -> TopicManager:
+    mgr = TopicManager(topic_files_dir)
+    mgr.load()
+    return mgr
+
+
+class TestTopicManager:
+    def test_load(self, manager: TopicManager) -> None:
+        assert len(manager.topics) == 2
+
+    def test_load_empty_dir(self, tmp_path: Path) -> None:
+        mgr = TopicManager(tmp_path / "nonexistent")
+        assert mgr.load() == 0
+
+    def test_match_event(self, manager: TopicManager) -> None:
+        matches = manager.match_event(
+            {
+                "source": "github",
+                "event": "check_suite.completed",
+                "repo": "silas",
+                "conclusion": "failure",
+            }
+        )
+        assert len(matches) == 1
+        assert matches[0].topic.id == "abc-123"
+        assert matches[0].match_type == "hard"
+
+    def test_match_event_no_match(self, manager: TopicManager) -> None:
+        matches = manager.match_event({"source": "gitlab", "event": "push"})
+        assert len(matches) == 0
+
+    def test_match_message(self, manager: TopicManager) -> None:
+        matches = manager.match_message("the ci build had a failure")
+        assert len(matches) >= 1
+        assert matches[0].topic.id == "abc-123"
+        assert matches[0].match_type == "soft"
+
+    def test_match_message_no_match(self, manager: TopicManager) -> None:
+        matches = manager.match_message("the weather is lovely today")
+        assert len(matches) == 0
+
+    def test_get_context(self, manager: TopicManager) -> None:
+        topic = manager.topics[0]
+        ctx = manager.get_context(topic)
+        assert topic.name in ctx
+        assert topic.body in ctx
+
+    def test_get_context_for_matches(self, manager: TopicManager) -> None:
+        matches = manager.match_message("ci failure")
+        ctx = manager.get_context_for_matches(matches)
+        assert "CI Failure Handler" in ctx
+
+    def test_get_context_for_matches_empty(self, manager: TopicManager) -> None:
+        assert manager.get_context_for_matches([]) == ""
+
+    def test_get_context_for_matches_respects_max(self, manager: TopicManager) -> None:
+        # Create fake matches
+        topic = manager.topics[0]
+        matches = [
+            TopicMatch(topic=topic, score=1.0, match_type="soft"),
+            TopicMatch(topic=topic, score=0.9, match_type="soft"),
+            TopicMatch(topic=topic, score=0.8, match_type="soft"),
+            TopicMatch(topic=topic, score=0.7, match_type="soft"),
+        ]
+        ctx = manager.get_context_for_matches(matches, max_topics=2)
+        # Should only render 2 topics (even though same topic, the count matters)
+        assert ctx.count("## Topic:") == 2

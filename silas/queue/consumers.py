@@ -23,6 +23,7 @@ from typing import Protocol, runtime_checkable
 from silas.core.metrics import QUEUE_MESSAGES_TOTAL
 from silas.core.plan_parser import MarkdownPlanParser
 from silas.core.telemetry import get_tracer
+from silas.core.topic_manager import TopicManager
 from silas.models.approval import ApprovalVerdict
 from silas.models.work import WorkItem, WorkItemResult
 from silas.protocols.work import WorkItemExecutor
@@ -234,6 +235,7 @@ class ProxyConsumer(BaseConsumer):
         channel: object | None = None,
         approval_recipient_id: str = "owner",
         *,
+        topic_manager: TopicManager | None = None,
         max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
     ) -> None:
         super().__init__(store, router, "proxy_queue", max_attempts=max_attempts)
@@ -241,6 +243,7 @@ class ProxyConsumer(BaseConsumer):
         self._channel = channel
         self._approval_recipient_id = approval_recipient_id
         self._plan_parser = MarkdownPlanParser()
+        self._topic_manager = topic_manager
 
     async def _process(self, msg: QueueMessage) -> QueueMessage | None:
         """Dispatch based on message_kind and produce response messages."""
@@ -277,8 +280,14 @@ class ProxyConsumer(BaseConsumer):
             rendered_context = self._deserialize_rendered_context(metadata)
             personality_directives = str(metadata.get("personality_directives", ""))
 
+        # Inject matched topic context before the user message.
+        topic_context = self._match_topic_context(user_text)
+
         # Include chronicle context so the proxy has conversation history.
-        prompt = f"{rendered_context}\n\nUser: {user_text}" if rendered_context else user_text
+        context_parts = [p for p in (rendered_context, topic_context) if p]
+        prompt = (
+            f"{chr(10).join(context_parts)}\n\nUser: {user_text}" if context_parts else user_text
+        )
         if personality_directives:
             prompt = f"{personality_directives}\n\n{prompt}"
         result = await self._run_agent_with_allowlist(
@@ -363,6 +372,13 @@ class ProxyConsumer(BaseConsumer):
                 raw = parsed.get("rendered_context", "")
                 return str(raw)
         return str(metadata.get("rendered_context", ""))
+
+    def _match_topic_context(self, text: str) -> str:
+        """Match user text against topic soft triggers and return rendered context."""
+        if self._topic_manager is None:
+            return ""
+        matches = self._topic_manager.match_message(text)
+        return self._topic_manager.get_context_for_matches(matches)
 
     def _handle_execution_status(self, msg: QueueMessage) -> QueueMessage | None:
         """Route execution status to appropriate UI surfaces.
