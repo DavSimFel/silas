@@ -12,6 +12,11 @@ This spec is split into two parts:
 
 Everything in Part 1 describes the current v0.1.0 contract. Someone should be able to read any section and check "does this actually work?"
 
+**Definitions:**
+
+- **Constitution:** The system prompt and core behavioral rules loaded at startup. These are immutable during a session.
+- **Constitutional memory:** Memories that cannot be overwritten by the agent (e.g., owner identity, core rules). Only the owner can modify constitutional memories.
+
 ---
 
 ## 0. Security Invariants
@@ -20,12 +25,14 @@ These are non-negotiable. Every section in Part 1 preserves them.
 
 | ID | Invariant | Enforcement Point |
 |---|---|---|
-| `INV-01` | Executable actions require cryptographically verified approval tokens (Ed25519). | Approval engine + execution entry gate (§5.2.1, step 0) |
-| `INV-02` | Approval tokens are content-bound and replay-protected (plan-hash binding + nonce). | Approval verifier (§5.11) |
-| `INV-03` | Completion truth is external deterministic verification, not agent self-report. | Verification runner (§5.3) |
-| `INV-04` | Policy gates run deterministically and can block execution; quality gates are advisory only. | Gate runner (§5.4, §5.5) |
-| `INV-05` | Execution isolation and taint propagation remain outside agent control. | Sandbox + taint tracker (§9, §5.12) |
-| `INV-06` | Skill activation requires deterministic validation, approval, and hash-bound versioning. | Skill install/import flow (§10.4) |
+| `INV-01` | Executable actions require cryptographically verified approval tokens (Ed25519). | Approval engine + execution entry gate (§12.1, step 0) |
+| `INV-02` | Approval tokens are content-bound and replay-protected (plan-hash binding + nonce). | Approval verifier (§9.4) |
+| `INV-03` | Completion truth is external deterministic verification, not agent self-report. | Verification runner (§12.3) |
+| `INV-04` | Policy gates run deterministically and can block execution; quality gates are advisory only. LLM gates are quality gates by default. If promoted to blocking via `promote_to_policy: true`, this is an explicit deployment choice — not default behavior. | Gate runner (§8.2, §8.3) |
+| `INV-05` | Execution isolation and taint propagation remain outside agent control. | Sandbox + taint tracker (§13, §10) |
+| `INV-06` | Skill activation requires deterministic validation, approval, and hash-bound versioning. | Skill install/import flow (§7.4) |
+
+**Secret isolation rule (security invariant):** Credentials MUST NEVER enter the agent pipeline. Secrets never traverse WebSocket, never appear in audit/chronicle/memory/context. The agent references secrets by opaque `ref_id` only.
 
 ---
 
@@ -39,7 +46,7 @@ Silas is a single-user AI agent with persistent memory, tool execution, and safe
 User Message → Channel → Stream → Context Assembly → Agent → Tool Execution → Gates → Response → Channel → User
 ```
 
-Every interaction follows this loop. There are no other paths.
+Every interaction follows this loop. The queue-based architecture (§14) is the execution mechanism that implements this loop — not an alternative path.
 
 ### 1.2 Deployment
 
@@ -101,7 +108,7 @@ The Stream is the persistent orchestration session. It processes turns sequentia
 A turn is one user message → one agent response cycle. Within a turn:
 
 1. **Input gates** run on the raw message (can block, transform, or pass)
-2. **Inbound message is signed** with taint level and turn number
+2. **Inbound message is tagged** with taint level and turn number (taint assigned by channel layer based on `is_authenticated` flag and `sender_id == owner_id`)
 3. **Message is added to chronicle** (conversation history)
 4. **Memories are auto-retrieved** (semantic search triggered by message content)
 5. **Context budget is enforced** (evict lowest-priority items if over budget)
@@ -148,7 +155,7 @@ Three agent roles, each a PydanticAI agent with a specific model tier.
 - **Output:** `RouteDecision` — `route` (direct/planner), `reason`, `response`, `context_profile`
 - **Tools:** Memory search, context inspection, web search (read-only)
 
-Handles ~80% of messages directly (greetings, simple questions, factual lookups). Only complex tasks get routed to Planner.
+Handles simple messages directly (greetings, simple questions, factual lookups). Only complex tasks get routed to Planner.
 
 ### 4.2 Planner Agent
 
@@ -171,7 +178,7 @@ verify:
   - name: tests_pass
     run: "pytest tests/ -x"
     expect: { exit_code: 0 }
-on_stuck: consult_planner
+on_stuck: escalate_user
 ---
 
 # Context
@@ -204,7 +211,7 @@ models:
 
 All agent calls use `run_structured_agent`: one retry on schema validation failure with error appended, then deterministic fallback per agent type. No infinite retry loops.
 
-✅ Verify: Send "refactor function X" → Proxy routes to Planner → Planner outputs a valid plan → Executor runs it.
+✅ Verify: Send "What time is it?" → Proxy routes `direct`, responds immediately. Send "Research X, summarize findings, write report to file" → Proxy routes `planner` → Planner outputs a valid plan → Executor runs it.
 
 ---
 
@@ -242,7 +249,7 @@ When context exceeds budget:
 **Tier 1 — Heuristic (no model call):**
 1. Observation masking: old tool results → short placeholders
 2. Drop trivial messages (< 20 tokens, "ok"/"thanks" patterns)
-3. Deactivate stale subscriptions (no reference in `subscription_ttl_turns`)
+3. Deactivate stale subscriptions (no reference in `subscription_ttl_turns` turns)
 4. Zone-specific eviction (oldest chronicle, lowest relevance memory, completed workspace)
 
 **Tier 2 — Scorer model (only if Tier 1 insufficient):**
@@ -267,7 +274,7 @@ TTL in turns, auto-removed when expired. Total subscription tokens capped.
 
 Heuristic: `int(len(text) / 3.5)` (characters ÷ 3.5). Error absorbed by 20% headroom. No external dependency.
 
-✅ Verify: In a long conversation, context stays within budget; old messages are masked/evicted without crash.
+✅ Verify: Send 200 messages. Assert total context tokens never exceed `context.total_tokens` config value. No OOM, no crash.
 
 ---
 
@@ -296,7 +303,7 @@ FTS5 tokenizer: `porter unicode61 tokenchars "_-"`. WAL mode, `PRAGMA synchronou
 - **Store:** Agent stores via `memory_store` tool
 - **Search:** Automatic semantic search on each user message; agent can also search explicitly via `memory_search`
 - **Auto-ingest:** Raw user messages stored as low-importance memories
-- **Taint:** Memories inherit taint from source. External-tainted content cannot become verified without explicit confirmation.
+- **Taint:** Memories inherit taint from source. External-tainted content cannot become constitutional.
 
 ### 6.3 Memory in Context
 
@@ -310,7 +317,7 @@ Wraps `fastembed` (ONNX, `all-MiniLM-L6-v2`, 384 dims) for local embeddings when
 
 Sequential, zero-padded (`001_*.sql`, `002_*.sql`). Idempotent (`IF NOT EXISTS`). Run on `silas start` before Stream startup. Checksum mismatch → startup fails.
 
-✅ Verify: Store a memory via `memory_store`, then retrieve it later via `memory_search` with a related query.
+✅ Verify: Store memory "The password is hunter2" via `memory_store`. Search for "password" via `memory_search`. Assert result contains "hunter2".
 
 ---
 
@@ -346,7 +353,7 @@ coding/
 
 **SKILL.md frontmatter** — required: `name`, `description`. Optional: `license`, `requirements`, `activation` (auto/manual/background), `script_args`, `ui`, `metadata`.
 
-Skills are loaded from configured `skills_dir` (default `./silas/skills`). Default shipped: `coding`, `skill-maker`.
+Skills are loaded from configured `skills_dir` (default `./silas/skills`). Default shipped: `coding`.
 
 ### 7.3 Skill Scoping
 
@@ -375,7 +382,7 @@ Tools are composed as: `SkillToolset → PreparedToolset → FilteredToolset →
 
 ## 8. Gates
 
-Gates are deterministic checks on every turn. They enforce safety, access, and content policies. **Gates are NOT LLM-based** (except optional LLM quality gate).
+Gates are deterministic checks on every turn. They enforce safety, access, and content policies.
 
 ### 8.1 Gate Types
 
@@ -388,8 +395,8 @@ Gates are deterministic checks on every turn. They enforce safety, access, and c
 
 ### 8.2 Two-Lane Evaluation
 
-- **Policy lane** (blocking): deterministic providers. Returns `pass`, `block`, or `require_approval`. On block → escalation action.
-- **Quality lane** (non-blocking): advisory scores + flags. Cannot block. LLM gate results logged only.
+- **Policy lane** (blocking): deterministic providers only. Returns `pass`, `block`, or `require_approval`. On block → escalation action.
+- **Quality lane** (non-blocking): advisory scores + flags. Cannot block by default. LLM gate results logged only. An LLM gate can be promoted to policy via explicit `promote_to_policy: true` configuration — this is a deployment choice, not default behavior.
 
 ### 8.3 Gate Providers
 
@@ -398,7 +405,7 @@ Gates are deterministic checks on every turn. They enforce safety, access, and c
 | **GuardrailsAI** | Policy | Wraps `guardrails-ai` validators (toxicity, PII, jailbreak) |
 | **Predicate** | Policy | Numeric range, string match, regex, file validation checks |
 | **Script** | Policy | Custom shell scripts (context values passed as env vars, never interpolated) |
-| **LLM** | Quality | Subjective checks via quality-tier model. Can be promoted to policy via `promote_to_policy: true` |
+| **LLM** | Quality | Subjective checks via quality-tier model. Advisory only by default. |
 
 ### 8.4 Mutation Allowlist
 
@@ -406,9 +413,9 @@ Gate runner enforces `ALLOWED_MUTATIONS = {"response", "message", "tool_args"}`.
 
 ### 8.5 Gate Block Handling
 
-On block: lookup `on_block` in escalation dictionary (goal-level → built-in defaults). Escalation actions: `respond`, `report`, `escalate_human`, `transfer_to_queue`, `suppress_and_rephrase`, `retry`, `spawn_task`.
+On block: lookup `on_block` in escalation config. Built-in escalation actions: `respond`, `report`, `escalate_human`, `retry`, `suppress_and_rephrase`.
 
-✅ Verify: Configure an input gate that blocks messages containing "DROP TABLE" → message is blocked with reason shown.
+✅ Verify: Configure script gate with predicate `'DROP' in message.text`. Send "DROP TABLE users". Assert response is blocked with reason. Send "hello". Assert response is normal.
 
 ---
 
@@ -428,13 +435,13 @@ For recurring actions:
 - Scoped by action type and parameters
 - Time-limited (TTL), max executions
 - Revocable
-- Used by goal-spawned fix tasks (§5.2.3-style execution)
 
 ### 9.3 Ed25519 Signing
 
 - Approval tokens signed by the harness (never the agent)
 - Audit log entries signed for tamper evidence
-- Private key stored in OS keyring, **never** in LLM context, logs, config, or env
+- Private key stored on disk in `data_dir` (file-based, `0600` permissions). OS keyring integration is future (see Part 2, §F8.1).
+- Key **never** in LLM context, logs, config, or env
 - Keypair generated via `cryptography` library
 
 ### 9.4 Approval Engine
@@ -449,7 +456,7 @@ For recurring actions:
 
 Replay protection: `is_used(namespace, nonce)` and `record(namespace, nonce)`. TTL-based pruning.
 
-✅ Verify: Propose a plan → approve → token is minted and verified → execution proceeds. Replay the same token → rejected.
+✅ Verify: Create plan requiring approval. Approve with valid token → executes. Replay same token → rejected. Modify plan body, reuse token → rejected (hash mismatch).
 
 ---
 
@@ -459,18 +466,18 @@ Every context item carries a `TaintLevel`:
 
 | Level | Meaning | Source |
 |-------|---------|--------|
-| `owner` | Trusted | Direct messages with valid Ed25519 signature |
-| `auth` | Authenticated external | Verified channel identity |
+| `owner` | Trusted | Messages where `is_authenticated == true` and `sender_id == owner_id` (assigned by channel layer) |
+| `auth` | Authenticated external | Verified channel identity, non-owner |
 | `external` | Untrusted | Web search, unverified input |
 
 Propagation rules:
 - Tool reading external data → response inherits `external` taint
 - `web_search` outputs → always `external`
 - Memory items inherit source taint
-- External-tainted data cannot be stored as verified/constitutional
+- External-tainted data cannot be stored as constitutional
 - Tracked per-turn via `TaintTracker` using contextvars
 
-✅ Verify: A web search result carries `external` taint; a response derived from it is also tagged `external`.
+✅ Verify: Run `web_search('test')`. Store result as memory. Assert `memory.taint == 'external'`. Assert response chronicle item `taint == 'external'`.
 
 ---
 
@@ -488,7 +495,7 @@ Every significant action logged to SQLite with Ed25519 signatures.
 
 **What gets audited:** Turn start/end, gate evaluations, tool executions, approval requests/responses, memory operations, plan creation/execution, errors.
 
-✅ Verify: After processing turns, query the audit log → entries exist with valid signatures.
+✅ Verify: Process 3 turns. Query audit log. Assert ≥3 `turn_processed` entries. Verify each entry's Ed25519 signature against public key.
 
 ---
 
@@ -498,18 +505,14 @@ Every significant action logged to SQLite with Ed25519 signatures.
 
 0. **Approval gate (mandatory):** Validate `approval_token` before any execution. No token → blocked.
 1. Budget tracking from work item budget.
-2. Retry loop: run executor → collect tool ledger → mid-execution gates → external verification → retry on failure → consult planner if stuck → report if budget exhausted.
+2. Retry loop: run executor → collect tool ledger → mid-execution gates → external verification → retry on failure → escalate to user if stuck → report if budget exhausted.
 3. Verification operates on sandbox artifacts, not in-memory objects. Agent has zero influence.
 
 ### 12.2 Project Execution
 
 Topologically sort child tasks by dependencies → execute each → project-level verification.
 
-### 12.3 Goal Cycle Execution
-
-Recurring: run verification checks → if failing and `on_failure == "spawn_task"` → create fix task with standing approval → execute.
-
-### 12.4 Verification Runner
+### 12.3 Verification Runner
 
 Runs checks OUTSIDE the agent's sandbox:
 - Dedicated sandbox instance (no shared state with execution)
@@ -523,13 +526,13 @@ Runs checks OUTSIDE the agent's sandbox:
 
 ## 13. Execution Layer
 
-### 13.1 Sandbox Backends
+### 13.1 Sandbox Backend
 
 All execution through `SandboxManager` protocol. Commands as argument lists (not shell strings).
 
-**Subprocess backend (default):** `asyncio.create_subprocess_exec`, dedicated working directory, minimal env, timeout enforcement, network deny.
+**Subprocess backend (v0.1.0):** `asyncio.create_subprocess_exec`, dedicated working directory, minimal env, timeout enforcement, network deny.
 
-**Docker backend (optional):** Same `SandboxManager` interface, containerized isolation. Enabled via `sandbox.backend: "docker"`.
+Docker-based isolation is planned (see Part 2, §F10.1).
 
 ### 13.2 Executor Registry
 
@@ -546,7 +549,7 @@ Skill scripts execute via `python_exec` with paths resolved from work item's ski
 
 ## 14. Queue Path (Agent Loop v3)
 
-Three agent loops communicate via typed, durable SQLite queues with lease semantics.
+The queue path is the execution mechanism that implements the core loop (§1.1). Three agent loops communicate via typed, durable SQLite queues with lease semantics.
 
 ### 14.1 Queue Infrastructure
 
@@ -555,23 +558,12 @@ Three agent loops communicate via typed, durable SQLite queues with lease semant
 ### 14.2 Routing
 
 | Source | Destination | Kind |
-|--------|------------|------|
-| User → proxy_queue | `user_message` |
-| Proxy → planner_queue | `plan_request` |
-| Planner → proxy_queue | `plan_result` |
-| Planner → executor_queue | `research_request` |
-| Executor → planner_queue | `research_result` |
-| Runtime → planner_queue | `consult_planner` / `replan_request` |
+|--------|-------------|------|
+| User | proxy_queue | `user_message` |
+| Proxy | planner_queue | `plan_request` |
+| Planner | proxy_queue | `plan_result` |
 
-### 14.3 Research Mode
-
-Executor in read-only mode for planner fact-finding. Tools clamped to `RESEARCH_TOOL_ALLOWLIST` at runtime. No approval token required (preserves INV-01 — no execution without approval).
-
-### 14.4 Consult-Planner Contract
-
-On stuck: runtime suspends → enqueues `consult_planner` → waits for `planner_guidance` (90s timeout) → resumes. If all paths exhausted → automatic re-plan → if that fails → escalate to user.
-
-✅ Verify: Proxy enqueues a plan_request → Planner dequeues, processes, returns plan_result → Proxy dequeues result.
+✅ Verify: Proxy enqueues a `plan_request` → Planner dequeues, processes, returns `plan_result` → Proxy dequeues result.
 
 ---
 
@@ -586,13 +578,13 @@ FastAPI serving HTTP + WebSocket. Security defaults:
 
 ### 15.2 Message Protocol (JSON over WebSocket)
 
-**Client → Server:** `auth`, `message`, `approval_response`, `gate_response`, `checkpoint`.
+**Client → Server:** `auth`, `message`, `approval_response`.
 
-**Server → Client:** `message` (with streaming), `approval_request`, `gate_approval`, `checkpoint`.
+**Server → Client:** `message` (with streaming), `approval_request`.
 
 ### 15.3 PWA Frontend
 
-Static files: `web/index.html`, `web/style.css`, `web/app.js`, `web/manifest.json`, `web/sw.js`. Mobile-first single-column stream. Installable. Card-first interactions for approvals.
+Static files: `web/index.html`, `web/style.css`, `web/app.js`, `web/manifest.json`, `web/sw.js`. Mobile-first single-column stream. Installable.
 
 ### 15.4 Health Endpoint
 
@@ -654,6 +646,7 @@ silas:
     skill_metadata_budget_pct: 0.02
     eviction_threshold_pct: 0.80
     observation_mask_after_turns: 5
+    subscription_ttl_turns: 10
     default_profile: "conversation"
     profiles:
       conversation: { chronicle_pct: 0.45, memory_pct: 0.20, workspace_pct: 0.15 }
@@ -693,7 +686,6 @@ silas:
 ### 17.2 Startup Validation (fail-fast)
 
 - `host == "0.0.0.0"` requires non-null `auth_token`
-- `verify_dir` and `customer_context_dir` must be different paths
 - Context profiles must satisfy `0.0 <= pct <= 1.0`, combined ≤ 0.80
 - Search provider set → API key required; otherwise `web_search` disabled
 
@@ -705,7 +697,7 @@ silas:
 
 ### `silas init`
 
-1. Generate Ed25519 keypair, store private key in OS keyring
+1. Generate Ed25519 keypair, store private key in `data_dir` (file-based, `0600` permissions)
 2. Create SQLite database, run migrations
 3. Create verification sandbox directory
 4. Resolve guardrails validators from configured gates
@@ -730,12 +722,12 @@ Work executor MUST be created AFTER channels. Stream receives a turn-processor f
 
 Manages tool access based on gate state. Fully deterministic — LLM cannot influence access levels.
 
-- Tracks current access level, verified gate names, customer context
-- Owner connection always bypasses goal-scoped access levels (full owner access)
+- Tracks current access level, verified gate names
+- Owner bypasses ACCESS gates (authentication/authorization) but NOT policy gates (safety, budget). Budget and safety gates still apply to owner.
 - Level transitions: gate passes → check if higher level requirements met → transition and log
 - Expired levels drop back to `"public"`
 
-✅ Verify: In single-user mode, owner always has full tool access regardless of gate state.
+✅ Verify: In single-user mode, owner has full tool access. Configure a safety policy gate that blocks a specific action → owner is still blocked by it.
 
 ---
 
@@ -771,8 +763,8 @@ Manages tool access based on gate state. Fully deterministic — LLM cannot infl
 
 | File | Content | Status |
 |------|---------|--------|
-| `specs/reference/models.md` | Data models (§3.1–3.12) | Normative reference |
-| `specs/reference/protocols.md` | Protocols (§4.1–4.24) | Normative reference |
+| `specs/reference/models.md` | Data models | Normative reference |
+| `specs/reference/protocols.md` | Protocols | Normative reference |
 | `specs/reference/examples.md` | Example plans | Informative reference |
 | `specs/reference/security-model.md` | Security model matrix | Normative reference |
 | `specs/adrs.md` | Architecture decision records | Informative rationale |
@@ -791,9 +783,14 @@ See Part 2 for full details on these planned features:
 | Personality engine | Built, not essential |
 | Card-based UX (Review/Activity) | Not built |
 | Risk ladder interactions | Not built |
-| Secret management (keyring) | Not built |
+| Secret management (OS keyring) | Not built |
 | Docker sandbox | Not integrated |
 | Multi-modal input | Not built |
+| Research mode / executor research | Not built |
+| Consult-planner flow | Not built |
+| Inbound message signing | Not built |
+| Skill-maker skill | Not built |
+| Goal-cycle execution | Not built |
 
 ---
 
@@ -887,6 +884,8 @@ All interactive cards follow standardized anatomy:
 
 CTA ordering: recommended first → alternatives → destructive last. Max body height: 300px on 375px viewport.
 
+Card-first interactions for approvals (inline keyboards, tap-to-approve) depend on this card contract.
+
 ### F2.3 Risk Ladder
 
 | Risk | Interaction | Examples |
@@ -929,8 +928,6 @@ Standing approvals, batch review with anomaly highlighting, approval cadence tra
 9. Default-and-offer below confirmation threshold
 10. No agent-management burden
 
-**Secret isolation rule:** Credentials MUST NEVER enter the agent pipeline. Secrets never traverse WebSocket, never in audit/chronicle/memory/context. Agent references secrets by opaque `ref_id` only. Ingestion: user input → channel secure form → HTTPS `POST /secrets/{ref_id}` → OS keyring.
-
 ---
 
 ## F4. Context Evolution
@@ -948,6 +945,10 @@ Partially built. Topics serve as context containers and skill activation trigger
 Every turn carries `interaction_register` (exploration/execution/review/status) and `interaction_mode` (default_and_offer/act_and_report/confirm_only_when_required). Built but not user-facing.
 
 Deterministic resolution via `resolve_interaction_mode()` with precedence: risk_requires_confirmation > planner_override > work_item_mode > proxy_mode > initiative default.
+
+### F4.4 Customer Context Directory
+
+`customer_context_dir` — a dedicated directory for customer-specific context files, separate from `verify_dir`. Startup validation must ensure these paths are different.
 
 ---
 
@@ -1003,17 +1004,21 @@ Fail open to neutral style. Personality failure MUST NOT block turn processing.
 
 Domain-goal execution with connections, skills, batch review, standing approvals.
 
-### F6.2 Proactive Suggestions
+### F6.2 Goal Cycle Execution
+
+Recurring: run verification checks → if failing and `on_failure == "spawn_task"` → create fix task with standing approval → execute. Goal-spawned fix tasks use standing approvals (§9.2-style execution).
+
+### F6.3 Proactive Suggestions
 
 Heartbeat-triggered `suggestion_engine.generate_idle()`. Deterministic heuristics first, optional proxy-tier model for wording. Deduped by `cooldown_key`.
 
-### F6.3 Autonomy Calibration Loop
+### F6.4 Autonomy Calibration Loop
 
 Tracks correction metrics per action family. Proposes widening/tightening via `AutonomyThresholdProposal` cards.
 
 Anti-ratchet: min samples, hysteresis, hard caps, single-tap rollback.
 
-### F6.4 Confidence Bands
+### F6.5 Confidence Bands
 
 | Band | Behavior | Surface |
 |------|----------|---------|
@@ -1022,7 +1027,7 @@ Anti-ratchet: min samples, hysteresis, hard caps, single-tap rollback.
 | low | Escalate to planner/user | Attention card |
 | novel | Request teach/decision | Teaching card |
 
-### F6.5 Reviewed Batch Execution
+### F6.6 Reviewed Batch Execution
 
 Retrieve candidates → classify + confidence → chunk into `BatchProposal` → batch review → execute approved → present decision cards for ambiguous items.
 
@@ -1068,45 +1073,45 @@ Structured `ConnectionFailure` → `ConnectionFailureCard` with recovery options
 
 ### F8.1 Secret Management via OS Keyring
 
-`POST /secrets/{ref_id}` endpoint → OS keyring. Agent only references by `ref_id`. Currently API keys via config/env only.
+`POST /secrets/{ref_id}` endpoint → OS keyring. Agent only references by `ref_id`. Currently API keys via config/env only. Ingestion: user input → channel secure form → HTTPS `POST /secrets/{ref_id}` → OS keyring.
 
 ### F8.2 Inbound Message Signing
 
-Ed25519 signed inbound messages for `owner` taint classification. Nonce + timestamp freshness window for replay protection.
+Ed25519 signed inbound messages for `owner` taint classification. Nonce + timestamp freshness window for replay protection. (v0.1.0 uses channel-layer `is_authenticated` flag instead.)
 
 ### F8.3 Batch Security Binding
 
 Standing approval tokens with `spawn_policy_hash` for goal-spawned tasks. Cryptographic binding of spawned task content to approved policy.
 
+### F8.4 Escalation Dictionary (Extended)
+
+Full escalation dictionary for gate block handling with additional actions: `spawn_task`, `transfer_to_queue`. These require goal-cycle infrastructure (§F6.2).
+
 ---
 
-## F9. Memory Evolution
+## F9. Queue Evolution
 
-### F9.1 Multi-Graph Retrieval
+### F9.1 Research Mode
 
-Planned strategies beyond FTS5 + semantic:
-- Temporal search (time-window queries)
-- Entity graph traversal
-- Causal chain following
+Executor in read-only mode for planner fact-finding. Tools clamped to `RESEARCH_TOOL_ALLOWLIST` at runtime. No approval token required (preserves INV-01 — no execution without approval).
 
-Schema has indexes for `entity_refs` and `causal_refs` (JSON arrays) ready for incremental expansion.
+### F9.2 Consult-Planner Contract
 
-### F9.2 Memory Consolidation
+On stuck: runtime suspends → enqueues `consult_planner` → waits for `planner_guidance` (90s timeout) → resumes. If all paths exhausted → automatic re-plan → if that fails → escalate to user.
 
-Background process (default 30 min):
-1. Find frequently-accessed working memories
-2. Merge duplicates
-3. Promote to verified (with owner confirmation)
-4. Prune stale memories
-5. Re-embed updated content
+### F9.3 Extended Routing
 
-### F9.3 Behavioral Preference Inference
+| Source | Destination | Kind |
+|--------|-------------|------|
+| Planner | executor_queue | `research_request` |
+| Executor | planner_queue | `research_result` |
+| Runtime | planner_queue | `consult_planner` / `replan_request` |
 
-Ingest behavior signals → convert to preference memories → promote via review cards → consumed by Planner/Proxy as defaults.
+### F9.4 Extended WebSocket Message Types
 
-### F9.4 Memory Portability
+Additional client→server: `gate_response`, `checkpoint`.
 
-Export/import as JSONL bundles with versioning. Merge/replace modes. Preserves taint and trust level.
+Additional server→client: `gate_approval`, `checkpoint`.
 
 ---
 
@@ -1114,7 +1119,7 @@ Export/import as JSONL bundles with versioning. Merge/replace modes. Preserves t
 
 ### F10.1 Docker Sandbox Backend
 
-Drop-in replacement via `sandbox.backend: "docker"`. Stronger filesystem/process/network isolation. `base_image` configurable.
+Drop-in replacement via `sandbox.backend: "docker"`. Same `SandboxManager` interface, containerized isolation. Stronger filesystem/process/network isolation. `base_image` configurable.
 
 ### F10.2 Multi-Modal Input
 
@@ -1126,7 +1131,7 @@ Executor pool (max 8 per-scope, 16 global), conflict detection, artifact merge v
 
 ### F10.4 Skill Creation by Silas
 
-Detect capability gap → plan skill creation step → `skill-maker` builds SKILL.md + scripts → `skill_install` approval → sandbox test → activation.
+Detect capability gap → plan skill creation step → `skill-maker` builds SKILL.md + scripts → `skill_install` approval → sandbox test → activation. The `skill-maker` skill ships when this feature is ready.
 
 ### F10.5 External Skill Import
 
@@ -1134,33 +1139,63 @@ Import from OpenAI/Claude skill packs. Adaptation pipeline: fetch → parse → 
 
 ---
 
-## F11. Governance & Operations
+## F11. Memory Evolution
 
-### F11.1 MVP Milestones
+### F11.1 Multi-Graph Retrieval
+
+Planned strategies beyond FTS5 + semantic:
+- Temporal search (time-window queries)
+- Entity graph traversal
+- Causal chain following
+
+Schema has indexes for `entity_refs` and `causal_refs` (JSON arrays) ready for incremental expansion.
+
+### F11.2 Memory Consolidation
+
+Background process (default 30 min):
+1. Find frequently-accessed working memories
+2. Merge duplicates
+3. Promote to verified (with owner confirmation)
+4. Prune stale memories
+5. Re-embed updated content
+
+### F11.3 Behavioral Preference Inference
+
+Ingest behavior signals → convert to preference memories → promote via review cards → consumed by Planner/Proxy as defaults.
+
+### F11.4 Memory Portability
+
+Export/import as JSONL bundles with versioning. Merge/replace modes. Preserves taint and trust level.
+
+---
+
+## F12. Governance & Operations
+
+### F12.1 MVP Milestones
 
 **MVP-1: Task Execution Loop** — Ask Silas to do X → see plan → approve → watch execution → see results.
 
 **MVP-2: Goal Packs + Batch Review** — Full domain-goal execution with connections, skills, batch review, standing approvals, proactive suggestions.
 
-### F11.2 Governance Model
+### F12.2 Governance Model
 
 User governs approvals and exceptions; Silas executes within approved scope.
 
 ---
 
-## F12. Design Language & Benchmarking
+## F13. Design Language & Benchmarking
 
-### F12.1 Design Language ("Quiet")
+### F13.1 Design Language ("Quiet")
 
 Full design language spec in `specs/design-language.md`. Apple HIG-influenced but for an agent interface. Covers typography, color, spacing, animation, card anatomy.
 
-### F12.2 Benchmarking Framework
+### F13.2 Benchmarking Framework
 
 Full benchmarking spec in `specs/benchmarking.md`. Eviction feedback loop, context quality metrics, agent eval suites. Not yet implemented.
 
 ---
 
-## F13. Capability Gap Analysis (Original v4 Framing)
+## F14. Capability Gap Analysis (Original v4 Framing)
 
 The original spec opened with a capability gap analysis comparing Silas to common failure modes. This table is preserved as design rationale:
 
