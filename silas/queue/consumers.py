@@ -21,9 +21,10 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from silas.core.metrics import QUEUE_MESSAGES_TOTAL
+from silas.core.plan_executor import StandingApprovalResolver, resolve_work_item_approval
 from silas.core.plan_parser import MarkdownPlanParser
 from silas.core.telemetry import get_tracer
-from silas.models.approval import ApprovalVerdict
+from silas.models.approval import ApprovalDecision, ApprovalScope, ApprovalToken, ApprovalVerdict
 from silas.models.work import WorkItem, WorkItemResult
 from silas.protocols.work import WorkItemExecutor
 from silas.queue.consult import ConsultPlannerManager
@@ -234,12 +235,14 @@ class ProxyConsumer(BaseConsumer):
         channel: object | None = None,
         approval_recipient_id: str = "owner",
         *,
+        standing_approval_resolver: StandingApprovalResolver | None = None,
         max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
     ) -> None:
         super().__init__(store, router, "proxy_queue", max_attempts=max_attempts)
         self._proxy = proxy_agent
         self._channel = channel
         self._approval_recipient_id = approval_recipient_id
+        self._standing_approval_resolver = standing_approval_resolver
         self._plan_parser = MarkdownPlanParser()
 
     async def _process(self, msg: QueueMessage) -> QueueMessage | None:
@@ -389,10 +392,13 @@ class ProxyConsumer(BaseConsumer):
         return None
 
     async def _handle_plan_result(self, msg: QueueMessage) -> QueueMessage | None:
-        """Parse plan result, request approval, then dispatch execution work.
+        """Parse plan result, check standing approvals, request manual if needed.
 
         Queue path approval parity: planner-produced plans must be approved
-        before they become execution_request messages.
+        before they become execution_request messages. Standing approvals
+        (from approval_flow.py / plan_executor.resolve_work_item_approval)
+        are checked first; only when no standing approval covers the work
+        item does a manual approval request go to the channel.
         """
         plan_markdown = str(msg.payload.get("plan_markdown", ""))
         if not plan_markdown.strip():
@@ -404,9 +410,27 @@ class ProxyConsumer(BaseConsumer):
             logger.warning("Ignoring invalid planner markdown for trace_id=%s", msg.trace_id)
             return None
 
-        approved = await self._request_plan_approval(work_item)
-        if not approved:
-            return None
+        # Use resolve_work_item_approval which checks standing approvals
+        # first, then falls back to manual channel approval.
+        approved_item = await resolve_work_item_approval(
+            work_item,
+            standing_approval_resolver=self._standing_approval_resolver,
+            manual_approval_requester=self._manual_approval_requester,
+        )
+
+        if approved_item is None:
+            # Approval was declined or unavailable — emit plan_approval
+            # message so the trace records the decision.
+            return QueueMessage(
+                message_kind="plan_approval",
+                sender="proxy",
+                trace_id=msg.trace_id,
+                payload={
+                    "work_item_id": work_item.id,
+                    "verdict": ApprovalVerdict.declined.value,
+                    "reason": "approval_denied_or_unavailable",
+                },
+            )
 
         metadata = msg.payload.get("metadata")
         metadata_dict = metadata if isinstance(metadata, dict) else {}
@@ -419,32 +443,66 @@ class ProxyConsumer(BaseConsumer):
             sender="proxy",
             trace_id=msg.trace_id,
             payload={
-                "work_item_id": work_item.id,
-                "task_description": work_item.body,
-                "title": work_item.title,
+                "work_item_id": approved_item.id,
+                "task_description": approved_item.body,
+                "title": approved_item.title,
                 "metadata": metadata_dict,
             },
-            work_item_id=work_item.id,
+            work_item_id=approved_item.id,
             tool_allowlist=executor_allowlist,
         )
 
-    async def _request_plan_approval(self, work_item: WorkItem) -> bool:
+    async def _manual_approval_requester(
+        self, work_item: WorkItem
+    ) -> tuple[ApprovalDecision | None, ApprovalToken | None]:
+        """Request manual approval via channel. Used as fallback by resolve_work_item_approval."""
         channel = self._channel
         if channel is None:
-            return False
+            return None, None
 
         send_approval_request = getattr(channel, "send_approval_request", None)
         if not callable(send_approval_request):
-            return False
+            return None, None
 
         try:
             decision = await send_approval_request(self._approval_recipient_id, work_item)
         except (OSError, RuntimeError, ValueError, TypeError):
             logger.exception("Plan approval request failed for work_item=%s", work_item.id)
-            return False
+            return None, None
+
+        if decision is None:
+            return None, None
 
         verdict = getattr(decision, "verdict", None)
-        return verdict == ApprovalVerdict.approved
+        token = getattr(decision, "token", None)
+        if not isinstance(verdict, ApprovalVerdict):
+            verdict = ApprovalVerdict.declined
+
+        approval_decision = (
+            decision
+            if isinstance(decision, ApprovalDecision)
+            else ApprovalDecision(verdict=verdict)
+        )
+
+        # Synthesize an approval token when the channel approves but
+        # doesn't provide one (most channels only return a verdict).
+        if token is None and verdict == ApprovalVerdict.approved:
+            from datetime import UTC, datetime, timedelta
+
+            now = datetime.now(UTC)
+            token = ApprovalToken(
+                token_id=f"channel:{work_item.id}",
+                plan_hash=work_item.plan_hash(),
+                work_item_id=work_item.id,
+                scope=ApprovalScope.full_plan,
+                verdict=ApprovalVerdict.approved,
+                signature=b"channel-approved",
+                issued_at=now,
+                expires_at=now + timedelta(minutes=10),
+                nonce=f"ch-nonce:{work_item.id}",
+            )
+
+        return approval_decision, token
 
     async def _handle_generic(self, msg: QueueMessage) -> QueueMessage | None:
         """Run proxy on informational messages (agent_response, system_event, etc.)."""

@@ -45,6 +45,7 @@ MessageKind = Literal[
     "replan_request",
     "approval_request",
     "approval_result",
+    "plan_approval",
     "user_message",
     "agent_response",
     "system_event",
