@@ -31,6 +31,9 @@ class _NoOpMetric:
     def dec(self, amount: float = 1) -> None:
         pass
 
+    def set(self, value: float) -> None:
+        pass
+
     def observe(self, amount: float) -> None:
         pass
 
