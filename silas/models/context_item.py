@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 
+from silas.models.messages import TaintLevel
+
 
 @dataclass
 class ContextItem:
@@ -15,7 +17,7 @@ class ContextItem:
     role: Literal["system", "assistant", "user"]
     last_modified: datetime
     token_count: int
-    taint: str = "unknown"  # "verified", "plausible", "untrusted", "unknown"
+    taint: TaintLevel = TaintLevel.owner
     ttl_seconds: float | None = None
     eviction_priority: float = 0.5  # 0=evict first, 1=never evict
     source_tag: str = ""  # "memory", "topic", "personality", "file", "plan", "skill"

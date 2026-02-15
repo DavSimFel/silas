@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 
 from silas.core.context_registry import ContextRegistry
 from silas.models.context_item import ContextItem
+from silas.models.messages import TaintLevel
 
 
 def _make_item(
@@ -53,6 +55,16 @@ class TestUpsert:
         reg.upsert(_make_item())
         reg.upsert(_make_item())
         assert reg.count() == 1
+
+    def test_preserve_timestamp(self):
+        """When rehydrating from persistence, timestamps should be preserved."""
+        reg = ContextRegistry()
+        original_time = datetime(2025, 1, 1, tzinfo=UTC)
+        item = _make_item(last_modified=original_time)
+        reg.upsert(item, preserve_timestamp=True)
+        stored = reg.get("item-1")
+        assert stored is not None
+        assert stored.last_modified == original_time
 
 
 class TestRemove:
@@ -105,6 +117,20 @@ class TestQuery:
         assert len(reg.query(tags={"important"})) == 2
 
 
+class TestTaint:
+    def test_default_taint_is_owner(self):
+        item = _make_item()
+        assert item.taint == TaintLevel.owner
+
+    def test_explicit_taint_level(self):
+        item = _make_item(taint=TaintLevel.external)
+        assert item.taint == TaintLevel.external
+
+    def test_taint_is_enum_not_string(self):
+        item = _make_item(taint=TaintLevel.auth)
+        assert isinstance(item.taint, TaintLevel)
+
+
 class TestRender:
     def test_sorted_by_last_modified_desc(self):
         reg = ContextRegistry()
@@ -116,10 +142,12 @@ class TestRender:
         assert result[1].item_id == "old"
 
     def test_respects_budget_tokens(self):
+        """Non-message items are capped at 70% of budget (others_ceiling)."""
         reg = ContextRegistry()
         reg.upsert(_make_item("a", token_count=60, eviction_priority=0.8))
         reg.upsert(_make_item("b", token_count=60, eviction_priority=0.2))
-        result = reg.render("system", budget_tokens=70)
+        # others_ceiling = 100 * 0.70 = 70. "a"=60 fits. "b"=60 → 120 > 70, skip.
+        result = reg.render("system", budget_tokens=100)
         assert len(result) == 1
         assert result[0].item_id == "a"
 
@@ -127,9 +155,8 @@ class TestRender:
         reg = ContextRegistry()
         reg.upsert(_make_item("a", token_count=30, source_tag="memory"))
         reg.upsert(_make_item("b", token_count=30, source_tag="memory"))
-        # cap memory at 25% of 100 = 25 tokens, so only 0 items fit
+        # cap memory at 25% of 100 = 25 tokens, so neither 30-token item fits
         result = reg.render("system", budget_tokens=100, budget_caps={"memory": 0.25})
-        # 25 tokens cap: neither 30-token item fits
         assert len(result) == 0
 
     def test_source_tag_cap_allows_partial(self):
@@ -144,10 +171,25 @@ class TestRender:
     def test_preserves_chronological_order_for_messages(self):
         reg = ContextRegistry()
         now = datetime.now(UTC)
-        reg.upsert(_make_item("m1", source="message:1", last_modified=now - timedelta(minutes=3)))
-        reg.upsert(_make_item("m2", source="message:2", last_modified=now - timedelta(minutes=2)))
-        reg.upsert(_make_item("m3", source="message:3", last_modified=now - timedelta(minutes=1)))
-        result = reg.render("system", budget_tokens=1000)
+        reg.upsert(
+            _make_item(
+                "m1", source="message:1", role="user", last_modified=now - timedelta(minutes=3)
+            ),
+            preserve_timestamp=True,
+        )
+        reg.upsert(
+            _make_item(
+                "m2", source="message:2", role="user", last_modified=now - timedelta(minutes=2)
+            ),
+            preserve_timestamp=True,
+        )
+        reg.upsert(
+            _make_item(
+                "m3", source="message:3", role="user", last_modified=now - timedelta(minutes=1)
+            ),
+            preserve_timestamp=True,
+        )
+        result = reg.render("user", budget_tokens=1000)
         ids = [r.item_id for r in result]
         assert ids == ["m1", "m2", "m3"]
 
@@ -157,6 +199,41 @@ class TestRender:
         reg.upsert(_make_item("b", token_count=50))
         reg.render("system", budget_tokens=60)
         assert reg.count() == 2
+
+    def test_message_floor_reserves_budget(self):
+        """Messages should get at least 30% of budget even under system pressure."""
+        reg = ContextRegistry()
+        now = datetime.now(UTC)
+        # Fill system context: 5 items x 15 tokens = 75 tokens
+        for i in range(5):
+            reg.upsert(
+                _make_item(
+                    f"sys-{i}",
+                    source=f"topic:{i}",
+                    token_count=15,
+                    eviction_priority=0.9,
+                    role="user",
+                    last_modified=now - timedelta(minutes=10 - i),
+                ),
+                preserve_timestamp=True,
+            )
+        # Add messages: 3 x 10 tokens = 30 tokens
+        for i in range(3):
+            reg.upsert(
+                _make_item(
+                    f"msg-{i}",
+                    source=f"message:{i}",
+                    token_count=10,
+                    role="user",
+                    last_modified=now - timedelta(minutes=5 - i),
+                ),
+                preserve_timestamp=True,
+            )
+        # Budget = 100. Others ceiling = 70. Message floor = 30.
+        result = reg.render("user", budget_tokens=100)
+        message_ids = [r.item_id for r in result if r.source.startswith("message:")]
+        # All 3 messages (30 tokens) should fit within the 30-token floor
+        assert len(message_ids) == 3
 
 
 class TestEvict:
@@ -197,6 +274,65 @@ class TestBudgetUsage:
         usage = reg.budget_usage()
         assert usage["memory"] == 30
         assert usage["file"] == 15
+
+
+class TestThreadSafety:
+    def test_concurrent_upserts(self):
+        """Multiple threads upserting should not lose items or crash."""
+        reg = ContextRegistry()
+        errors: list[Exception] = []
+
+        def worker(prefix: str):
+            try:
+                for i in range(50):
+                    reg.upsert(_make_item(f"{prefix}-{i}", token_count=1))
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker, args=(f"t{t}",)) for t in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        assert reg.count() == 200  # 4 threads x 50 items
+
+    def test_concurrent_reads_and_writes(self):
+        """Reads during writes should not crash."""
+        reg = ContextRegistry()
+        for i in range(20):
+            reg.upsert(_make_item(f"init-{i}", token_count=5))
+
+        errors: list[Exception] = []
+
+        def writer():
+            try:
+                for i in range(50):
+                    reg.upsert(_make_item(f"w-{i}", token_count=1))
+            except Exception as e:
+                errors.append(e)
+
+        def reader():
+            try:
+                for _ in range(50):
+                    reg.render("system", budget_tokens=1000)
+                    reg.budget_usage()
+                    reg.query(source_prefix="init")
+            except Exception as e:
+                errors.append(e)
+
+        threads = [
+            threading.Thread(target=writer),
+            threading.Thread(target=reader),
+            threading.Thread(target=reader),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
 
 
 class TestEmpty:
