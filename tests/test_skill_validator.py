@@ -3,8 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from silas.models.skills import SkillMetadata
-from silas.skills.validator import (
-    SkillValidator,
+from silas.skills.registry import (
     check_forbidden_patterns,
     validate_frontmatter,
     validate_references,
@@ -164,27 +163,3 @@ class TestValidateReferences:
         errors = validate_references(tmp_path, meta)
         assert len(errors) == 1
         assert "does not exist" in errors[0]
-
-
-class TestSkillValidatorClass:
-    """Ensure SkillValidator static methods delegate correctly."""
-
-    def test_validate_frontmatter(self) -> None:
-        errors = SkillValidator.validate_frontmatter(_metadata())
-        assert errors == []
-
-    def test_validate_scripts(self, tmp_path: Path) -> None:
-        (tmp_path / "ok.py").write_text("x = 1\n")
-        errors = SkillValidator.validate_scripts(tmp_path)
-        assert errors == []
-
-    def test_check_forbidden_patterns(self, tmp_path: Path) -> None:
-        (tmp_path / "clean.py").write_text("x = 1\n")
-        errors = SkillValidator.check_forbidden_patterns(tmp_path)
-        assert errors == []
-
-    def test_validate_references(self, tmp_path: Path) -> None:
-        (tmp_path / "run.py").write_text("x = 1\n")
-        meta = _metadata(script_args={"run.py": {}})
-        errors = SkillValidator.validate_references(tmp_path, meta)
-        assert errors == []

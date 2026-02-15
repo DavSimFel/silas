@@ -5,20 +5,49 @@ from silas.skills.executor import (
     builtin_skill_definitions,
     register_builtin_skills,
 )
-from silas.skills.installer import SkillInstaller
-from silas.skills.loader import SilasSkillLoader
-from silas.skills.registry import SkillRegistry
-from silas.skills.validator import SkillValidator
-
-SkillLoader = SilasSkillLoader
+from silas.skills.registry import (
+    ApprovalRequiredToolset,
+    DependencyError,
+    FilteredToolset,
+    PreparedToolset,
+    SecurityError,
+    SilasSkillLoader,
+    SkillHasher,
+    SkillImporter,
+    SkillImportError,
+    SkillInstaller,
+    SkillLoader,
+    SkillManifest,
+    SkillRegistry,
+    SkillResolver,
+    ToolDeclaration,
+    check_forbidden_patterns,
+    validate_frontmatter,
+    validate_references,
+    validate_scripts,
+)
 
 __all__ = [
+    "ApprovalRequiredToolset",
+    "DependencyError",
+    "FilteredToolset",
+    "PreparedToolset",
+    "SecurityError",
     "SilasSkillLoader",
     "SkillExecutor",
+    "SkillHasher",
+    "SkillImportError",
+    "SkillImporter",
     "SkillInstaller",
     "SkillLoader",
+    "SkillManifest",
     "SkillRegistry",
-    "SkillValidator",
+    "SkillResolver",
+    "ToolDeclaration",
     "builtin_skill_definitions",
+    "check_forbidden_patterns",
     "register_builtin_skills",
+    "validate_frontmatter",
+    "validate_references",
+    "validate_scripts",
 ]

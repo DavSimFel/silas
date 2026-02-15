@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 import yaml
 from silas.models.skills import SkillDefinition
-from silas.skills.hasher import SkillHasher
-from silas.skills.importer import (
+from silas.skills.registry import (
     DependencyError,
+    SkillHasher,
     SkillImporter,
     SkillImportError,
     SkillManifest,
