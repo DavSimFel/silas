@@ -161,7 +161,6 @@ class WorkItem(BaseModel):
             "agent": self.agent,
             "budget": self.budget.model_dump(mode="json"),
             "body": self.body,
-            "executor_type": self.executor_type,
             "interaction_mode": self.interaction_mode,
             "input_artifacts_from": self.input_artifacts_from,
             "verify": [check.model_dump(mode="json") for check in self.verify],
