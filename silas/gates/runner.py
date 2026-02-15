@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from silas.core.telemetry import get_tracer
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.gates.guardrails_provider import GuardrailsChecker
 from silas.gates.predicates import PredicateChecker
@@ -33,6 +34,7 @@ _TAINT_ORDER: dict[TaintLevel, int] = {
     TaintLevel.external: 2,
 }
 _DEFAULT_BLOCK_MESSAGE = "I cannot share that"
+_TRACER = get_tracer("silas.gates")
 
 
 @dataclass(frozen=True)
@@ -122,31 +124,40 @@ class SilasGateRunner(GateRunner):
         trigger: GateTrigger,
         context: dict[str, object],
     ) -> tuple[list[GateResult], list[GateResult], dict[str, object]]:
-        step_index = (
-            self._step_index_from_context(context) if trigger == GateTrigger.after_step else None
-        )
-        matched = self._matching_gates(gates, trigger, step_index)
-        working_context = dict(context)
+        with _TRACER.start_as_current_span(
+            "gates.check",
+            attributes={
+                "trigger": trigger.value,
+                "gate_count": len(gates),
+            },
+        ):
+            step_index = (
+                self._step_index_from_context(context)
+                if trigger == GateTrigger.after_step
+                else None
+            )
+            matched = self._matching_gates(gates, trigger, step_index)
+            working_context = dict(context)
 
-        policy_results: list[GateResult] = []
-        quality_results: list[GateResult] = []
+            policy_results: list[GateResult] = []
+            quality_results: list[GateResult] = []
 
-        for gate in matched:
-            if gate.lane != GateLane.policy:
-                continue
-            result, allowed_mutations = await self._evaluate_policy_gate(gate, working_context)
-            policy_results.append(result)
-            if allowed_mutations:
-                self._merge_allowed_mutations(working_context, allowed_mutations)
+            for gate in matched:
+                if gate.lane != GateLane.policy:
+                    continue
+                result, allowed_mutations = await self._evaluate_policy_gate(gate, working_context)
+                policy_results.append(result)
+                if allowed_mutations:
+                    self._merge_allowed_mutations(working_context, allowed_mutations)
 
-        for gate in matched:
-            if gate.lane != GateLane.quality:
-                continue
-            result = await self._evaluate_quality_gate(gate, working_context)
-            quality_results.append(result)
+            for gate in matched:
+                if gate.lane != GateLane.quality:
+                    continue
+                result = await self._evaluate_quality_gate(gate, working_context)
+                quality_results.append(result)
 
-        self.quality_log.extend(quality_results)
-        return policy_results, quality_results, working_context
+            self.quality_log.extend(quality_results)
+            return policy_results, quality_results, working_context
 
     async def check_gate(self, gate: Gate, context: dict[str, object]) -> GateResult:
         if gate.lane == GateLane.quality:

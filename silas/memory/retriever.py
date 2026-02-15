@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from silas.core.telemetry import get_tracer
 from silas.models.agents import MemoryQuery, MemoryQueryStrategy
 from silas.models.memory import MemoryItem
 from silas.protocols.memory import MemoryStore
+
+_TRACER = get_tracer("silas.memory")
 
 
 class SilasMemoryRetriever:
@@ -17,12 +20,22 @@ class SilasMemoryRetriever:
         session_id: str | None = None,
     ) -> list[MemoryItem]:
         """Apply the requested strategy and return results within the token budget."""
-        retrieved: list[MemoryItem] = await self._dispatch_strategy(
-            query=query,
-            scope_id=scope_id,
-            session_id=session_id,
-        )
-        return self._apply_token_budget(retrieved, max_tokens=query.max_tokens)
+        with _TRACER.start_as_current_span(
+            "memory.retrieve",
+            attributes={
+                "strategy": query.strategy.value,
+                "scope_id": scope_id or "",
+                "session_id": session_id or "",
+                "max_results": query.max_results,
+                "max_tokens": query.max_tokens,
+            },
+        ):
+            retrieved: list[MemoryItem] = await self._dispatch_strategy(
+                query=query,
+                scope_id=scope_id,
+                session_id=session_id,
+            )
+            return self._apply_token_budget(retrieved, max_tokens=query.max_tokens)
 
     async def _dispatch_strategy(
         self,
