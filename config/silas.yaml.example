@@ -1,8 +1,8 @@
 silas:
-  owner_id: david
+  owner_id: owner
   agent_name: Silas
-  owner_name: David
-  registration_open: false
+  owner_name: ""
+  registration_open: true
   data_dir: ./data
   models:
     proxy: openrouter:anthropic/claude-haiku-4-5
@@ -10,6 +10,24 @@ silas:
     executor: openrouter:anthropic/claude-haiku-4-5
     scorer: openrouter:anthropic/claude-haiku-4-5
     api_key_ref: openrouter-api-key
+  prompts:
+    variables:
+      product_name: Silas
+      response_style: concise
+    proxy:
+      path: ./silas/agents/prompts/proxy_system.md
+      variables:
+        route_bias: balanced
+    planner:
+      path: ./silas/agents/prompts/planner_system.md
+    executor:
+      # Either set `path` to a file or define an inline Jinja2 template.
+      template: |
+        <!-- prompt-version: cfg-v1 -->
+        You are the {{ agent_name }} Executor agent.
+        Tone: {{ response_style }}.
+        Personality traits: {{ personality_traits | default("none") }}.
+        Return valid `ExecutorAgentOutput`.
   context:
     total_tokens: 180000
     system_max: 8000
@@ -47,26 +65,9 @@ silas:
   stream:
     streaming_enabled: true
     chunk_size: 50
-  prompts:
-    variables:
-      organization: Silas Runtime
-    proxy:
-      path: ./silas/agents/prompts/proxy_system.md
-    planner:
-      path: ./silas/agents/prompts/planner_system.md
-    executor:
-      path: ./silas/agents/prompts/executor_system.md
   channels:
     web:
       enabled: true
       host: 127.0.0.1
       port: 8420
       auth_token: null
-  observability:
-    loki_url: "http://127.0.0.1:3100"
-    metrics_enabled: true
-    env: dev
-  telemetry:
-    enabled: true
-    endpoint: "localhost:4317"
-    env: dev

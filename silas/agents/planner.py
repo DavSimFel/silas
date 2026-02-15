@@ -10,13 +10,13 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic_ai import Agent
 
 from silas.agents.structured import run_structured_agent
 from silas.core.plan_parser import MarkdownPlanParser
+from silas.core.prompt_manager import PromptManager
 from silas.models.agents import AgentResponse, InteractionMode, PlanAction, PlanActionType
 
 if TYPE_CHECKING:
@@ -24,18 +24,6 @@ if TYPE_CHECKING:
     from silas.tools.toolsets import AgentToolBundle
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_PLANNER_SYSTEM_PROMPT = """You are the Silas Planner agent.
-
-Return a valid AgentResponse with a plan_action that includes markdown plan text.
-
-Requirements:
-- Always produce parseable markdown with YAML front matter.
-- YAML must include: id, type, title.
-- Keep the body actionable and concise.
-- Set needs_approval=true for executable plans.
-- Use interaction_mode=act_and_report unless the task is clearly high-risk.
-"""
 
 
 @dataclass(slots=True)
@@ -63,10 +51,12 @@ class PlannerAgent:
         *,
         use_tools: bool = False,
         tool_bundle: AgentToolBundle | None = None,
+        prompt_manager: PromptManager | None = None,
     ) -> None:
         self.model = model
         self.default_context_profile = default_context_profile
-        self.system_prompt = _load_planner_system_prompt()
+        self._prompt_manager = prompt_manager or PromptManager()
+        self.system_prompt = self._prompt_manager.get_prompt("planner")
         self._llm_available = True
         self._use_tools = use_tools and tool_bundle is not None
         self._tool_bundle = tool_bundle
@@ -223,21 +213,13 @@ class PlannerAgent:
         )
 
 
-def _load_planner_system_prompt() -> str:
-    prompt_path = Path(__file__).resolve().parent / "prompts" / "planner_system.md"
-    if prompt_path.exists():
-        prompt_text = prompt_path.read_text(encoding="utf-8").strip()
-        if prompt_text:
-            return prompt_text
-    return DEFAULT_PLANNER_SYSTEM_PROMPT
-
-
 def build_planner_agent(
     model: str,
     default_context_profile: str = "planning",
     *,
     use_tools: bool = False,
     tool_bundle: AgentToolBundle | None = None,
+    prompt_manager: PromptManager | None = None,
 ) -> PlannerAgent:
     """Factory for PlannerAgent with optional tool loop support."""
     return PlannerAgent(
@@ -245,6 +227,7 @@ def build_planner_agent(
         default_context_profile=default_context_profile,
         use_tools=use_tools,
         tool_bundle=tool_bundle,
+        prompt_manager=prompt_manager,
     )
 
 

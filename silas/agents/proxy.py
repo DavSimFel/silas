@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic_ai import Agent
 
 from silas.core.metrics import LLM_CALLS_TOTAL, LLM_TOKENS_TOTAL
+from silas.core.prompt_manager import PromptManager
 from silas.core.telemetry import get_tracer
 from silas.models.agents import AgentResponse, InteractionMode, InteractionRegister, RouteDecision
 
@@ -29,31 +29,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _TRACER = get_tracer("silas.agents")
-
-DEFAULT_PROXY_SYSTEM_PROMPT = """You are the Silas Proxy agent.
-
-Return a valid RouteDecision object for every request.
-
-Routing criteria:
-- route="direct": simple questions, greetings, factual lookups, and single-step tasks.
-- route="planner": multi-step tasks, tasks requiring tools/skills, or tasks with dependencies.
-
-Output contract:
-- direct route: set response.message with the user-facing answer.
-- planner route: set response to null; planner will produce plan actions.
-- always set reason, interaction_register, interaction_mode, and context_profile.
-
-Context profile guidance:
-- conversation: general dialogue and simple Q&A
-- coding: code/debug/implementation tasks
-- research: investigation and source-heavy lookups
-- support: troubleshooting and helpdesk-style requests
-- planning: explicit multi-step orchestration requests
-
-When tools are available, use them to gather information BEFORE making your
-routing decision. For example, search memory for relevant context or look up
-facts via web search.
-"""
 
 
 @dataclass(slots=True)
@@ -79,10 +54,12 @@ class ProxyAgent:
         *,
         use_tools: bool = False,
         tool_bundle: AgentToolBundle | None = None,
+        prompt_manager: PromptManager | None = None,
     ) -> None:
         self.model = model
         self.default_context_profile = default_context_profile
-        self.system_prompt = _load_proxy_system_prompt()
+        self._prompt_manager = prompt_manager or PromptManager()
+        self.system_prompt = self._prompt_manager.get_prompt("proxy")
         self._llm_available = True
         # Why store bundle separately: we pass console toolset and custom
         # tools to the Agent only when use_tools is True.
@@ -149,21 +126,13 @@ class ProxyAgent:
         return ProxyRunResult(output=decision)
 
 
-def _load_proxy_system_prompt() -> str:
-    prompt_path = Path(__file__).resolve().parent / "prompts" / "proxy_system.md"
-    if prompt_path.exists():
-        prompt_text = prompt_path.read_text(encoding="utf-8").strip()
-        if prompt_text:
-            return prompt_text
-    return DEFAULT_PROXY_SYSTEM_PROMPT
-
-
 def build_proxy_agent(
     model: str,
     default_context_profile: str = "conversation",
     *,
     use_tools: bool = False,
     tool_bundle: AgentToolBundle | None = None,
+    prompt_manager: PromptManager | None = None,
 ) -> ProxyAgent:
     """Factory for ProxyAgent with optional tool loop support."""
     return ProxyAgent(
@@ -171,6 +140,7 @@ def build_proxy_agent(
         default_context_profile=default_context_profile,
         use_tools=use_tools,
         tool_bundle=tool_bundle,
+        prompt_manager=prompt_manager,
     )
 
 

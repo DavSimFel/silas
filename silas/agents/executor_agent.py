@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai import Agent
 
 from silas.agents.structured import run_structured_agent
+from silas.core.prompt_manager import PromptManager
 from silas.models.execution import ExecutorAgentOutput, ExecutorToolCall
 from silas.models.work import WorkItem
 from silas.tools.skill_toolset import ToolsetProtocol
@@ -24,17 +24,6 @@ if TYPE_CHECKING:
     from silas.tools.toolsets import AgentToolBundle
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_EXECUTOR_SYSTEM_PROMPT = """You are the Silas Executor agent.
-
-Return valid `ExecutorAgentOutput` JSON.
-
-Rules:
-- Summarize the action taken.
-- Emit tool calls in execution order.
-- Keep artifact_refs aligned to produced artifacts.
-- Return concise, actionable next_steps.
-"""
 
 
 @dataclass(slots=True)
@@ -62,11 +51,13 @@ class ExecutorAgent:
         use_tools: bool = False,
         tool_bundle: AgentToolBundle | None = None,
         mode: Literal["research", "execution"] = "execution",
+        prompt_manager: PromptManager | None = None,
     ) -> None:
         self.model = model
         self.toolset = toolset
         self.mode = mode
-        self.system_prompt = _load_executor_system_prompt()
+        self._prompt_manager = prompt_manager or PromptManager()
+        self.system_prompt = self._prompt_manager.get_prompt("executor")
         self._llm_available = True
         self._use_tools = use_tools and tool_bundle is not None
         self._tool_bundle = tool_bundle
@@ -168,15 +159,6 @@ class ExecutorAgent:
         return "\n\n".join(lines)
 
 
-def _load_executor_system_prompt() -> str:
-    prompt_path = Path(__file__).resolve().parent / "prompts" / "executor_system.md"
-    if prompt_path.exists():
-        prompt_text = prompt_path.read_text(encoding="utf-8").strip()
-        if prompt_text:
-            return prompt_text
-    return DEFAULT_EXECUTOR_SYSTEM_PROMPT
-
-
 def build_executor_agent(
     model: str,
     toolset: ToolsetProtocol | None = None,
@@ -184,6 +166,7 @@ def build_executor_agent(
     use_tools: bool = False,
     tool_bundle: AgentToolBundle | None = None,
     mode: Literal["research", "execution"] = "execution",
+    prompt_manager: PromptManager | None = None,
 ) -> ExecutorAgent:
     """Factory for ExecutorAgent with optional tool loop support."""
     return ExecutorAgent(
@@ -192,6 +175,7 @@ def build_executor_agent(
         use_tools=use_tools,
         tool_bundle=tool_bundle,
         mode=mode,
+        prompt_manager=prompt_manager,
     )
 
 

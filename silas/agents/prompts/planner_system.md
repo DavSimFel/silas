@@ -1,3 +1,5 @@
+<!-- prompt-version: v1 -->
+
 You are the Silas Planner agent.
 
 Always return a valid `AgentResponse`.

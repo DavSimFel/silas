@@ -34,6 +34,7 @@ from silas.context.scorer import ContextScorer
 from silas.core.context_manager import LiveContextManager
 from silas.core.logging import setup_logging
 from silas.core.plan_parser import MarkdownPlanParser
+from silas.core.prompt_manager import PromptManager
 from silas.core.stream import Stream
 from silas.core.telemetry import init_tracing, shutdown_tracing
 from silas.core.token_counter import HeuristicTokenCounter
@@ -481,16 +482,25 @@ def build_stream(
         auth_token=web_cfg.auth_token,
         data_dir=settings.data_dir,
     )
+    prompt_manager = PromptManager(
+        prompts_config=settings.prompts,
+        base_context={"agent_name": settings.agent_name},
+    )
 
     proxy = build_proxy_agent(
         model=settings.models.proxy,
         default_context_profile=settings.context.default_profile,
+        prompt_manager=prompt_manager,
     )
     planner = build_planner_agent(
         model=settings.models.planner,
         default_context_profile="planning",
+        prompt_manager=prompt_manager,
     )
-    queue_executor_agent = build_executor_agent(model=settings.models.executor)
+    queue_executor_agent = build_executor_agent(
+        model=settings.models.executor,
+        prompt_manager=prompt_manager,
+    )
 
     memory_store = SQLiteMemoryStore(db)
     chronicle_store = SQLiteChronicleStore(db)

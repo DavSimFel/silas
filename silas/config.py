@@ -161,6 +161,30 @@ class StreamConfig(BaseModel):
     max_memory_ops_per_turn: int = Field(default=10, ge=1)
 
 
+class PromptConfig(BaseModel):
+    """Prompt source and template options for one agent."""
+
+    path: Path | None = None
+    template: str | None = None
+    version: str | None = None
+    variables: dict[str, object] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_source(self) -> PromptConfig:
+        if self.path is not None and self.template is not None:
+            raise ValueError("prompt config can define either path or template, not both")
+        return self
+
+
+class PromptsConfig(BaseModel):
+    """Configurable prompt overrides and template variables."""
+
+    variables: dict[str, object] = Field(default_factory=dict)
+    proxy: PromptConfig = Field(default_factory=PromptConfig)
+    planner: PromptConfig = Field(default_factory=PromptConfig)
+    executor: PromptConfig = Field(default_factory=PromptConfig)
+
+
 class SilasSettings(BaseSettings):
     owner_id: str = "owner"
     agent_name: str = "Silas"
@@ -171,6 +195,7 @@ class SilasSettings(BaseSettings):
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
     stream: StreamConfig = Field(default_factory=StreamConfig)
+    prompts: PromptsConfig = Field(default_factory=PromptsConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
@@ -243,6 +268,8 @@ __all__ = [
     "ContextConfig",
     "ExecutionConfig",
     "ModelsConfig",
+    "PromptConfig",
+    "PromptsConfig",
     "SilasConfig",
     "SilasSettings",
     "StreamConfig",
