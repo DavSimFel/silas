@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from silas.context.scorer import ContextScorer
+from silas.core.context_registry import ContextRegistry
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.models.context import (
     ContextItem,
@@ -13,6 +14,7 @@ from silas.models.context import (
     ContextZone,
     TokenBudget,
 )
+from silas.models.context_item import ContextItem as UnifiedContextItem
 
 _RENDER_ORDER: tuple[ContextZone, ...] = (
     ContextZone.system,
@@ -257,6 +259,37 @@ class LiveContextManager:
             if item.ctx_id == ctx_id:
                 return items.pop(idx)
         return None
+
+    # ------------------------------------------------------------------
+    # Registry bridge
+    # ------------------------------------------------------------------
+
+    def populate_registry(self, registry: ContextRegistry) -> None:
+        """Populate a ContextRegistry from current zone-based context."""
+        zone_to_tag = {
+            ContextZone.system: "personality",
+            ContextZone.chronicle: "topic",
+            ContextZone.memory: "memory",
+            ContextZone.workspace: "file",
+        }
+        for scope_id, items in self.by_scope.items():
+            for item in items:
+                source = f"{item.zone.value}:{scope_id}:{item.ctx_id}"
+                tag = zone_to_tag.get(item.zone, "")
+                unified = UnifiedContextItem(
+                    item_id=item.ctx_id,
+                    content=item.content,
+                    source=source,
+                    role="system",
+                    last_modified=item.created_at,
+                    token_count=item.token_count,
+                    taint=item.taint.value if hasattr(item.taint, "value") else str(item.taint),
+                    eviction_priority=0.9 if item.pinned else 0.5,
+                    source_tag=tag,
+                    turn_created=item.turn_number,
+                    tags=set(),
+                )
+                registry.upsert(unified)
 
 
 __all__ = ["LiveContextManager"]

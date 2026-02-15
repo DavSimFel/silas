@@ -123,6 +123,20 @@ class ContextConfig(BaseModel):
         )
 
 
+class ContextBudgetConfig(BaseModel):
+    """Budget configuration for the unified ContextRegistry."""
+
+    total_tokens: int = 100_000
+    caps: dict[str, float] = Field(
+        default_factory=lambda: {
+            "memory": 0.25,
+            "topic": 0.20,
+            "personality": 0.10,
+            "file": 0.15,
+        }
+    )
+
+
 class SkillsConfig(BaseModel):
     shipped_dir: Path = Path("./silas/skills/shipped")
     custom_dir: Path = Path("./silas/skills/custom")
