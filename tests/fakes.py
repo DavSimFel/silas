@@ -21,7 +21,8 @@ from silas.models.work import (
     WorkItemResult,
     WorkItemStatus,
 )
-from silas.stubs import InMemoryAuditLog as InMemoryAuditLog
+
+from tests.stubs import InMemoryAuditLog as InMemoryAuditLog
 
 
 def _utc_now() -> datetime:

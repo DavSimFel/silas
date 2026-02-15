@@ -90,7 +90,6 @@ class Stream(
     scheduler: TaskScheduler | None = None
     plan_parser: PlanParser | None = None
     work_item_store: WorkItemStore | None = None
-    goal_manager: object | None = None
     connection_manager: ConnectionManager | None = None
     suggestion_engine: SuggestionEngine | None = None
     autonomy_calibrator: AutonomyCalibrator | None = None

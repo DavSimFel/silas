@@ -39,7 +39,6 @@ class StreamBase(Protocol):
     scheduler: TaskScheduler | None
     plan_parser: PlanParser | None
     work_item_store: WorkItemStore | None
-    goal_manager: object | None
     connection_manager: ConnectionManager | None
     suggestion_engine: SuggestionEngine | None
     autonomy_calibrator: AutonomyCalibrator | None

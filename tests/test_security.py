@@ -13,15 +13,12 @@ import pytest
 from pydantic import ValidationError
 from silas.approval.manager import LiveApprovalManager
 from silas.core.stream import Stream
-from silas.goals.manager import SilasGoalManager
 from silas.models.approval import (
-    ApprovalDecision,
     ApprovalScope,
     ApprovalToken,
     ApprovalVerdict,
 )
 from silas.models.context import ContextZone
-from silas.models.goals import Goal, GoalSchedule
 from silas.models.messages import ChannelMessage, TaintLevel
 from silas.models.work import WorkItem, WorkItemStatus, WorkItemType
 from silas.persistence.migrations import run_migrations
@@ -81,24 +78,6 @@ def _spawn_policy_hash(
     return hashlib.sha256(_canonical_json(canonical).encode("utf-8")).hexdigest()
 
 
-def _goal(goal_id: str = "goal-sec") -> Goal:
-    now = _utc_now()
-    return Goal(
-        goal_id=goal_id,
-        name=f"Goal {goal_id}",
-        description="Run security checks",
-        schedule=GoalSchedule(kind="interval", interval_seconds=300),
-        work_template={
-            "type": "task",
-            "title": "Run goal task",
-            "body": "Investigate and remediate drift",
-        },
-        skills=["security"],
-        created_at=now,
-        updated_at=now,
-    )
-
-
 def _msg(
     text: str,
     sender_id: str = "owner",
@@ -112,66 +91,6 @@ def _msg(
         timestamp=_utc_now(),
         is_authenticated=is_authenticated,
     )
-
-
-class _CollectingWorkItemStore:
-    def __init__(self) -> None:
-        self.saved: list[WorkItem] = []
-
-    async def save(self, item: WorkItem) -> None:
-        self.saved.append(item.model_copy(deep=True))
-
-
-class _StubStandingApprovalEngine:
-    def __init__(self) -> None:
-        self._counter = 0
-
-    async def issue_token(
-        self,
-        work_item: WorkItem,
-        decision: ApprovalDecision,
-        scope: ApprovalScope = ApprovalScope.full_plan,
-    ) -> ApprovalToken:
-        self._counter += 1
-        raw_limit = decision.conditions.get("max_executions")
-        max_executions = raw_limit if isinstance(raw_limit, int) and raw_limit > 0 else 1
-        now = _utc_now()
-        return ApprovalToken(
-            token_id=f"standing:{self._counter}",
-            plan_hash=work_item.plan_hash(),
-            work_item_id=work_item.id,
-            scope=scope,
-            verdict=decision.verdict,
-            signature=b"stub-signature",
-            issued_at=now,
-            expires_at=now + timedelta(hours=1),
-            nonce=f"nonce:{self._counter}",
-            conditions=dict(decision.conditions),
-            max_executions=max_executions,
-        )
-
-    async def verify(
-        self,
-        token: ApprovalToken,
-        work_item: WorkItem,
-        spawned_task: WorkItem | None = None,
-    ) -> tuple[bool, str]:
-        if token.scope != ApprovalScope.standing:
-            return False, "wrong_scope"
-        if spawned_task is None:
-            return False, "standing_requires_spawned_task"
-        if spawned_task.parent != token.work_item_id:
-            return False, "standing_parent_mismatch"
-        if token.plan_hash != work_item.plan_hash():
-            return False, "plan_hash_mismatch"
-        if token.executions_used >= token.max_executions:
-            return False, "execution_limit_reached"
-        token.executions_used += 1
-        return True, "ok"
-
-    async def check(self, token: ApprovalToken, work_item: WorkItem) -> tuple[bool, str]:
-        del token, work_item
-        return True, "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -400,75 +319,3 @@ async def test_owner_sender_id_produces_owner_taint(
 
     chronicle = context_manager.get_zone("owner", ContextZone.chronicle)
     assert chronicle[0].taint == TaintLevel.owner
-
-
-# ---------------------------------------------------------------------------
-# 5) Standing approval verification behavior (spec 5.2.3 target behavior)
-# ---------------------------------------------------------------------------
-
-
-class TestStandingApprovalVerification:
-    def test_standing_approval_allows_multiple_executions_until_max_uses(self) -> None:
-        store = _CollectingWorkItemStore()
-        manager = SilasGoalManager(
-            goals_config=[_goal("goal-multi")],
-            work_item_store=store,
-            approval_engine=_StubStandingApprovalEngine(),
-        )
-        goal = manager.load_goals()[0]
-        assert goal.spawn_policy_hash is not None
-
-        manager.grant_standing_approval(
-            goal_id=goal.goal_id,
-            policy_hash=goal.spawn_policy_hash,
-            granted_by="owner",
-            expires_at=None,
-            max_uses=2,
-        )
-
-        manager.run_goal(goal.goal_id)
-        manager.run_goal(goal.goal_id)
-        manager.run_goal(goal.goal_id)
-
-        assert [item.needs_approval for item in store.saved] == [False, False, True]
-
-    def test_spawn_policy_hash_binding_rejects_mismatched_hash(self) -> None:
-        store = _CollectingWorkItemStore()
-        manager = SilasGoalManager(goals_config=[_goal("goal-bind")], work_item_store=store)
-        goal = manager.load_goals()[0]
-        assert goal.spawn_policy_hash is not None
-
-        wrong_hash = hashlib.sha256(b"not-the-goal-policy").hexdigest()
-        manager.grant_standing_approval(
-            goal_id=goal.goal_id,
-            policy_hash=wrong_hash,
-            granted_by="owner",
-            expires_at=None,
-            max_uses=5,
-        )
-
-        manager.run_goal(goal.goal_id)
-        assert len(store.saved) == 1
-        assert store.saved[0].needs_approval is True
-
-    def test_spawn_policy_hash_canonicalized_hex_allows_case_insensitive_binding(self) -> None:
-        store = _CollectingWorkItemStore()
-        manager = SilasGoalManager(
-            goals_config=[_goal("goal-case-canonicalization")],
-            work_item_store=store,
-            approval_engine=_StubStandingApprovalEngine(),
-        )
-        goal = manager.load_goals()[0]
-        assert goal.spawn_policy_hash is not None
-
-        manager.grant_standing_approval(
-            goal_id=goal.goal_id,
-            policy_hash=goal.spawn_policy_hash.upper(),
-            granted_by="owner",
-            expires_at=None,
-            max_uses=1,
-        )
-
-        manager.run_goal(goal.goal_id)
-        assert len(store.saved) == 1
-        assert store.saved[0].needs_approval is False

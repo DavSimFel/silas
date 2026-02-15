@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import logging
 from collections.abc import Callable
 from pathlib import Path
 
@@ -14,7 +12,6 @@ from silas.channels.web import WebChannel
 from silas.connections.manager import SilasConnectionManager
 from silas.core.plan_executor import plan_action_to_work_item
 from silas.core.plan_parser import MarkdownPlanParser
-from silas.goals.manager import SilasGoalManager
 from silas.models.approval import ApprovalVerdict
 from starlette.websockets import WebSocketDisconnect
 
@@ -146,27 +143,6 @@ def test_plan_action_to_work_item_always_forces_needs_approval(
     )
 
     assert work_item.needs_approval is True
-
-
-@pytest.mark.asyncio
-async def test_goal_manager_run_awaitable_logs_background_task_failures(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    manager = SilasGoalManager(goals_config=[], work_item_store=object())
-
-    async def _failing_save() -> None:
-        await asyncio.sleep(0)
-        raise RuntimeError("persistence write failed")
-
-    goal_logger = logging.getLogger("silas.goals.manager")
-    goal_logger.propagate = True
-    with caplog.at_level(logging.ERROR):
-        manager._run_awaitable(_failing_save())
-        # Let the event loop process the task and its done-callback.
-        await asyncio.sleep(0.1)
-
-    matching = [r for r in caplog.records if "Background save failed" in r.getMessage()]
-    assert matching, "Expected 'Background save failed' log entry"
 
 
 def test_connection_manager_resolve_script_rejects_traversal_skill_name(tmp_path: Path) -> None:

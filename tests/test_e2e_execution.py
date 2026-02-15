@@ -23,9 +23,9 @@ from silas.models.context import ContextItem, ContextZone, TokenBudget
 from silas.models.gates import Gate, GateTrigger, GateType
 from silas.models.messages import TaintLevel
 from silas.models.work import Expectation, VerificationCheck, WorkItem, WorkItemStatus, WorkItemType
-from silas.stubs import InMemoryAuditLog
 
 from tests.fakes import InMemoryWorkItemStore
+from tests.stubs import InMemoryAuditLog
 
 # --- Helpers ---
 

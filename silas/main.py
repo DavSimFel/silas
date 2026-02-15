@@ -510,15 +510,6 @@ def build_stream(
 
     persona_store = SQLitePersonaStore(db)
     audit = SQLiteAuditLog(db)
-    # Guard: ensure production uses SQLiteAuditLog, not the InMemoryAuditLog stub.
-    # InMemoryAuditLog has no persistence or hash chaining — using it in prod
-    # silently disables the audit trail. See issue #273.
-    from silas.stubs import InMemoryAuditLog
-
-    assert not isinstance(audit, InMemoryAuditLog), (
-        "Production boot must use SQLiteAuditLog, not InMemoryAuditLog. "
-        "Check your wiring in build_stream()."
-    )
     nonce_store = SQLiteNonceStore(db)
     token_counter = HeuristicTokenCounter()
     context_scorer = ContextScorer()
