@@ -34,17 +34,21 @@ class MemoryMixin(StreamBase if TYPE_CHECKING else object):  # type: ignore[misc
         cm: LiveContextManager | None,
         taint: TaintLevel,
         turn_number: int,
+        *,
+        session_id: str | None = None,
     ) -> None:
         tc = self._turn_context()
         memory_store = tc.memory_store
         if memory_store is None or cm is None:
             return
 
-        recalled_keyword = await memory_store.search_keyword(text, limit=3)
+        recalled_keyword = await memory_store.search_keyword(text, limit=3, session_id=session_id)
         recalled_entity: list[MemoryItem] = []
         mentions = self._extract_mentions(text)
         if mentions:
-            entity_candidates = await memory_store.search_by_type(MemoryType.entity, limit=50)
+            entity_candidates = await memory_store.search_by_type(
+                MemoryType.entity, limit=50, session_id=session_id
+            )
             recalled_entity = [
                 item
                 for item in entity_candidates
