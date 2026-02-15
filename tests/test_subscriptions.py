@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import os
+import time
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
-from silas.core.subscriptions import ContextSubscriptionManager, _is_expired
+from silas.core.subscriptions import (
+    ContextSubscriptionManager,
+    _is_expired,
+)
 from silas.models.context import ContextSubscription, ContextZone
 
 
@@ -25,6 +30,11 @@ def _subscription(
         active=active,
         token_count=token_count,
     )
+
+
+# ---------------------------------------------------------------------------
+# Existing tests
+# ---------------------------------------------------------------------------
 
 
 def test_register_sets_fresh_created_at_and_preserves_token_budget_data(tmp_path) -> None:
@@ -115,3 +125,133 @@ def test_is_expired_accepts_naive_expires_at_as_utc() -> None:
     object.__setattr__(subscription, "expires_at", naive_expired)
 
     assert _is_expired(subscription, now) is True
+
+
+# ---------------------------------------------------------------------------
+# New tests: duplicate register, file_lines, large count, TTL boundary,
+# non-existent file, metrics
+# ---------------------------------------------------------------------------
+
+
+def test_register_duplicate_sub_id_overwrites(tmp_path) -> None:
+    f = tmp_path / "a.txt"
+    f.write_text("hello", encoding="utf-8")
+    manager = ContextSubscriptionManager(subscriptions=[])
+    sub_v1 = _subscription("dup", str(f), token_count=10)
+    sub_v2 = _subscription("dup", str(f), token_count=999)
+
+    manager.register(sub_v1)
+    manager.register(sub_v2)
+
+    active = manager.get_active()
+    assert len(active) == 1
+    assert active[0].token_count == 999
+
+
+def test_file_lines_subscription_materialization(tmp_path) -> None:
+    f = tmp_path / "lines.txt"
+    f.write_text("line1\nline2\nline3\n", encoding="utf-8")
+    manager = ContextSubscriptionManager(
+        subscriptions=[_subscription("fl", str(f), sub_type="file_lines")]
+    )
+
+    result = manager.materialize("fl")
+    assert result == "line1\nline2\nline3\n"
+
+
+def test_large_subscription_count_performance() -> None:
+    subs = [_subscription(f"sub-{i}", f"/tmp/fake-{i}.txt") for i in range(60)]
+    start = time.monotonic()
+    manager = ContextSubscriptionManager(subscriptions=subs)
+    active = manager.get_active()
+    elapsed = time.monotonic() - start
+
+    assert len(active) == 60
+    assert elapsed < 2.0, f"Took too long: {elapsed:.3f}s"
+
+
+def test_ttl_exactly_at_boundary() -> None:
+    now = datetime.now(UTC)
+    sub = _subscription("boundary", "/tmp/b.txt")
+    # expires_at == now  →  expired (<=)
+    object.__setattr__(sub, "expires_at", now)
+
+    assert _is_expired(sub, now) is True
+
+
+def test_ttl_one_microsecond_before_boundary() -> None:
+    now = datetime.now(UTC)
+    sub = _subscription("almost", "/tmp/b.txt")
+    object.__setattr__(sub, "expires_at", now + timedelta(microseconds=1))
+
+    assert _is_expired(sub, now) is False
+
+
+def test_check_changes_with_nonexistent_file(tmp_path) -> None:
+    manager = ContextSubscriptionManager(
+        subscriptions=[_subscription("ghost", str(tmp_path / "nope.txt"), sub_type="file")]
+    )
+    # Should not crash
+    changed = manager.check_changes()
+    assert changed == []
+
+
+def test_materialize_file_lines_sub_type(tmp_path) -> None:
+    f = tmp_path / "data.csv"
+    f.write_text("a,b,c\n1,2,3\n", encoding="utf-8")
+    manager = ContextSubscriptionManager(
+        subscriptions=[_subscription("csv", str(f), sub_type="file_lines")]
+    )
+    assert manager.materialize("csv") == "a,b,c\n1,2,3\n"
+
+
+def test_metrics_are_incremented(tmp_path) -> None:
+    """Verify Prometheus metrics are called during lifecycle operations."""
+    f = tmp_path / "m.txt"
+    f.write_text("v1", encoding="utf-8")
+
+    with (
+        patch("silas.core.subscriptions.SUBSCRIPTIONS_REGISTERED_TOTAL") as mock_registered,
+        patch("silas.core.subscriptions.SUBSCRIPTIONS_ACTIVE") as mock_active,
+        patch("silas.core.subscriptions.SUBSCRIPTIONS_EVICTED_TOTAL") as mock_evicted,
+        patch("silas.core.subscriptions.SUBSCRIPTIONS_MATERIALIZED_TOTAL") as mock_materialized,
+        patch("silas.core.subscriptions.SUBSCRIPTION_TOKEN_BUDGET_USED") as mock_budget,
+    ):
+        manager = ContextSubscriptionManager(subscriptions=[])
+        sub = _subscription("m1", str(f))
+        manager.register(sub)
+        mock_registered.inc.assert_called()
+        mock_active.set.assert_called()
+        mock_budget.set.assert_called()
+
+        manager.materialize("m1")
+        mock_materialized.labels.assert_called_with(result="hit")
+
+        manager.materialize("nonexistent")
+        mock_materialized.labels.assert_called_with(result="miss")
+
+        manager.unregister("m1")
+        mock_evicted.labels.assert_called_with(reason="manual")
+
+
+def test_metrics_evict_ttl_on_prune() -> None:
+    now = datetime.now(UTC)
+    sub = _subscription("expiring", "/tmp/x.txt")
+    object.__setattr__(sub, "expires_at", now - timedelta(seconds=1))
+
+    with patch("silas.core.subscriptions.SUBSCRIPTIONS_EVICTED_TOTAL") as mock_evicted:
+        manager = ContextSubscriptionManager(subscriptions=[sub])
+        manager.prune_expired()
+        mock_evicted.labels.assert_called_with(reason="ttl")
+
+
+def test_token_budget_gauge_tracks_total(tmp_path) -> None:
+    manager = ContextSubscriptionManager(subscriptions=[])
+    f = tmp_path / "t.txt"
+    f.write_text("x", encoding="utf-8")
+    manager.register(_subscription("a", str(f), token_count=100))
+    manager.register(_subscription("b", str(f), token_count=250))
+
+    # After registering two subs, internal budget should be 350
+    total = sum(s.token_count for s in manager.get_active())
+    assert total == 350
