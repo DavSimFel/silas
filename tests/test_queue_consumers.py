@@ -21,19 +21,19 @@ from silas.models.agents import (
     MemoryQueryStrategy,
 )
 from silas.models.work import WorkItemResult, WorkItemStatus
-from silas.queue.consult import ConsultPlannerManager
-from silas.queue.consumers import (
+from silas.execution.consult import ConsultPlannerManager
+from silas.execution.consumers import (
     BaseConsumer,
     ExecutorConsumer,
     PlannerConsumer,
     ProxyConsumer,
 )
-from silas.queue.orchestrator import QueueOrchestrator
-from silas.queue.replan import MAX_REPLAN_DEPTH, ReplanManager
-from silas.queue.router import QueueRouter
-from silas.queue.status_router import route_to_surface
-from silas.queue.store import DurableQueueStore
-from silas.queue.types import QueueMessage
+from silas.execution.orchestrator import QueueOrchestrator
+from silas.execution.replan import MAX_REPLAN_DEPTH, ReplanManager
+from silas.execution.router import QueueRouter
+from silas.execution.status_router import route_to_surface
+from silas.execution.queue_store import DurableQueueStore
+from silas.execution.queue_types import QueueMessage
 
 from tests.helpers import wait_until
 
@@ -264,7 +264,7 @@ async def test_base_consumer_poll_once_increments_queue_messages_total(
 ) -> None:
     """Successful processing increments queue_messages_total with queue and kind labels."""
     metric = _FakeQueueMessageCounter()
-    monkeypatch.setattr("silas.queue.consumers.QUEUE_MESSAGES_TOTAL", metric)
+    monkeypatch.setattr("silas.execution.consumers.QUEUE_MESSAGES_TOTAL", metric)
     consumer = EchoConsumer(store, router, "proxy_queue")
     msg = QueueMessage(message_kind="user_message", sender="user", payload={"text": "hi"})
     await router.route(msg)

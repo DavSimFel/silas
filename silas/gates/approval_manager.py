@@ -3,12 +3,12 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from silas.approval.fatigue import (
+from silas.gates.fatigue import (
     ApprovalFatigueMitigator,
     DecisionRecord,
     FatigueAnalysis,
 )
-from silas.approval.review_queue import ApprovalRequest, ReviewQueue
+from silas.gates.review_queue import ApprovalRequest, ReviewQueue
 from silas.models.approval import (
     ApprovalDecision,
     ApprovalScope,
@@ -17,7 +17,7 @@ from silas.models.approval import (
     PendingApproval,
 )
 from silas.models.work import WorkItem
-from silas.proactivity.ux_metrics import UXMetricsCollector
+from silas.topics.ux_metrics import UXMetricsCollector
 
 
 class LiveApprovalManager:

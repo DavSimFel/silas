@@ -11,10 +11,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from silas.core.context_manager import LiveContextManager
-from silas.core.plan_parser import MarkdownPlanParser
+from silas.context.manager import LiveContextManager
+from silas.execution.plan_parser import MarkdownPlanParser
 from silas.core.token_counter import HeuristicTokenCounter
-from silas.core.verification_runner import SilasVerificationRunner
+from silas.execution.verification_runner import SilasVerificationRunner
 from silas.execution.sandbox import SubprocessSandboxManager
 
 # OutputGateRunner removed — using unified SilasGateRunner (PR #70)

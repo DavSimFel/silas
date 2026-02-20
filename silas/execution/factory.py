@@ -12,9 +12,9 @@ graph explicit in the parameter list.
 from __future__ import annotations
 
 from silas.core.metrics import QUEUE_LEASE_TIMEOUTS_TOTAL
-from silas.queue.bridge import QueueBridge
-from silas.queue.consult import ConsultPlannerManager
-from silas.queue.consumers import (
+from silas.execution.bridge import QueueBridge
+from silas.execution.consult import ConsultPlannerManager
+from silas.execution.consumers import (
     ExecutorAgentProtocol,
     ExecutorConsumer,
     PlannerAgentProtocol,
@@ -22,10 +22,10 @@ from silas.queue.consumers import (
     ProxyAgentProtocol,
     ProxyConsumer,
 )
-from silas.queue.orchestrator import QueueOrchestrator
-from silas.queue.replan import ReplanManager
-from silas.queue.router import QueueRouter
-from silas.queue.store import DurableQueueStore
+from silas.execution.orchestrator import QueueOrchestrator
+from silas.execution.replan import ReplanManager
+from silas.execution.router import QueueRouter
+from silas.execution.queue_store import DurableQueueStore
 
 
 async def create_queue_system(

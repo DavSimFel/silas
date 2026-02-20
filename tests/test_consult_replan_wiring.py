@@ -14,13 +14,13 @@ import tempfile
 from dataclasses import dataclass
 
 import pytest
-from silas.queue.consult import ConsultPlannerManager
-from silas.queue.consumers import ExecutorConsumer
-from silas.queue.factory import create_queue_system
-from silas.queue.replan import MAX_REPLAN_DEPTH, ReplanManager
-from silas.queue.router import QueueRouter
-from silas.queue.store import DurableQueueStore
-from silas.queue.types import QueueMessage
+from silas.execution.consult import ConsultPlannerManager
+from silas.execution.consumers import ExecutorConsumer
+from silas.execution.factory import create_queue_system
+from silas.execution.replan import MAX_REPLAN_DEPTH, ReplanManager
+from silas.execution.router import QueueRouter
+from silas.execution.queue_store import DurableQueueStore
+from silas.execution.queue_types import QueueMessage
 
 # ── Mock Executor Agent ──────────────────────────────────────────────
 

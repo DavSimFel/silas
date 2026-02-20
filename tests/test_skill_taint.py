@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from silas.models.messages import TaintLevel
 from silas.models.skills import SkillDefinition
-from silas.security.taint import TaintTracker
+from silas.gates.taint import TaintTracker
 from silas.skills.registry import SkillRegistry
 
 

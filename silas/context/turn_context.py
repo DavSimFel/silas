@@ -15,7 +15,7 @@ from silas.protocols.skills import SkillLoader, SkillResolver
 from silas.protocols.work import WorkItemExecutor
 
 if TYPE_CHECKING:
-    from silas.core.context_manager import LiveContextManager
+    from silas.context.manager import LiveContextManager
     from silas.skills.executor import SkillExecutor
     from silas.skills.registry import SkillRegistry
 

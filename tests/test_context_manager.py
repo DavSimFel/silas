@@ -64,7 +64,7 @@ def _budget(**overrides) -> TokenBudget:
 
 @pytest.fixture
 def ctx_mgr():
-    from silas.core.context_manager import LiveContextManager
+    from silas.context.manager import LiveContextManager
 
     return LiveContextManager(
         token_budget=_budget(),

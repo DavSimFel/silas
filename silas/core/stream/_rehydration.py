@@ -14,9 +14,9 @@ from silas.models.messages import TaintLevel
 from silas.models.work import WorkItem, WorkItemStatus
 
 if TYPE_CHECKING:
-    from silas.core.context_manager import LiveContextManager
+    from silas.context.manager import LiveContextManager
     from silas.core.stream._base import StreamBase
-    from silas.core.turn_context import TurnContext
+    from silas.context.turn_context import TurnContext
     from silas.protocols.work import WorkItemStore
 
 _counter = HeuristicTokenCounter()

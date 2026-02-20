@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from silas.approval.fatigue import (
+from silas.gates.fatigue import (
     ApprovalFatigueMitigator,
     DecisionRecord,
     FatigueLevel,

@@ -1,24 +1,16 @@
-"""Core module — lightweight re-exports only.
+"""Core module — low-level infrastructure shared across all packages.
 
-Stream is NOT imported here to avoid pulling in FastAPI/WebChannel
-at import time (breaks test isolation).  Import Stream directly:
-    from silas.core.stream import Stream
+Context management, subscriptions, plan parsing, and approval flow have moved:
+    from silas.context import LiveContextManager, ContextRegistry, TurnContext
+    from silas.execution import MarkdownPlanParser, SilasVerificationRunner
+    from silas.gates import ApprovalFlow
+
+Stream is NOT imported here to avoid pulling in FastAPI at import time.
+Import directly: from silas.core.stream import Stream
 """
 
-from silas.core.context_manager import LiveContextManager
 from silas.core.key_manager import SilasKeyManager
-from silas.core.plan_parser import MarkdownPlanParser
-from silas.core.subscriptions import ContextSubscriptionManager
-from silas.core.token_counter import HeuristicTokenCounter
-from silas.core.turn_context import TurnContext
-from silas.core.verification_runner import SilasVerificationRunner
 
 __all__ = [
-    "ContextSubscriptionManager",
-    "HeuristicTokenCounter",
-    "LiveContextManager",
-    "MarkdownPlanParser",
     "SilasKeyManager",
-    "SilasVerificationRunner",
-    "TurnContext",
 ]

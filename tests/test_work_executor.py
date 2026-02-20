@@ -23,7 +23,7 @@ from silas.models.work import (
 )
 from silas.skills.executor import SkillExecutor
 from silas.skills.registry import SkillRegistry
-from silas.work.executor import LiveWorkItemExecutor
+from silas.execution.work_executor import LiveWorkItemExecutor
 
 from tests.fakes import InMemoryWorkItemStore
 

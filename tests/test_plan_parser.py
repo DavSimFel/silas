@@ -88,7 +88,7 @@ Body here.
 class TestMarkdownPlanParser:
     @pytest.fixture
     def parser(self):
-        from silas.core.plan_parser import MarkdownPlanParser
+        from silas.execution.plan_parser import MarkdownPlanParser
 
         return MarkdownPlanParser()
 

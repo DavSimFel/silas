@@ -34,7 +34,7 @@ async def request_research(
 
     # Why import here: avoids circular import at module level.
     # QueueMessage is a Pydantic model in silas.queue.types.
-    from silas.queue.types import QueueMessage
+    from silas.execution.queue_types import QueueMessage
 
     request_id = f"research-{uuid.uuid4().hex[:12]}"
     msg = QueueMessage(

@@ -18,7 +18,7 @@ from silas.models.messages import TaintLevel
 from silas.models.skills import SkillDefinition, SkillMetadata
 from silas.models.work import WorkItem
 from silas.protocols.skills import SkillLoader as SkillLoaderProtocol
-from silas.security.taint import TaintTracker
+from silas.gates.taint import TaintTracker
 from silas.tools.skill_toolset import (
     SkillToolset,
     ToolCallResult,

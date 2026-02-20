@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from silas.approval.manager import LiveApprovalManager
+from silas.gates.approval_manager import LiveApprovalManager
 from silas.models.approval import ApprovalScope, ApprovalToken, ApprovalVerdict
 from silas.models.goals import StandingApproval
 from silas.models.work import WorkItem

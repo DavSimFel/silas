@@ -21,19 +21,19 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from silas.core.metrics import QUEUE_MESSAGES_TOTAL
-from silas.core.plan_executor import StandingApprovalResolver, resolve_work_item_approval
-from silas.core.plan_parser import MarkdownPlanParser
+from silas.execution.plan_executor import StandingApprovalResolver, resolve_work_item_approval
+from silas.execution.plan_parser import MarkdownPlanParser
 from silas.core.telemetry import get_tracer
 from silas.models.approval import ApprovalDecision, ApprovalScope, ApprovalToken, ApprovalVerdict
 from silas.models.work import WorkItem, WorkItemResult
 from silas.protocols.work import WorkItemExecutor
-from silas.queue.consult import ConsultPlannerManager
-from silas.queue.replan import ReplanManager
-from silas.queue.research import ResearchStateMachine
-from silas.queue.router import QueueRouter
-from silas.queue.status_router import route_to_surface
-from silas.queue.store import DurableQueueStore
-from silas.queue.types import (
+from silas.execution.consult import ConsultPlannerManager
+from silas.execution.replan import ReplanManager
+from silas.execution.research import ResearchStateMachine
+from silas.execution.router import QueueRouter
+from silas.execution.status_router import route_to_surface
+from silas.execution.queue_store import DurableQueueStore
+from silas.execution.queue_types import (
     AgentResponsePayload,
     ExecutionRequestPayload,
     PlanRequestPayload,
@@ -43,7 +43,7 @@ from silas.queue.types import (
 )
 from silas.tools.backends import build_research_console_toolset
 from silas.tools.filtered import FilteredToolset
-from silas.work.executor import work_item_from_execution_payload
+from silas.execution.work_executor import work_item_from_execution_payload
 
 logger = logging.getLogger(__name__)
 
@@ -703,7 +703,7 @@ class PlannerConsumer(BaseConsumer):
         # Check timeouts on remaining in-flight requests
         self._research.check_timeouts()
 
-        from silas.queue.research import ResearchState
+        from silas.execution.research import ResearchState
 
         if self._research.state in (
             ResearchState.ready_to_finalize,
@@ -716,7 +716,7 @@ class PlannerConsumer(BaseConsumer):
 
     async def _finalize_with_research(self, msg: QueueMessage) -> QueueMessage:
         """Re-run planner with collected research results to produce final plan."""
-        from silas.queue.research import ResearchState
+        from silas.execution.research import ResearchState
 
         is_expired = self._research.state == ResearchState.expired
         results = self._research.finalize()

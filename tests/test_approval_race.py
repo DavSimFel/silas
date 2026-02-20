@@ -11,9 +11,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from silas.approval.manager import LiveApprovalManager
-from silas.approval.review_queue import ApprovalRequest, ReviewDecision, ReviewQueue
-from silas.approval.verifier import SilasApprovalVerifier
+from silas.gates.approval_manager import LiveApprovalManager
+from silas.gates.review_queue import ApprovalRequest, ReviewDecision, ReviewQueue
+from silas.gates.verifier import SilasApprovalVerifier
 from silas.models.approval import (
     ApprovalDecision,
     ApprovalScope,

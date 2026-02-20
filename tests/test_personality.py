@@ -17,7 +17,7 @@ from silas.models.personality import (
 )
 from silas.persistence.migrations import run_migrations
 from silas.persistence.persona_store import SQLitePersonaStore
-from silas.personality.engine import SilasPersonalityEngine
+from silas.context.personality import SilasPersonalityEngine
 
 
 def _now() -> datetime:

@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import logging
 
-from silas.queue.router import QueueRouter
-from silas.queue.types import QueueMessage
+from silas.execution.router import QueueRouter
+from silas.execution.queue_types import QueueMessage
 
 logger = logging.getLogger(__name__)
 

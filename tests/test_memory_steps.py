@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 
 import pytest
 from silas.core.stream import Stream
-from silas.core.turn_context import TurnContext
+from silas.context.turn_context import TurnContext
 from silas.models.agents import (
     AgentResponse,
     InteractionMode,

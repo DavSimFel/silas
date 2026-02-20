@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from silas.approval.review_queue import (
+from silas.gates.review_queue import (
     ApprovalRequest,
     PendingReview,
     ReviewDecision,
@@ -183,7 +183,7 @@ class TestExpireStale:
 class TestManagerIntegration:
     def test_request_approval_enqueues(self) -> None:
         """Non-auto-approved requests should appear in the review queue."""
-        from silas.approval.manager import LiveApprovalManager
+        from silas.gates.approval_manager import LiveApprovalManager
         from silas.models.work import WorkItem
 
         mgr = LiveApprovalManager()
@@ -202,7 +202,7 @@ class TestManagerIntegration:
 
     def test_high_risk_scope_enqueues(self) -> None:
         """self_update scope should never auto-approve → always enqueued."""
-        from silas.approval.manager import LiveApprovalManager
+        from silas.gates.approval_manager import LiveApprovalManager
         from silas.models.work import WorkItem
 
         mgr = LiveApprovalManager()

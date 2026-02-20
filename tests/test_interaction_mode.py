@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from silas.core.interaction_mode import resolve_interaction_mode
+from silas.context.interaction_mode import resolve_interaction_mode
 from silas.models.agents import AgentResponse, InteractionMode, InteractionRegister, RouteDecision
 from silas.models.gates import GateLane, GateResult
 from silas.models.personality import AxisProfile

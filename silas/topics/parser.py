@@ -42,19 +42,28 @@ def parse_topic(markdown: str) -> Topic:
 
     now = datetime.now(tz=UTC)
 
-    return Topic(
-        id=frontmatter.get("id", str(uuid4())),
-        name=frontmatter.get("name", "Untitled"),
-        scope=frontmatter.get("scope", "session"),
-        agent=frontmatter.get("agent", "proxy"),
-        status=frontmatter.get("status", "active"),
-        triggers=frontmatter.get("triggers", []),
-        soft_triggers=frontmatter.get("soft_triggers", []),
-        approvals=frontmatter.get("approvals", []),
-        body=body,
-        created_at=frontmatter.get("created_at", now),
-        updated_at=frontmatter.get("updated_at", now),
-    )
+    # Build the base dict of known fields; extras are ignored silently.
+    topic_data: dict = {
+        "id": frontmatter.get("id", str(uuid4())),
+        "name": frontmatter.get("name", "Untitled"),
+        "scope": frontmatter.get("scope", "session"),
+        "agent": frontmatter.get("agent", "proxy"),
+        "status": frontmatter.get("status", "active"),
+        "triggers": frontmatter.get("triggers", []),
+        "soft_triggers": frontmatter.get("soft_triggers", []),
+        "approvals": frontmatter.get("approvals", []),
+        "body": body,
+        "created_at": frontmatter.get("created_at", now),
+        "updated_at": frontmatter.get("updated_at", now),
+    }
+
+    # Optional goal-behaviour fields — only inject if present in frontmatter.
+    for field in ("subscriptions", "schedule", "standing_approvals", "reporting",
+                  "work_template", "urgency"):
+        if field in frontmatter:
+            topic_data[field] = frontmatter[field]
+
+    return Topic(**topic_data)
 
 
 def topic_to_markdown(topic: Topic) -> str:

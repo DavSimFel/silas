@@ -11,8 +11,8 @@ import tempfile
 
 import aiosqlite
 import pytest
-from silas.queue.store import DurableQueueStore
-from silas.queue.types import (
+from silas.execution.queue_store import DurableQueueStore
+from silas.execution.queue_types import (
     AgentResponsePayload,
     ExecutionRequestPayload,
     PlanRequestPayload,

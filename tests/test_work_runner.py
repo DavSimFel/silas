@@ -13,7 +13,7 @@ from silas.models.work import (
     WorkItemStatus,
     WorkItemType,
 )
-from silas.work.runner import WorkItemRunner
+from silas.execution.runner import WorkItemRunner
 
 
 def _make_work_item(

@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from silas.approval.verifier import SilasApprovalVerifier
+from silas.gates.verifier import SilasApprovalVerifier
 from silas.models.approval import ApprovalDecision, ApprovalScope, ApprovalToken, ApprovalVerdict
 from silas.models.work import WorkItem, WorkItemType
 
