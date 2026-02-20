@@ -5,7 +5,7 @@ from __future__ import annotations
 from contextvars import copy_context
 
 from silas.models.messages import TaintLevel
-from silas.security.taint import TaintTracker
+from silas.gates.taint import TaintTracker
 
 
 class TestTaintEscalation:

@@ -5,7 +5,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
-from silas.core.subscriptions import (
+from silas.context.subscriptions import (
     ContextSubscriptionManager,
     _is_expired,
 )
@@ -211,11 +211,11 @@ def test_metrics_are_incremented(tmp_path) -> None:
     f.write_text("v1", encoding="utf-8")
 
     with (
-        patch("silas.core.subscriptions.SUBSCRIPTIONS_REGISTERED_TOTAL") as mock_registered,
-        patch("silas.core.subscriptions.SUBSCRIPTIONS_ACTIVE") as mock_active,
-        patch("silas.core.subscriptions.SUBSCRIPTIONS_EVICTED_TOTAL") as mock_evicted,
-        patch("silas.core.subscriptions.SUBSCRIPTIONS_MATERIALIZED_TOTAL") as mock_materialized,
-        patch("silas.core.subscriptions.SUBSCRIPTION_TOKEN_BUDGET_USED") as mock_budget,
+        patch("silas.context.subscriptions.SUBSCRIPTIONS_REGISTERED_TOTAL") as mock_registered,
+        patch("silas.context.subscriptions.SUBSCRIPTIONS_ACTIVE") as mock_active,
+        patch("silas.context.subscriptions.SUBSCRIPTIONS_EVICTED_TOTAL") as mock_evicted,
+        patch("silas.context.subscriptions.SUBSCRIPTIONS_MATERIALIZED_TOTAL") as mock_materialized,
+        patch("silas.context.subscriptions.SUBSCRIPTION_TOKEN_BUDGET_USED") as mock_budget,
     ):
         manager = ContextSubscriptionManager(subscriptions=[])
         sub = _subscription("m1", str(f))
@@ -239,7 +239,7 @@ def test_metrics_evict_ttl_on_prune() -> None:
     sub = _subscription("expiring", "/tmp/x.txt")
     object.__setattr__(sub, "expires_at", now - timedelta(seconds=1))
 
-    with patch("silas.core.subscriptions.SUBSCRIPTIONS_EVICTED_TOTAL") as mock_evicted:
+    with patch("silas.context.subscriptions.SUBSCRIPTIONS_EVICTED_TOTAL") as mock_evicted:
         manager = ContextSubscriptionManager(subscriptions=[sub])
         manager.prune_expired()
         mock_evicted.labels.assert_called_with(reason="ttl")

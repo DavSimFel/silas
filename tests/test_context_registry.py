@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from datetime import UTC, datetime, timedelta
 
-from silas.core.context_registry import ContextRegistry
+from silas.context.registry import ContextRegistry
 from silas.models.context_item import ContextItem
 
 

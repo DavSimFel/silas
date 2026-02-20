@@ -12,7 +12,7 @@ from silas.models.proactivity import SuggestionProposal
 from silas.models.work import WorkItem
 
 if TYPE_CHECKING:
-    from silas.core.context_manager import LiveContextManager
+    from silas.context.manager import LiveContextManager
     from silas.core.stream._base import StreamBase
     from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
 

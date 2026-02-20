@@ -72,7 +72,7 @@ class TestMigrationRunner:
 class TestSQLiteMemoryStore:
     @pytest.fixture
     async def store(self, tmp_path: Path):
-        from silas.memory.sqlite_store import SQLiteMemoryStore
+        from silas.context.sqlite_store import SQLiteMemoryStore
         from silas.persistence.migrations import run_migrations
 
         db_path = tmp_path / "test.db"
@@ -467,7 +467,7 @@ class TestSQLiteWorkItemStore:
 class TestSQLiteAuditLog:
     @pytest.fixture
     async def audit(self, tmp_path: Path):
-        from silas.audit.sqlite_audit import SQLiteAuditLog
+        from silas.persistence.audit import SQLiteAuditLog
         from silas.persistence.migrations import run_migrations
 
         db_path = tmp_path / "test.db"

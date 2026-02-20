@@ -36,8 +36,8 @@ from silas.protocols.work import VerificationRunner, WorkItemStore
 from silas.skills.executor import SkillExecutor
 
 if TYPE_CHECKING:
-    from silas.queue.consult import ConsultPlannerManager
-    from silas.queue.replan import ReplanManager
+    from silas.execution.consult import ConsultPlannerManager
+    from silas.execution.replan import ReplanManager
 
 _CHARS_PER_TOKEN = 3.5
 

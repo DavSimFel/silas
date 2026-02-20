@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from silas.scheduler.ap_scheduler import SilasScheduler
+from silas.topics.scheduler import SilasScheduler
 
 from tests.helpers import wait_until
 

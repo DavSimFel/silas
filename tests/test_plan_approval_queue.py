@@ -22,10 +22,10 @@ from silas.models.approval import (
     ApprovalVerdict,
 )
 from silas.models.work import WorkItem
-from silas.queue.consumers import ProxyConsumer
-from silas.queue.router import QueueRouter
-from silas.queue.store import DurableQueueStore
-from silas.queue.types import QueueMessage
+from silas.execution.consumers import ProxyConsumer
+from silas.execution.router import QueueRouter
+from silas.execution.queue_store import DurableQueueStore
+from silas.execution.queue_types import QueueMessage
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

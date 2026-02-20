@@ -10,8 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 from silas.channels.web import WebChannel
 from silas.connections.manager import SilasConnectionManager
-from silas.core.plan_executor import plan_action_to_work_item
-from silas.core.plan_parser import MarkdownPlanParser
+from silas.execution.plan_executor import plan_action_to_work_item
+from silas.execution.plan_parser import MarkdownPlanParser
 from silas.models.approval import ApprovalVerdict
 from starlette.websockets import WebSocketDisconnect
 

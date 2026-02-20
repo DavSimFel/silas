@@ -9,8 +9,8 @@ from pathlib import Path
 
 import aiosqlite
 import pytest
-from silas.audit.sqlite_audit import SQLiteAuditLog
-from silas.memory.sqlite_store import SQLiteMemoryStore
+from silas.persistence.audit import SQLiteAuditLog
+from silas.context.sqlite_store import SQLiteMemoryStore
 from silas.models.context import ContextItem, ContextZone
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import TaintLevel

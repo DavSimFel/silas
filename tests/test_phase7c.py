@@ -6,8 +6,8 @@ import pytest
 from pydantic import ValidationError
 from silas.models.draft import DraftReview, DraftVerdict
 from silas.models.undo import UndoEntry
-from silas.proactivity.fatigue import ApprovalFatigueTracker
-from silas.proactivity.ux_metrics import UXMetricsCollector
+from silas.topics.proactivity_fatigue import ApprovalFatigueTracker
+from silas.topics.ux_metrics import UXMetricsCollector
 
 
 def _utc_now() -> datetime:

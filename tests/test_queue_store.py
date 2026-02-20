@@ -11,9 +11,9 @@ from datetime import datetime
 
 import aiosqlite
 import pytest
-from silas.queue.router import ROUTE_TABLE, QueueRouter
-from silas.queue.store import DurableQueueStore
-from silas.queue.types import (
+from silas.execution.router import ROUTE_TABLE, QueueRouter
+from silas.execution.queue_store import DurableQueueStore
+from silas.execution.queue_types import (
     ExecutionStatus,
     MessageKind,
     QueueMessage,
@@ -381,7 +381,7 @@ class TestBridgeCollectFiltered:
         unrelated messages completely untouched (no nack, no reordering)."""
         from unittest.mock import AsyncMock
 
-        from silas.queue.bridge import QueueBridge
+        from silas.execution.bridge import QueueBridge
 
         bridge = QueueBridge(
             orchestrator=AsyncMock(),

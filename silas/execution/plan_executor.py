@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Protocol
 
-from silas.core.plan_parser import MarkdownPlanParser
+from silas.execution.plan_parser import MarkdownPlanParser
 from silas.models.agents import InteractionMode
 from silas.models.approval import ApprovalDecision, ApprovalToken, ApprovalVerdict
 from silas.models.work import WorkItem, WorkItemResult, WorkItemStatus, WorkItemType

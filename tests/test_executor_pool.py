@@ -30,8 +30,8 @@ from silas.models.work import (
 )
 from silas.skills.executor import SkillExecutor
 from silas.skills.registry import SkillRegistry
-from silas.work.executor import LiveWorkItemExecutor
-from silas.work.pool import LiveExecutorPool, _detect_conflicts, priority_key
+from silas.execution.work_executor import LiveWorkItemExecutor
+from silas.execution.pool import LiveExecutorPool, _detect_conflicts, priority_key
 
 from tests.fakes import InMemoryWorkItemStore
 
@@ -536,7 +536,7 @@ class TestPoolExecutorIntegration:
         from silas.models.skills import SkillDefinition
         from silas.skills.executor import SkillExecutor
         from silas.skills.registry import SkillRegistry
-        from silas.work.executor import LiveWorkItemExecutor
+        from silas.execution.work_executor import LiveWorkItemExecutor
 
         registry = SkillRegistry()
         skill_executor = SkillExecutor(registry)

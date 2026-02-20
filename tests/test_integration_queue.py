@@ -12,13 +12,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from silas.queue.bridge import QueueBridge
-from silas.queue.consumers import ProxyConsumer
-from silas.queue.factory import create_queue_system
-from silas.queue.orchestrator import QueueOrchestrator
-from silas.queue.router import QueueRouter
-from silas.queue.store import DurableQueueStore
-from silas.queue.types import QueueMessage
+from silas.execution.bridge import QueueBridge
+from silas.execution.consumers import ProxyConsumer
+from silas.execution.factory import create_queue_system
+from silas.execution.orchestrator import QueueOrchestrator
+from silas.execution.router import QueueRouter
+from silas.execution.queue_store import DurableQueueStore
+from silas.execution.queue_types import QueueMessage
 
 from tests.helpers import wait_until
 
@@ -278,8 +278,8 @@ class TestCreateQueueSystem:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         metric = _FakeLeaseTimeoutMetric()
-        monkeypatch.setattr("silas.queue.factory.DurableQueueStore", _FakeQueueStore)
-        monkeypatch.setattr("silas.queue.factory.QUEUE_LEASE_TIMEOUTS_TOTAL", metric)
+        monkeypatch.setattr("silas.execution.factory.DurableQueueStore", _FakeQueueStore)
+        monkeypatch.setattr("silas.execution.factory.QUEUE_LEASE_TIMEOUTS_TOTAL", metric)
 
         proxy = MockProxyAgent()
         planner = MockPlannerAgent()

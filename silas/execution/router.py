@@ -11,8 +11,8 @@ make message flow harder to reason about.
 
 from __future__ import annotations
 
-from silas.queue.store import DurableQueueStore
-from silas.queue.types import QueueMessage
+from silas.execution.queue_store import DurableQueueStore
+from silas.execution.queue_types import QueueMessage
 
 # Why a plain dict: it's the simplest correct representation. The keys are
 # exhaustive over MessageKind (enforced by tests). A class or registry would

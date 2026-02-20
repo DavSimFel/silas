@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import pytest
-from silas.memory.retriever import SilasMemoryRetriever
+from silas.context.retriever import SilasMemoryRetriever
 from silas.models.agents import MemoryQuery, MemoryQueryStrategy
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import TaintLevel

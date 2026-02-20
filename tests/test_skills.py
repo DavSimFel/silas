@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from silas.memory.sqlite_store import SQLiteMemoryStore
+from silas.context.sqlite_store import SQLiteMemoryStore
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.skills import SkillDefinition
 from silas.persistence.migrations import run_migrations

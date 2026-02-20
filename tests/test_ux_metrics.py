@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 from silas.models.ux_metrics import ApprovalEvent, BatchEvent, UXMetricsSummary
-from silas.proactivity.ux_metrics import UXMetricsCollector
+from silas.topics.ux_metrics import UXMetricsCollector
 
 # -- helpers ----------------------------------------------------------------
 
@@ -114,17 +114,17 @@ def test_window_filtering_excludes_old_events() -> None:
     recent_time = _fixed_now()
 
     # Inject an old event by patching datetime.now inside record
-    with patch("silas.proactivity.ux_metrics.datetime") as mock_dt:
+    with patch("silas.topics.ux_metrics.datetime") as mock_dt:
         mock_dt.now.return_value = old_time
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
         collector.record_approval_decision("old", "declined", 5000)
 
-    with patch("silas.proactivity.ux_metrics.datetime") as mock_dt:
+    with patch("silas.topics.ux_metrics.datetime") as mock_dt:
         mock_dt.now.return_value = recent_time
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
         collector.record_approval_decision("new", "approved", 300)
 
-    with patch("silas.proactivity.ux_metrics.datetime") as mock_dt:
+    with patch("silas.topics.ux_metrics.datetime") as mock_dt:
         mock_dt.now.return_value = recent_time
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
         summary = collector.get_metrics_summary(window_hours=24)
@@ -197,7 +197,7 @@ def test_batch_event_model() -> None:
 
 def test_manager_records_ux_metrics_on_resolve() -> None:
     """LiveApprovalManager should feed the collector on resolve()."""
-    from silas.approval.manager import LiveApprovalManager
+    from silas.gates.approval_manager import LiveApprovalManager
     from silas.models.approval import ApprovalScope, ApprovalVerdict
     from silas.models.work import WorkItem
 

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from pydantic_ai import Agent
 
 from silas.agents.structured import run_structured_agent
-from silas.core.plan_parser import MarkdownPlanParser
+from silas.execution.plan_parser import MarkdownPlanParser
 from silas.models.agents import AgentResponse, InteractionMode, PlanAction, PlanActionType
 
 if TYPE_CHECKING:

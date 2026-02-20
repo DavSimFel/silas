@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from pydantic import ValidationError
 
 from silas.agents.structured import run_structured_agent
-from silas.core.plan_executor import (
+from silas.execution.plan_executor import (
     build_skill_work_item,
     execute_plan_actions,
     extract_skill_inputs,
@@ -15,7 +15,7 @@ from silas.core.plan_executor import (
     plan_action_to_work_item,
     resolve_work_item_approval,
 )
-from silas.core.plan_parser import MarkdownPlanParser
+from silas.execution.plan_parser import MarkdownPlanParser
 from silas.models.agents import AgentResponse, InteractionMode, RouteDecision
 from silas.models.approval import ApprovalScope, ApprovalToken, ApprovalVerdict
 from silas.models.work import WorkItem

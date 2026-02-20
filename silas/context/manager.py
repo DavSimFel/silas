@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from silas.context.scorer import ContextScorer
-from silas.core.context_registry import ContextRegistry
+from silas.context.registry import ContextRegistry
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.models.context import (
     ContextItem,

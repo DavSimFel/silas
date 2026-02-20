@@ -17,12 +17,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-from silas.queue.bridge import QueueBridge
-from silas.queue.consumers import ExecutorConsumer, PlannerConsumer, ProxyConsumer
-from silas.queue.orchestrator import QueueOrchestrator
-from silas.queue.router import QueueRouter
-from silas.queue.store import DurableQueueStore
-from silas.queue.types import QueueMessage
+from silas.execution.bridge import QueueBridge
+from silas.execution.consumers import ExecutorConsumer, PlannerConsumer, ProxyConsumer
+from silas.execution.orchestrator import QueueOrchestrator
+from silas.execution.router import QueueRouter
+from silas.execution.queue_store import DurableQueueStore
+from silas.execution.queue_types import QueueMessage
 
 from tests.helpers import wait_until
 
@@ -469,7 +469,7 @@ class TestFailureCascade:
         router: QueueRouter,
     ) -> None:
         """Full failure cascade: fail → consult planner → guided retry → success."""
-        from silas.queue.consult import ConsultPlannerManager
+        from silas.execution.consult import ConsultPlannerManager
 
         executor = FailThenSucceedExecutorAgent()
         consult_mgr = ConsultPlannerManager(store=store, router=router)
@@ -559,7 +559,7 @@ class TestFailureCascade:
         """When consult times out, executor reports failure (no guidance arrives)."""
         from unittest.mock import AsyncMock
 
-        from silas.queue.consult import ConsultPlannerManager
+        from silas.execution.consult import ConsultPlannerManager
 
         executor = FailThenSucceedExecutorAgent()
         consult_mgr = ConsultPlannerManager(store=store, router=router)

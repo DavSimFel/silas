@@ -20,9 +20,9 @@ from typing import TYPE_CHECKING
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from silas.agents.structured import run_structured_agent
-from silas.core.approval_flow import ApprovalFlow
-from silas.core.context_manager import LiveContextManager
-from silas.core.interaction_mode import resolve_interaction_mode
+from silas.gates.approval_flow import ApprovalFlow
+from silas.context.manager import LiveContextManager
+from silas.context.interaction_mode import resolve_interaction_mode
 from silas.core.logging import correlation_scope
 from silas.core.stream._gates import GateMixin
 from silas.core.stream._helpers import HelpersMixin
@@ -34,7 +34,7 @@ from silas.core.stream._signing import SigningMixin
 from silas.core.stream._toolsets import ToolsetMixin
 from silas.core.telemetry import get_tracer
 from silas.core.token_counter import HeuristicTokenCounter
-from silas.core.turn_context import TurnContext
+from silas.context.turn_context import TurnContext
 from silas.models.agents import RouteDecision
 from silas.models.approval import ApprovalVerdict
 from silas.models.connections import ConnectionFailure
@@ -48,11 +48,11 @@ from silas.protocols.connections import ConnectionManager
 from silas.protocols.proactivity import AutonomyCalibrator, SuggestionEngine
 from silas.protocols.scheduler import TaskScheduler
 from silas.protocols.work import PlanParser, WorkItemStore
-from silas.security.taint import TaintTracker
+from silas.gates.taint import TaintTracker
 
 if TYPE_CHECKING:
     from silas.gates import SilasGateRunner
-    from silas.queue.bridge import QueueBridge
+    from silas.execution.bridge import QueueBridge
 
 _counter = HeuristicTokenCounter()
 

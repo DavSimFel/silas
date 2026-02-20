@@ -14,9 +14,9 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from silas.queue.consumers import BaseConsumer
-from silas.queue.router import QueueRouter
-from silas.queue.store import DurableQueueStore
+from silas.execution.consumers import BaseConsumer
+from silas.execution.router import QueueRouter
+from silas.execution.queue_store import DurableQueueStore
 
 logger = logging.getLogger(__name__)
 

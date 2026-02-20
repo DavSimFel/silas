@@ -9,14 +9,14 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from silas.core.token_counter import HeuristicTokenCounter
-from silas.memory.retriever import SilasMemoryRetriever
+from silas.context.retriever import SilasMemoryRetriever
 from silas.models.agents import AgentResponse, MemoryOp, MemoryOpType
 from silas.models.context import ContextItem, ContextZone
 from silas.models.memory import MemoryItem, MemoryType, ReingestionTier
 from silas.models.messages import TaintLevel
 
 if TYPE_CHECKING:
-    from silas.core.context_manager import LiveContextManager
+    from silas.context.manager import LiveContextManager
     from silas.core.stream._base import StreamBase
     from silas.protocols.memory import MemoryStore
 

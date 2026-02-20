@@ -389,7 +389,7 @@ def test_load_stream_signing_key_missing_keypair_raises(tmp_path: Path) -> None:
 @pytest.mark.anyio
 async def test_signing_key_integrated_with_verifier(tmp_path: Path) -> None:
     """Tier 2 key works with SilasApprovalVerifier end-to-end."""
-    from silas.approval.verifier import SilasApprovalVerifier
+    from silas.gates.verifier import SilasApprovalVerifier
     from silas.models.approval import ApprovalDecision, ApprovalVerdict
     from silas.models.work import WorkItem
     from silas.secrets import SigningKeyStore
