@@ -498,10 +498,10 @@ class TestWorkItem:
         wi2 = self._make_work_item(body="version 2")
         assert wi1.plan_hash() != wi2.plan_hash()
 
-    def test_plan_hash_changes_on_executor_type_change(self) -> None:
+    def test_plan_hash_ignores_executor_type_change(self) -> None:
         wi1 = self._make_work_item(executor_type="skill")
         wi2 = self._make_work_item(executor_type="shell")
-        assert wi1.plan_hash() != wi2.plan_hash()
+        assert wi1.plan_hash() == wi2.plan_hash()
 
     def test_naive_created_at_rejected(self) -> None:
         with pytest.raises(ValidationError, match="timezone-aware"):
