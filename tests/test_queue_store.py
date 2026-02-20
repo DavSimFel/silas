@@ -11,13 +11,13 @@ from datetime import datetime
 
 import aiosqlite
 import pytest
-from silas.execution.router import ROUTE_TABLE, QueueRouter
 from silas.execution.queue_store import DurableQueueStore
 from silas.execution.queue_types import (
     ExecutionStatus,
     MessageKind,
     QueueMessage,
 )
+from silas.execution.router import ROUTE_TABLE, QueueRouter
 
 
 def _make_msg(

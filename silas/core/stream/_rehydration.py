@@ -15,8 +15,8 @@ from silas.models.work import WorkItem, WorkItemStatus
 
 if TYPE_CHECKING:
     from silas.context.manager import LiveContextManager
-    from silas.core.stream._base import StreamBase
     from silas.context.turn_context import TurnContext
+    from silas.core.stream._base import StreamBase
     from silas.protocols.work import WorkItemStore
 
 _counter = HeuristicTokenCounter()

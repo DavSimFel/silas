@@ -11,10 +11,10 @@ from typing import Any
 
 import pytest
 from silas.execution.consumers import PlannerConsumer
-from silas.execution.research import ResearchState, ResearchStateMachine
-from silas.execution.router import QueueRouter
 from silas.execution.queue_store import DurableQueueStore
 from silas.execution.queue_types import QueueMessage
+from silas.execution.research import ResearchState, ResearchStateMachine
+from silas.execution.router import QueueRouter
 
 # ── State Machine Unit Tests ─────────────────────────────────────────
 

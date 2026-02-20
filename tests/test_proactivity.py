@@ -8,7 +8,8 @@ from silas.core.stream import Stream
 from silas.models.messages import ChannelMessage
 from silas.models.proactivity import Suggestion, SuggestionProposal
 from silas.models.work import WorkItemResult, WorkItemStatus
-from silas.topics import SimpleAutonomyCalibrator, SimpleSuggestionEngine
+from silas.topics.calibrator import SimpleAutonomyCalibrator
+from silas.topics.suggestions import SimpleSuggestionEngine
 
 from tests.fakes import FakeAutonomyCalibrator, FakeSuggestionEngine, InMemoryChannel
 

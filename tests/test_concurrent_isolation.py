@@ -14,15 +14,15 @@ import uuid
 import pytest
 from silas.context.manager import LiveContextManager
 from silas.core.token_counter import HeuristicTokenCounter
+from silas.execution.bridge import QueueBridge
+from silas.execution.orchestrator import QueueOrchestrator
+from silas.execution.queue_store import DurableQueueStore
+from silas.execution.queue_types import QueueMessage
+from silas.execution.router import QueueRouter
+from silas.gates.taint import TaintTracker
 from silas.models.context import ContextItem, ContextZone, TokenBudget
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import TaintLevel
-from silas.execution.bridge import QueueBridge
-from silas.execution.orchestrator import QueueOrchestrator
-from silas.execution.router import QueueRouter
-from silas.execution.queue_store import DurableQueueStore
-from silas.execution.queue_types import QueueMessage
-from silas.gates.taint import TaintTracker
 
 from tests.fakes import InMemoryMemoryStore
 

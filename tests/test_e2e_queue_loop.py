@@ -20,9 +20,9 @@ import pytest
 from silas.execution.bridge import QueueBridge
 from silas.execution.consumers import ExecutorConsumer, PlannerConsumer, ProxyConsumer
 from silas.execution.orchestrator import QueueOrchestrator
-from silas.execution.router import QueueRouter
 from silas.execution.queue_store import DurableQueueStore
 from silas.execution.queue_types import QueueMessage
+from silas.execution.router import QueueRouter
 
 from tests.helpers import wait_until
 

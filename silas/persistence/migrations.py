@@ -7,7 +7,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "context" / "migrations"
+MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 
 
 def _checksum(path: Path) -> str:

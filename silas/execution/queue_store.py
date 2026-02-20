@@ -23,8 +23,8 @@ from datetime import UTC, datetime
 
 import aiosqlite
 
-from silas.models.messages import TaintLevel
 from silas.execution.queue_types import QueueMessage
+from silas.models.messages import TaintLevel
 
 # Why ISO format with 'T' separator: SQLite stores datetimes as text,
 # and ISO 8601 sorts lexicographically which matters for ORDER BY created_at.

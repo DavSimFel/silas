@@ -5,8 +5,8 @@ import sys
 from pathlib import Path
 
 import pytest
-from silas.execution.verification_runner import SilasVerificationRunner
 from silas.execution.sandbox import SubprocessSandboxManager
+from silas.execution.verification_runner import SilasVerificationRunner
 from silas.models.work import Expectation, VerificationCheck
 
 

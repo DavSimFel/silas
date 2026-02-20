@@ -12,10 +12,10 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from silas.gates.approval_flow import ApprovalFlow
     from silas.context.manager import LiveContextManager
     from silas.context.turn_context import TurnContext
     from silas.gates import SilasGateRunner
+    from silas.gates.approval_flow import ApprovalFlow
     from silas.models.agents import RouteDecision
     from silas.models.context import ContextItem
     from silas.models.proactivity import SuggestionProposal

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from silas.execution.runner import WorkItemRunner
 from silas.models.work import (
     Budget,
     EscalationAction,
@@ -13,7 +14,6 @@ from silas.models.work import (
     WorkItemStatus,
     WorkItemType,
 )
-from silas.execution.runner import WorkItemRunner
 
 
 def _make_work_item(

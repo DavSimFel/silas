@@ -21,17 +21,10 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from silas.core.metrics import QUEUE_MESSAGES_TOTAL
+from silas.core.telemetry import get_tracer
+from silas.execution.consult import ConsultPlannerManager
 from silas.execution.plan_executor import StandingApprovalResolver, resolve_work_item_approval
 from silas.execution.plan_parser import MarkdownPlanParser
-from silas.core.telemetry import get_tracer
-from silas.models.approval import ApprovalDecision, ApprovalScope, ApprovalToken, ApprovalVerdict
-from silas.models.work import WorkItem, WorkItemResult
-from silas.protocols.work import WorkItemExecutor
-from silas.execution.consult import ConsultPlannerManager
-from silas.execution.replan import ReplanManager
-from silas.execution.research import ResearchStateMachine
-from silas.execution.router import QueueRouter
-from silas.execution.status_router import route_to_surface
 from silas.execution.queue_store import DurableQueueStore
 from silas.execution.queue_types import (
     AgentResponsePayload,
@@ -41,9 +34,16 @@ from silas.execution.queue_types import (
     StatusPayload,
     UserMessagePayload,
 )
+from silas.execution.replan import ReplanManager
+from silas.execution.research import ResearchStateMachine
+from silas.execution.router import QueueRouter
+from silas.execution.status_router import route_to_surface
+from silas.execution.work_executor import work_item_from_execution_payload
+from silas.models.approval import ApprovalDecision, ApprovalScope, ApprovalToken, ApprovalVerdict
+from silas.models.work import WorkItem, WorkItemResult
+from silas.protocols.work import WorkItemExecutor
 from silas.tools.backends import build_research_console_toolset
 from silas.tools.filtered import FilteredToolset
-from silas.execution.work_executor import work_item_from_execution_payload
 
 logger = logging.getLogger(__name__)
 

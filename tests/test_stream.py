@@ -12,9 +12,10 @@ from types import SimpleNamespace
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from silas.gates import LiveApprovalManager
-from silas.core.stream import Stream
 from silas.context.turn_context import TurnContext
+from silas.core.stream import Stream
+from silas.execution.work_executor import LiveWorkItemExecutor
+from silas.gates import LiveApprovalManager
 from silas.models.agents import AgentResponse, InteractionMode, InteractionRegister, RouteDecision
 from silas.models.approval import ApprovalScope, ApprovalToken, ApprovalVerdict
 from silas.models.context import ContextZone
@@ -29,7 +30,6 @@ from silas.models.skills import SkillDefinition
 from silas.models.work import WorkItemStatus
 from silas.skills.executor import SkillExecutor, register_builtin_skills
 from silas.skills.registry import SkillRegistry
-from silas.execution.work_executor import LiveWorkItemExecutor
 
 from tests.fakes import (
     FakeModel,

@@ -3,11 +3,11 @@ from __future__ import annotations
 import os
 
 from silas.context.subscriptions import ContextSubscriptionManager
+from silas.execution.batch import BatchExecutor
 from silas.models.context import ContextSubscription, ContextZone
 from silas.models.preferences import InferredPreference, PreferenceSignal
 from silas.models.review import BatchActionDecision, BatchActionItem, BatchProposal
 from silas.topics.proactivity_preferences import PreferenceInferenceEngine
-from silas.execution.batch import BatchExecutor
 
 
 def _signal(

@@ -13,14 +13,6 @@ from dataclasses import dataclass
 
 import aiosqlite
 import pytest
-from silas.models.agents import (
-    AgentResponse,
-    MemoryOp,
-    MemoryOpType,
-    MemoryQuery,
-    MemoryQueryStrategy,
-)
-from silas.models.work import WorkItemResult, WorkItemStatus
 from silas.execution.consult import ConsultPlannerManager
 from silas.execution.consumers import (
     BaseConsumer,
@@ -29,11 +21,19 @@ from silas.execution.consumers import (
     ProxyConsumer,
 )
 from silas.execution.orchestrator import QueueOrchestrator
+from silas.execution.queue_store import DurableQueueStore
+from silas.execution.queue_types import QueueMessage
 from silas.execution.replan import MAX_REPLAN_DEPTH, ReplanManager
 from silas.execution.router import QueueRouter
 from silas.execution.status_router import route_to_surface
-from silas.execution.queue_store import DurableQueueStore
-from silas.execution.queue_types import QueueMessage
+from silas.models.agents import (
+    AgentResponse,
+    MemoryOp,
+    MemoryOpType,
+    MemoryQuery,
+    MemoryQueryStrategy,
+)
+from silas.models.work import WorkItemResult, WorkItemStatus
 
 from tests.helpers import wait_until
 

@@ -19,6 +19,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from silas.execution.pool import LiveExecutorPool, _detect_conflicts, priority_key
+from silas.execution.work_executor import LiveWorkItemExecutor
 from silas.execution.worktree import LiveWorktreeManager
 from silas.models.approval import ApprovalScope, ApprovalToken, ApprovalVerdict
 from silas.models.work import (
@@ -30,8 +32,6 @@ from silas.models.work import (
 )
 from silas.skills.executor import SkillExecutor
 from silas.skills.registry import SkillRegistry
-from silas.execution.work_executor import LiveWorkItemExecutor
-from silas.execution.pool import LiveExecutorPool, _detect_conflicts, priority_key
 
 from tests.fakes import InMemoryWorkItemStore
 
@@ -533,10 +533,10 @@ class TestPoolExecutorIntegration:
     @pytest.mark.asyncio
     async def test_parallel_items_dispatched_via_pool(self) -> None:
         """When pool is provided, independent items run concurrently."""
+        from silas.execution.work_executor import LiveWorkItemExecutor
         from silas.models.skills import SkillDefinition
         from silas.skills.executor import SkillExecutor
         from silas.skills.registry import SkillRegistry
-        from silas.execution.work_executor import LiveWorkItemExecutor
 
         registry = SkillRegistry()
         skill_executor = SkillExecutor(registry)

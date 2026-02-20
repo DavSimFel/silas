@@ -58,8 +58,14 @@ def parse_topic(markdown: str) -> Topic:
     }
 
     # Optional goal-behaviour fields — only inject if present in frontmatter.
-    for field in ("subscriptions", "schedule", "standing_approvals", "reporting",
-                  "work_template", "urgency"):
+    for field in (
+        "subscriptions",
+        "schedule",
+        "standing_approvals",
+        "reporting",
+        "work_template",
+        "urgency",
+    ):
         if field in frontmatter:
             topic_data[field] = frontmatter[field]
 

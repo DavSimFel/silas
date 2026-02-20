@@ -17,10 +17,10 @@ import pytest
 from silas.execution.consult import ConsultPlannerManager
 from silas.execution.consumers import ExecutorConsumer
 from silas.execution.factory import create_queue_system
-from silas.execution.replan import MAX_REPLAN_DEPTH, ReplanManager
-from silas.execution.router import QueueRouter
 from silas.execution.queue_store import DurableQueueStore
 from silas.execution.queue_types import QueueMessage
+from silas.execution.replan import MAX_REPLAN_DEPTH, ReplanManager
+from silas.execution.router import QueueRouter
 
 # ── Mock Executor Agent ──────────────────────────────────────────────
 

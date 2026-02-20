@@ -20,8 +20,6 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from silas.agents.executor_agent import build_executor_agent
 from silas.agents.planner import build_planner_agent
 from silas.agents.proxy import build_proxy_agent
-from silas.gates import LiveApprovalManager, SilasApprovalVerifier
-from silas.persistence.audit import SQLiteAuditLog
 from silas.channels.web import WebChannel
 from silas.config import SilasSettings, load_config
 from silas.connections.lifecycle import (
@@ -30,42 +28,44 @@ from silas.connections.lifecycle import (
     HealthStatusLevel,
     LiveConnectionManager,
 )
-from silas.context.scorer import ContextScorer
 from silas.context.manager import LiveContextManager
+from silas.context.personality import SilasPersonalityEngine
+from silas.context.scorer import ContextScorer
+from silas.context.sqlite_store import SQLiteMemoryStore
+from silas.context.turn_context import TurnContext
 from silas.core.logging import setup_logging
-from silas.execution.plan_parser import MarkdownPlanParser
 from silas.core.stream import Stream
 from silas.core.telemetry import init_tracing, shutdown_tracing
 from silas.core.token_counter import HeuristicTokenCounter
-from silas.context.turn_context import TurnContext
-from silas.execution.verification_runner import SilasVerificationRunner
+from silas.execution.bridge import QueueBridge
+from silas.execution.consult import ConsultPlannerManager
+from silas.execution.factory import create_queue_system
+from silas.execution.plan_parser import MarkdownPlanParser
+from silas.execution.queue_store import DurableQueueStore
+from silas.execution.replan import ReplanManager
+from silas.execution.router import QueueRouter
 from silas.execution.sandbox import SubprocessSandboxManager
-from silas.gates import SilasGateRunner
+from silas.execution.verification_runner import SilasVerificationRunner
+from silas.execution.work_executor import LiveWorkItemExecutor
+from silas.gates import LiveApprovalManager, SilasApprovalVerifier, SilasGateRunner
 from silas.manual_harness import print_scenarios, run_manual_harness
-from silas.context.sqlite_store import SQLiteMemoryStore
 from silas.models.approval import ApprovalToken
 from silas.models.connections import Connection, HealthCheckResult, SetupStep, SetupStepResponse
 from silas.models.personality import AxisProfile, PersonaPreset, VoiceConfig
 from silas.models.skills import SkillMetadata
 from silas.models.work import WorkItem
+from silas.persistence.audit import SQLiteAuditLog
 from silas.persistence.chronicle_store import SQLiteChronicleStore
 from silas.persistence.migrations import run_migrations
 from silas.persistence.nonce_store import SQLiteNonceStore
 from silas.persistence.persona_store import SQLitePersonaStore
 from silas.persistence.work_item_store import SQLiteWorkItemStore
-from silas.context.personality import SilasPersonalityEngine
-from silas.topics import SimpleAutonomyCalibrator, SimpleSuggestionEngine
-from silas.execution.bridge import QueueBridge
-from silas.execution.consult import ConsultPlannerManager
-from silas.execution.factory import create_queue_system
-from silas.execution.replan import ReplanManager
-from silas.execution.router import QueueRouter
-from silas.execution.queue_store import DurableQueueStore
-from silas.topics import SilasScheduler
 from silas.skills.executor import SkillExecutor, register_builtin_skills
 from silas.skills.registry import SilasSkillLoader, SkillRegistry
 from silas.tools.resolver import LiveSkillResolver
-from silas.execution.work_executor import LiveWorkItemExecutor
+from silas.topics.calibrator import SimpleAutonomyCalibrator
+from silas.topics.scheduler import SilasScheduler
+from silas.topics.suggestions import SimpleSuggestionEngine
 
 logger = logging.getLogger(__name__)
 

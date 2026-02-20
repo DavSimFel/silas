@@ -8,8 +8,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from silas.core.token_counter import HeuristicTokenCounter
 from silas.context.retriever import SilasMemoryRetriever
+from silas.core.token_counter import HeuristicTokenCounter
 from silas.models.agents import AgentResponse, MemoryOp, MemoryOpType
 from silas.models.context import ContextItem, ContextZone
 from silas.models.memory import MemoryItem, MemoryType, ReingestionTier

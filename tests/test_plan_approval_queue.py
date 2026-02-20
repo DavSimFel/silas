@@ -15,6 +15,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from silas.execution.consumers import ProxyConsumer
+from silas.execution.queue_store import DurableQueueStore
+from silas.execution.queue_types import QueueMessage
+from silas.execution.router import QueueRouter
 from silas.models.approval import (
     ApprovalDecision,
     ApprovalScope,
@@ -22,10 +26,6 @@ from silas.models.approval import (
     ApprovalVerdict,
 )
 from silas.models.work import WorkItem
-from silas.execution.consumers import ProxyConsumer
-from silas.execution.router import QueueRouter
-from silas.execution.queue_store import DurableQueueStore
-from silas.execution.queue_types import QueueMessage
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

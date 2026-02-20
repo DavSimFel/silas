@@ -1,4 +1,9 @@
 -- Phase 7a: Goals + autonomy persistence
+--
+-- NOTE (post Goals→Topics merge, PR #322): The "goal" tables below now back
+-- the Topic model.  goal_id == topic_id, goal_runs tracks Topic execution
+-- history, and standing_approvals stores per-Topic approval grants.
+-- The table names are preserved to avoid breaking existing deployments.
 
 CREATE TABLE IF NOT EXISTS goals (
     goal_id TEXT PRIMARY KEY,

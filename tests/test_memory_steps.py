@@ -9,8 +9,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from silas.core.stream import Stream
 from silas.context.turn_context import TurnContext
+from silas.core.stream import Stream
 from silas.models.agents import (
     AgentResponse,
     InteractionMode,

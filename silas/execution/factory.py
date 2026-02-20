@@ -23,9 +23,9 @@ from silas.execution.consumers import (
     ProxyConsumer,
 )
 from silas.execution.orchestrator import QueueOrchestrator
+from silas.execution.queue_store import DurableQueueStore
 from silas.execution.replan import ReplanManager
 from silas.execution.router import QueueRouter
-from silas.execution.queue_store import DurableQueueStore
 
 
 async def create_queue_system(

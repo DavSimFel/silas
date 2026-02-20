@@ -3,8 +3,16 @@
 Goal functionality is now part of the Topic model. There is no separate
 GoalManager protocol; Topic persistence is handled by TopicRegistry.
 
-This file is kept as an empty shim so that any stale imports fail loudly
-rather than silently (they will get an ImportError on the removed names).
+This module raises ImportError at import time so that stale imports fail
+loudly rather than silently importing an empty namespace.
+
+Use instead:
+  from silas.topics import Topic, TopicRegistry
+  from silas.models.goals import Schedule, StandingApproval
 """
 
-__all__: list[str] = []
+raise ImportError(
+    "silas.protocols.goals has been removed. "
+    "Goal functionality is now part of Topic — "
+    "use `silas.topics.TopicRegistry` and `silas.topics.Topic` instead."
+)

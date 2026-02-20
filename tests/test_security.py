@@ -11,8 +11,8 @@ from typing import Any
 import aiosqlite
 import pytest
 from pydantic import ValidationError
-from silas.gates.approval_manager import LiveApprovalManager
 from silas.core.stream import Stream
+from silas.gates.approval_manager import LiveApprovalManager
 from silas.models.approval import (
     ApprovalScope,
     ApprovalToken,

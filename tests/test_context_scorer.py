@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from silas.context.scorer import ContextScorer, ScorerWeights
 from silas.context.manager import LiveContextManager
+from silas.context.scorer import ContextScorer, ScorerWeights
 from silas.core.token_counter import HeuristicTokenCounter
 from silas.models.context import (
     ContextItem,

@@ -9,12 +9,12 @@ from pathlib import Path
 
 import aiosqlite
 import pytest
-from silas.persistence.audit import SQLiteAuditLog
 from silas.context.sqlite_store import SQLiteMemoryStore
 from silas.models.context import ContextItem, ContextZone
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import TaintLevel
 from silas.models.work import BudgetUsed, WorkItem, WorkItemStatus, WorkItemType
+from silas.persistence.audit import SQLiteAuditLog
 from silas.persistence.chronicle_store import SQLiteChronicleStore
 from silas.persistence.migrations import run_migrations
 from silas.persistence.nonce_store import SQLiteNonceStore
