@@ -59,7 +59,7 @@ from silas.models.gates import (
     GateTrigger,
     GateType,
 )
-from silas.models.goals import Goal, GoalRun, GoalSchedule, StandingApproval
+from silas.models.goals import GoalSchedule, Schedule, StandingApproval
 from silas.models.memory import MemoryItem, MemoryType
 from silas.models.messages import ChannelMessage, SignedMessage, TaintLevel
 from silas.models.personality import (
@@ -144,9 +144,8 @@ __all__ = [
     "GateResult",
     "GateTrigger",
     "GateType",
-    "Goal",
-    "GoalRun",
     "GoalSchedule",
+    "Schedule",
     "HealthCheckResult",
     "InferredPreference",
     "InteractionMode",

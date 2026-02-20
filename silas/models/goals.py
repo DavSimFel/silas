@@ -1,3 +1,10 @@
+"""Goal-related supporting models.
+
+Goal functionality lives in the Topic model (silas/topics/model.py).
+This module retains the reusable schedule and approval types that are
+referenced by the approval system and tests.
+"""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -12,7 +19,9 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-class GoalSchedule(BaseModel):
+class Schedule(BaseModel):
+    """Schedule specification for a Topic (cron, interval, or one-shot)."""
+
     kind: Literal["cron", "interval", "once"]
     cron_expr: str | None = None
     interval_seconds: int | None = None
@@ -28,7 +37,7 @@ class GoalSchedule(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_schedule_shape(self) -> GoalSchedule:
+    def _validate_schedule_shape(self) -> Schedule:
         if self.kind == "cron":
             if not self.cron_expr:
                 raise ValueError("cron schedules require cron_expr")
@@ -47,73 +56,8 @@ class GoalSchedule(BaseModel):
         return self
 
 
-class Goal(BaseModel):
-    goal_id: str
-    name: str
-    description: str
-    schedule: GoalSchedule
-    work_template: dict[str, object] = Field(default_factory=dict)
-    skills: list[str] = Field(default_factory=list)
-    enabled: bool = True
-    standing_approval: bool = False
-    spawn_policy_hash: str | None = None
-    verification: dict[str, object] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=_utc_now)
-    updated_at: datetime = Field(default_factory=_utc_now)
-
-    @field_validator("created_at", "updated_at")
-    @classmethod
-    def _ensure_timezone_aware(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
-            raise ValueError("created_at and updated_at must be timezone-aware")
-        return value
-
-
-class GoalRun(BaseModel):
-    run_id: str
-    goal_id: str
-    status: Literal["pending", "running", "completed", "failed", "skipped"] = "pending"
-    work_item_id: str | None = None
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
-    result: dict[str, object] = Field(default_factory=dict)
-    error: str | None = None
-
-    @field_validator("started_at", "completed_at")
-    @classmethod
-    def _ensure_timezone_aware_optional(
-        cls,
-        value: datetime | None,
-    ) -> datetime | None:
-        if value is None:
-            return value
-        if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
-            raise ValueError("started_at and completed_at must be timezone-aware")
-        return value
-
-    def transition_to(
-        self, status: Literal["pending", "running", "completed", "failed", "skipped"]
-    ) -> None:
-        allowed: dict[str, set[str]] = {
-            "pending": {"running", "failed", "skipped"},
-            "running": {"completed", "failed", "skipped"},
-            "completed": set(),
-            "failed": set(),
-            "skipped": set(),
-        }
-        if status == self.status:
-            return
-        if status not in allowed[self.status]:
-            raise ValueError(f"invalid GoalRun transition: {self.status} -> {status}")
-
-        now = datetime.now(UTC)
-        if status == "running" and self.started_at is None:
-            self.started_at = now
-        if status in {"completed", "failed", "skipped"}:
-            if self.started_at is None:
-                self.started_at = now
-            self.completed_at = now
-        self.status = status
+# Backward-compat alias — keep imports that used GoalSchedule working.
+GoalSchedule = Schedule
 
 
 class StandingApproval(BaseModel):
@@ -160,4 +104,4 @@ class StandingApproval(BaseModel):
         return self
 
 
-__all__ = ["Goal", "GoalRun", "GoalSchedule", "StandingApproval"]
+__all__ = ["GoalSchedule", "Schedule", "StandingApproval"]
